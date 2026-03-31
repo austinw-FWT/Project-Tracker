@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Plus, X, Users, Settings, LayoutGrid, Search, Edit2, Trash2, FileText, Camera, ClipboardList, MapPin, Phone, Mail, DollarSign, Cable, ChevronDown, ChevronUp, Clock, User, Building2, ArrowLeft, CheckCircle2, Circle, Layers, CalendarDays, Wifi, WifiOff, RefreshCw, Zap, ChevronLeft, ChevronRight, StickyNote, ListTodo } from "lucide-react";
+import { Plus, X, Users, Settings, LayoutGrid, Search, Edit2, Trash2, FileText, Camera, ClipboardList, MapPin, Phone, Mail, DollarSign, Cable, ChevronDown, ChevronUp, Clock, User, Building2, ArrowLeft, CheckCircle2, Circle, Layers, CalendarDays, Wifi, WifiOff, RefreshCw, Zap, ChevronLeft, ChevronRight, StickyNote, ListTodo, LogOut, Shield } from "lucide-react";
+import { auth, googleProvider, signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithPopup, onAuthStateChanged, signOut, updateProfile } from "./firebase.js";
 
 const FB_URL = "https://fwt-lv-tracker-default-rtdb.firebaseio.com";
 const DB_PATH = "/tracker";
@@ -68,7 +69,136 @@ function formatDay(ds) {
   return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 }
 
+/* ─── AUTH WRAPPER ─── */
 export default function App() {
+  const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      setAuthLoading(false);
+    });
+    return unsub;
+  }, []);
+
+  if (authLoading) return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#0f1729", color: "#94a3b8", fontFamily: "'DM Sans',sans-serif" }}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet" />
+      <div style={{ textAlign: "center" }}><Layers size={40} style={{ marginBottom: 12, color: "#6366f1" }} /><div>Loading...</div></div>
+    </div>
+  );
+
+  if (!user) return <LoginScreen />;
+
+  return <Tracker user={user} />;
+}
+
+/* ─── LOGIN SCREEN ─── */
+function LoginScreen() {
+  const [mode, setMode] = useState("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function handleEmail(e) {
+    e.preventDefault();
+    setError(""); setLoading(true);
+    try {
+      if (mode === "register") {
+        const cred = await createUserWithEmailAndPassword(auth, email, password);
+        if (displayName.trim()) await updateProfile(cred.user, { displayName: displayName.trim() });
+      } else {
+        await signInWithEmailAndPassword(auth, email, password);
+      }
+    } catch (err) {
+      const msg = err.code === "auth/user-not-found" ? "No account found with that email" : err.code === "auth/wrong-password" ? "Incorrect password" : err.code === "auth/invalid-credential" ? "Invalid email or password" : err.code === "auth/email-already-in-use" ? "An account with that email already exists" : err.code === "auth/weak-password" ? "Password must be at least 6 characters" : err.message;
+      setError(msg);
+    }
+    setLoading(false);
+  }
+
+  async function handleGoogle() {
+    setError(""); setLoading(true);
+    try { await signInWithPopup(auth, googleProvider); } catch (err) { setError(err.message); }
+    setLoading(false);
+  }
+
+  const iS = { width: "100%", padding: "12px 14px", borderRadius: 10, border: "1px solid #1e293b", background: "#0f1729", color: "#e2e8f0", fontSize: 14, fontFamily: "'DM Sans',sans-serif", outline: "none" };
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#0f1729", fontFamily: "'DM Sans',sans-serif" }}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet" />
+      <div style={{ width: 400, padding: 32 }}>
+        <div style={{ textAlign: "center", marginBottom: 32 }}>
+          <div style={{ width: 48, height: 48, borderRadius: 12, background: "linear-gradient(135deg,#6366f1,#8b5cf6)", display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 16 }}>
+            <Layers size={24} color="#fff" />
+          </div>
+          <h1 style={{ fontSize: 26, fontWeight: 800, color: "#fff", fontFamily: "'Outfit',sans-serif", margin: "0 0 4px" }}>LV Tracker</h1>
+          <p style={{ fontSize: 13, color: "#64748b", margin: 0 }}>Project Management for Low Voltage Teams</p>
+        </div>
+
+        <div style={{ background: "#1a2332", borderRadius: 16, border: "1px solid #1e293b", padding: 24 }}>
+          <div style={{ display: "flex", gap: 4, marginBottom: 20 }}>
+            {["login", "register"].map(m => (
+              <button key={m} onClick={() => { setMode(m); setError(""); }}
+                style={{ flex: 1, padding: "8px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", background: mode === m ? "#6366f1" : "transparent", color: mode === m ? "#fff" : "#64748b" }}>
+                {m === "login" ? "Sign In" : "Register"}
+              </button>
+            ))}
+          </div>
+
+          <div>
+            {mode === "register" && (
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 11, fontWeight: 600, color: "#64748b", marginBottom: 4, display: "block", textTransform: "uppercase", letterSpacing: "0.05em" }}>Full Name</label>
+                <input style={iS} value={displayName} onChange={e => setDisplayName(e.target.value)} placeholder="e.g., John Smith" />
+              </div>
+            )}
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ fontSize: 11, fontWeight: 600, color: "#64748b", marginBottom: 4, display: "block", textTransform: "uppercase", letterSpacing: "0.05em" }}>Email</label>
+              <input style={iS} type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@company.com" />
+            </div>
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontSize: 11, fontWeight: 600, color: "#64748b", marginBottom: 4, display: "block", textTransform: "uppercase", letterSpacing: "0.05em" }}>Password</label>
+              <input style={iS} type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" onKeyDown={e => { if (e.key === "Enter") handleEmail(e); }} />
+            </div>
+
+            {error && <div style={{ padding: "10px 12px", borderRadius: 8, background: "#7f1d1d22", border: "1px solid #7f1d1d", color: "#fca5a5", fontSize: 12, marginBottom: 12 }}>{error}</div>}
+
+            <button onClick={handleEmail} disabled={loading}
+              style={{ width: "100%", padding: "12px", borderRadius: 10, border: "none", background: "#6366f1", color: "#fff", fontSize: 14, fontWeight: 600, cursor: loading ? "wait" : "pointer", fontFamily: "inherit", opacity: loading ? 0.6 : 1, marginBottom: 12 }}>
+              {loading ? "Please wait..." : mode === "login" ? "Sign In" : "Create Account"}
+            </button>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "16px 0" }}>
+              <div style={{ flex: 1, height: 1, background: "#1e293b" }} />
+              <span style={{ fontSize: 11, color: "#475569" }}>or</span>
+              <div style={{ flex: 1, height: 1, background: "#1e293b" }} />
+            </div>
+
+            <button onClick={handleGoogle} disabled={loading}
+              style={{ width: "100%", padding: "12px", borderRadius: 10, border: "1px solid #1e293b", background: "#0f1729", color: "#e2e8f0", fontSize: 13, fontWeight: 600, cursor: loading ? "wait" : "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+              <svg width="16" height="16" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
+              Continue with Google
+            </button>
+          </div>
+        </div>
+
+        <div style={{ textAlign: "center", marginTop: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 11, color: "#334155" }}>
+            <Shield size={11} /> Secured by Firebase Authentication
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── MAIN TRACKER ─── */
+function Tracker({ user }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState("board");
@@ -222,7 +352,16 @@ export default function App() {
 
         <div style={{ padding: "12px 16px", borderTop: "1px solid #1e293b" }}>
           <SyncIndicator status={syncStatus} lastSync={lastSync} pulse={syncPulse} />
-          <div style={{ fontSize: 11, color: "#475569", marginTop: 8 }}>{data.projects.length} project{data.projects.length !== 1 ? "s" : ""}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, padding: "8px 0" }}>
+            <div style={{ width: 24, height: 24, borderRadius: "50%", background: "#6366f1", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 700, color: "#fff", flexShrink: 0 }}>
+              {(user.displayName || user.email || "?").split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{user.displayName || user.email}</div>
+            </div>
+            <button onClick={() => signOut(auth)} title="Sign out" style={{ background: "none", border: "none", color: "#475569", cursor: "pointer", padding: 2 }}><LogOut size={14} /></button>
+          </div>
+          <div style={{ fontSize: 11, color: "#475569", marginTop: 4 }}>{data.projects.length} project{data.projects.length !== 1 ? "s" : ""}</div>
         </div>
       </div>
 
