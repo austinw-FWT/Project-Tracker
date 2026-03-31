@@ -15,7 +15,24 @@ const DEFAULT_PHASES = [
   { id: "closeout", name: "Closeout", color: "#6b7280" },
 ];
 const PROJECT_TYPES = ["Access Control", "Video Surveillance", "Intrusion Detection", "Structured Cabling", "Network Infrastructure"];
-const EMPTY_PROJECT = { id: "", name: "", customer: "", contactName: "", contactPhone: "", contactEmail: "", siteAddress: "", projectTypes: [], phaseId: "", type: "retrofit", scopeNotes: "", bidAmount: "", contractAmount: "", devices: [], cableRuns: [], tasks: [], documents: [], notes: [], teamMembers: [], createdAt: "", updatedAt: "" };
+const LABOR_PHASES = [
+  { id: "rough-in", name: "Rough In" },
+  { id: "trim-out", name: "Trim Out" },
+  { id: "head-in", name: "Head In" },
+  { id: "programming", name: "Programming" },
+  { id: "commissioning", name: "System Commissioning" },
+  { id: "training", name: "Customer Training" },
+  { id: "pm", name: "Project Management" },
+  { id: "misc", name: "Miscellaneous" },
+];
+
+function defaultLaborHours() {
+  const h = {};
+  LABOR_PHASES.forEach(lp => { h[lp.id] = { bid: 0, remaining: 0 }; });
+  return h;
+}
+
+const EMPTY_PROJECT = { id: "", name: "", customer: "", contactName: "", contactPhone: "", contactEmail: "", siteAddress: "", projectTypes: [], phaseId: "", type: "retrofit", scopeNotes: "", bidAmount: "", contractAmount: "", devices: [], cableRuns: [], tasks: [], documents: [], notes: [], teamMembers: [], laborHours: null, createdAt: "", updatedAt: "" };
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 
@@ -332,7 +349,7 @@ function ProjectDetail({ project, phases, phaseMap, teamRoster, onUpdate, onDele
 
   useEffect(() => { if (!editMode) setForm(project); }, [project, editMode]);
 
-  const tabs = [{ id: "overview", label: "Overview", icon: ClipboardList }, { id: "scope", label: "Scope & Devices", icon: Cable }, { id: "tasks", label: "Tasks", icon: CheckCircle2 }, { id: "docs", label: "Documents", icon: FileText }, { id: "notes", label: "Activity", icon: Clock }];
+  const tabs = [{ id: "overview", label: "Overview", icon: ClipboardList }, { id: "hours", label: "Hours", icon: Clock }, { id: "scope", label: "Scope & Devices", icon: Cable }, { id: "tasks", label: "Tasks", icon: CheckCircle2 }, { id: "docs", label: "Documents", icon: FileText }, { id: "notes", label: "Activity", icon: Clock }];
   const currentPhase = phaseMap[project.phaseId];
   function saveEdit() { onUpdate(form); setEditMode(false); }
 
@@ -430,6 +447,10 @@ function ProjectDetail({ project, phases, phaseMap, teamRoster, onUpdate, onDele
               </div>
             </div>
           )
+        )}
+
+        {detailTab === "hours" && (
+          <LaborHoursTab project={project} onUpdate={onUpdate} />
         )}
 
         {detailTab === "scope" && (
@@ -545,6 +566,105 @@ function ProjectDetail({ project, phases, phaseMap, teamRoster, onUpdate, onDele
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/* ─── LABOR HOURS TAB ─── */
+function LaborHoursTab({ project, onUpdate }) {
+  const lh = project.laborHours || defaultLaborHours();
+  const iS = { width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid #1e293b", background: "#0f1729", color: "#e2e8f0", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none", textAlign: "center" };
+
+  function updatePhaseHours(phaseId, field, val) {
+    const num = parseFloat(val) || 0;
+    const updated = { ...lh, [phaseId]: { ...lh[phaseId], [field]: num } };
+    onUpdate({ laborHours: updated });
+  }
+
+  const totalBid = LABOR_PHASES.reduce((s, lp) => s + (lh[lp.id]?.bid || 0), 0);
+  const totalRemaining = LABOR_PHASES.reduce((s, lp) => s + (lh[lp.id]?.remaining || 0), 0);
+  const totalUsed = totalBid - totalRemaining;
+  const totalPct = totalBid > 0 ? Math.round((totalUsed / totalBid) * 100) : 0;
+
+  return (
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, marginBottom: 24 }}>
+        <SummaryCard label="Total Bid" value={`${totalBid.toFixed(1)}h`} color="#6366f1" />
+        <SummaryCard label="Hours Used" value={`${totalUsed.toFixed(1)}h`} color="#f59e0b" />
+        <SummaryCard label="Remaining" value={`${totalRemaining.toFixed(1)}h`} color="#10b981" />
+        <SummaryCard label="Complete" value={`${totalPct}%`} color={totalPct > 90 ? "#ef4444" : totalPct > 70 ? "#f59e0b" : "#10b981"} />
+      </div>
+
+      {/* Header Row */}
+      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr", gap: 8, padding: "0 12px 10px", fontSize: 11, fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+        <span>Labor Phase</span>
+        <span style={{ textAlign: "center" }}>Hours Bid</span>
+        <span style={{ textAlign: "center" }}>Hours Used</span>
+        <span style={{ textAlign: "center" }}>Remaining</span>
+        <span style={{ textAlign: "center" }}>Progress</span>
+      </div>
+
+      {LABOR_PHASES.map(lp => {
+        const bid = lh[lp.id]?.bid || 0;
+        const remaining = lh[lp.id]?.remaining || 0;
+        const used = bid - remaining;
+        const pct = bid > 0 ? Math.round((used / bid) * 100) : 0;
+        const overBudget = remaining < 0;
+
+        return (
+          <div key={lp.id} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr", gap: 8, alignItems: "center", padding: "10px 12px", background: "#0f1729", borderRadius: 8, marginBottom: 4, border: overBudget ? "1px solid #7f1d1d" : "1px solid transparent" }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0" }}>{lp.name}</span>
+            <input
+              type="number" step="0.5" min="0" style={iS}
+              value={bid || ""}
+              onChange={e => updatePhaseHours(lp.id, "bid", e.target.value)}
+              placeholder="0"
+            />
+            <div style={{ textAlign: "center", fontSize: 13, color: overBudget ? "#ef4444" : "#f59e0b", fontWeight: 600 }}>
+              {used.toFixed(1)}h
+            </div>
+            <input
+              type="number" step="0.5" style={iS}
+              value={remaining || ""}
+              onChange={e => updatePhaseHours(lp.id, "remaining", e.target.value)}
+              placeholder="0"
+            />
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <div style={{ flex: 1, height: 6, borderRadius: 3, background: "#1e293b", overflow: "hidden" }}>
+                <div style={{
+                  width: `${Math.min(pct, 100)}%`, height: "100%", borderRadius: 3,
+                  background: overBudget ? "#ef4444" : pct > 90 ? "#f59e0b" : "#10b981",
+                  transition: "width 0.3s",
+                }} />
+              </div>
+              <span style={{ fontSize: 11, color: overBudget ? "#ef4444" : "#64748b", fontWeight: 600, minWidth: 32, textAlign: "right" }}>{pct}%</span>
+            </div>
+          </div>
+        );
+      })}
+
+      {/* Totals Row */}
+      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr", gap: 8, alignItems: "center", padding: "12px 12px", background: "#1e293b", borderRadius: 8, marginTop: 8 }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>TOTALS</span>
+        <div style={{ textAlign: "center", fontSize: 14, fontWeight: 700, color: "#6366f1", fontFamily: "'Outfit',sans-serif" }}>{totalBid.toFixed(1)}h</div>
+        <div style={{ textAlign: "center", fontSize: 14, fontWeight: 700, color: "#f59e0b", fontFamily: "'Outfit',sans-serif" }}>{totalUsed.toFixed(1)}h</div>
+        <div style={{ textAlign: "center", fontSize: 14, fontWeight: 700, color: "#10b981", fontFamily: "'Outfit',sans-serif" }}>{totalRemaining.toFixed(1)}h</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <div style={{ flex: 1, height: 6, borderRadius: 3, background: "#0f1729", overflow: "hidden" }}>
+            <div style={{ width: `${Math.min(totalPct, 100)}%`, height: "100%", borderRadius: 3, background: totalPct > 90 ? "#f59e0b" : "#10b981", transition: "width 0.3s" }} />
+          </div>
+          <span style={{ fontSize: 11, color: "#94a3b8", fontWeight: 700, minWidth: 32, textAlign: "right" }}>{totalPct}%</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SummaryCard({ label, value, color }) {
+  return (
+    <div style={{ background: "#0f1729", borderRadius: 10, padding: "14px 16px", borderLeft: `3px solid ${color}` }}>
+      <div style={{ fontSize: 11, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 20, fontWeight: 700, color, fontFamily: "'Outfit',sans-serif" }}>{value}</div>
     </div>
   );
 }
