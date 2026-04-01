@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Plus, X, Users, Settings, LayoutGrid, Search, Edit2, Trash2, FileText, Camera, ClipboardList, MapPin, Phone, Mail, DollarSign, Cable, ChevronDown, ChevronUp, Clock, User, Building2, ArrowLeft, CheckCircle2, Circle, Layers, CalendarDays, Wifi, WifiOff, RefreshCw, Zap, ChevronLeft, ChevronRight, StickyNote, ListTodo, LogOut, Shield, UserCheck, UserX } from "lucide-react";
+import { Plus, X, Users, Settings, LayoutGrid, Search, Edit2, Trash2, FileText, Camera, ClipboardList, MapPin, Phone, Mail, DollarSign, Cable, ChevronDown, ChevronUp, Clock, User, Building2, ArrowLeft, CheckCircle2, Circle, Layers, CalendarDays, Wifi, WifiOff, RefreshCw, Zap, ChevronLeft, ChevronRight, StickyNote, ListTodo, LogOut, Shield, UserCheck, UserX, Package, Truck } from "lucide-react";
 import { auth, googleProvider, signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithPopup, onAuthStateChanged, signOut, updateProfile } from "./firebase.js";
+import DailyTracker from "./DailyTracker.jsx";
 
 const FB_URL = "https://fwt-lv-tracker-default-rtdb.firebaseio.com";
 const DB_PATH = "/tracker";
@@ -18,7 +19,8 @@ const LABOR_PHASES = [
   { id: "training", name: "Customer Training" }, { id: "pm", name: "Project Management" }, { id: "misc", name: "Miscellaneous" },
 ];
 function defaultLaborHours() { const h = {}; LABOR_PHASES.forEach(lp => { h[lp.id] = { bid: 0, remaining: 0 }; }); return h; }
-const EMPTY_PROJECT = { id: "", name: "", customer: "", contactName: "", contactPhone: "", contactEmail: "", siteAddress: "", projectTypes: [], phaseId: "", type: "retrofit", scopeNotes: "", bidAmount: "", contractAmount: "", devices: [], cableRuns: [], tasks: [], documents: [], notes: [], teamMembers: [], laborHours: null, createdAt: "", updatedAt: "" };
+const MATERIAL_STATUSES = ["Pending Quote", "Quoted", "PO Issued", "Ordered", "Backordered", "Shipped", "Delivered", "Installed", "Returned"];
+const EMPTY_PROJECT = { id: "", name: "", customer: "", contactName: "", contactPhone: "", contactEmail: "", siteAddress: "", projectTypes: [], phaseId: "", type: "retrofit", scopeNotes: "", bidAmount: "", contractAmount: "", devices: [], cableRuns: [], tasks: [], documents: [], notes: [], teamMembers: [], laborHours: null, materials: [], createdAt: "", updatedAt: "" };
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 const DEFAULTS = { projects: [], phases: DEFAULT_PHASES, teamRoster: [], timesheets: [], schedule: {}, memberPrivate: {} };
 
@@ -152,9 +154,9 @@ function LoginScreen() {
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet" />
       <div style={{ width: 400, padding: 32 }}>
         <div style={{ textAlign: "center", marginBottom: 32 }}>
-          <div style={{ width: 48, height: 48, borderRadius: 12, background: "linear-gradient(135deg,#6366f1,#8b5cf6)", display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 16 }}><Layers size={24} color="#fff" /></div>
-          <h1 style={{ fontSize: 26, fontWeight: 800, color: "#fff", fontFamily: "'Outfit',sans-serif", margin: "0 0 4px" }}>LV Tracker</h1>
-          <p style={{ fontSize: 13, color: "#64748b", margin: 0 }}>Project Management for Low Voltage Teams</p>
+          <img src="/FWT_LOGO_FULL.png" alt="FWT" style={{ width: 72, height: 72, objectFit: "contain", marginBottom: 12 }} onError={e => { e.target.style.display = "none"; }} />
+          <h1 style={{ fontSize: 26, fontWeight: 800, color: "#fff", fontFamily: "'Outfit',sans-serif", margin: "0 0 4px" }}>FWT Workspaces</h1>
+          <p style={{ fontSize: 13, color: "#64748b", margin: 0 }}>Far West Technologies Project Management</p>
         </div>
         <div style={{ background: "#1a2332", borderRadius: 16, border: "1px solid #1e293b", padding: 24 }}>
           <div style={{ display: "flex", gap: 4, marginBottom: 20 }}>
@@ -193,7 +195,7 @@ function PendingScreen({ user, error }) {
         <p style={{ fontSize: 14, color: "#94a3b8", lineHeight: 1.6, margin: "0 0 24px" }}>
           {error
             ? "Unable to verify your account. Please try again later or contact your team admin."
-            : `Your account (${user.email}) has been registered. A team admin needs to approve your access before you can use LV Tracker.`
+            : `Your account (${user.email}) has been registered. A team admin needs to approve your access before you can use FWT Workspaces.`
           }
         </p>
         <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
@@ -325,7 +327,7 @@ function Tracker({ user, userRecord }) {
   if (loading) return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#0f1729", color: "#94a3b8" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet" />
-      <div style={{ textAlign: "center" }}><Layers size={40} style={{ marginBottom: 12, color: "#6366f1" }} /><div>Connecting to Firebase...</div></div>
+      <div style={{ textAlign: "center" }}><img src="/FWT_LOGO_FULL.png" alt="FWT" style={{ width: 50, height: 50, objectFit: "contain", marginBottom: 12 }} onError={e => { e.target.style.display = "none"; }} /><div>Connecting to Firebase...</div></div>
     </div>
   );
   if (!data) return null;
@@ -340,12 +342,14 @@ function Tracker({ user, userRecord }) {
 
       {/* Sidebar */}
       <div style={{ width: 220, background: "#0b1120", borderRight: "1px solid #1e293b", display: "flex", flexDirection: "column", flexShrink: 0 }}>
-        <div style={{ padding: "20px 16px 16px", borderBottom: "1px solid #1e293b" }}>
-          <div style={{ fontFamily: "'Outfit',sans-serif", fontSize: 18, fontWeight: 800, color: "#fff", display: "flex", alignItems: "center", gap: 8 }}>
-            <div style={{ width: 28, height: 28, borderRadius: 6, background: "linear-gradient(135deg,#6366f1,#8b5cf6)", display: "flex", alignItems: "center", justifyContent: "center" }}><Layers size={15} color="#fff" /></div>
-            LV Tracker
+        <div style={{ padding: "16px 16px 14px", borderBottom: "1px solid #1e293b" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <img src="/FWT_LOGO_FULL.png" alt="FWT" style={{ width: 36, height: 36, objectFit: "contain", borderRadius: 4 }} onError={e => { e.target.style.display = "none"; }} />
+            <div>
+              <div style={{ fontFamily: "'Outfit',sans-serif", fontSize: 16, fontWeight: 800, color: "#fff" }}>FWT Workspaces</div>
+              <div style={{ fontSize: 10, color: "#64748b" }}>Project Management</div>
+            </div>
           </div>
-          <div style={{ fontSize: 11, color: "#64748b", marginTop: 4, paddingLeft: 36 }}>Project Management</div>
         </div>
         <nav style={{ padding: "12px 8px", flex: 1, overflowY: "auto" }}>
           {[
@@ -411,7 +415,7 @@ function Tracker({ user, userRecord }) {
         </div>
         <div style={{ flex: 1, overflow: "auto" }}>
           {selectedProject ? <ProjectDetail project={selectedProject} phases={data.phases} phaseMap={phaseMap} teamRoster={data.teamRoster} onUpdate={u => updateProject(selectedProject.id, u)} onDelete={() => deleteProject(selectedProject.id)} detailTab={detailTab} setDetailTab={setDetailTab} />
-          : currentView === "member" && activeMember === myName ? <MemberPrivateView memberName={myName} memberPrivate={data.memberPrivate || {}} projects={data.projects} onUpdate={mp => saveData({ ...data, memberPrivate: mp })} />
+          : currentView === "member" && activeMember === myName ? <DailyTracker data={(data.memberPrivate || {})[myName]?.dailyTracker} onSave={dt => { const mp = { ...(data.memberPrivate || {}), [myName]: { ...((data.memberPrivate || {})[myName] || {}), dailyTracker: dt } }; saveData({ ...data, memberPrivate: mp }); }} />
           : currentView === "member" ? <div style={{ padding: 40, textAlign: "center", color: "#64748b" }}>You can only access your own workspace.</div>
           : currentView === "board" ? <KanbanBoard projects={filteredProjects} phases={data.phases} onSelectProject={p => { setSelectedProject(p); setDetailTab("overview"); }} onDragStart={setDragItem} onDrop={handleDrop} dragItem={dragItem} />
           : currentView === "schedule" ? <ScheduleView schedule={data.schedule || {}} teamRoster={data.teamRoster} projects={data.projects} onUpdate={sched => saveData({ ...data, schedule: sched })} />
@@ -452,7 +456,7 @@ function UserAdminView() {
 
   return (
     <div style={{ maxWidth: 700, margin: "0 auto", padding: "24px" }}>
-      <p style={{ fontSize: 13, color: "#64748b", marginBottom: 20 }}>Manage who can access LV Tracker. Approve new registrations and assign admin roles.</p>
+      <p style={{ fontSize: 13, color: "#64748b", marginBottom: 20 }}>Manage who can access FWT Workspaces. Approve new registrations and assign admin roles.</p>
 
       {pending.length > 0 && (
         <div style={{ marginBottom: 24 }}>
@@ -532,43 +536,6 @@ function ScheduleView({ schedule, teamRoster, projects, onUpdate }) {
   );
 }
 
-/* ─── MEMBER PRIVATE VIEW ─── */
-function MemberPrivateView({ memberName, memberPrivate, projects, onUpdate }) {
-  const [newNote, setNewNote] = useState(""); const [newTodo, setNewTodo] = useState(""); const [tab, setTab] = useState("todos");
-  const mp = memberPrivate[memberName] || { notes: [], todos: [] };
-  function save(updates) { onUpdate({ ...memberPrivate, [memberName]: { ...mp, ...updates } }); }
-  const iS = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1e293b", background: "#1a2332", color: "#e2e8f0", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none" };
-  return (
-    <div style={{ maxWidth: 700, margin: "0 auto", padding: "24px" }}>
-      <p style={{ fontSize: 13, color: "#64748b", marginBottom: 20 }}>Your personal workspace. Notes and to-dos here are private to your login.</p>
-      <div style={{ display: "flex", gap: 4, marginBottom: 20, borderBottom: "1px solid #1e293b" }}>
-        {[{ id: "todos", label: "To-Do List", icon: ListTodo }, { id: "notes", label: "Notes", icon: StickyNote }].map(t => (<button key={t.id} onClick={() => setTab(t.id)} style={{ padding: "10px 16px", border: "none", background: "none", cursor: "pointer", color: tab === t.id ? "#fff" : "#64748b", borderBottom: tab === t.id ? "2px solid #6366f1" : "2px solid transparent", fontSize: 13, fontWeight: 600, fontFamily: "inherit", display: "flex", alignItems: "center", gap: 6 }}><t.icon size={15} /> {t.label}</button>))}
-      </div>
-      {tab === "todos" && (
-        <div style={{ background: "#1a2332", borderRadius: 12, border: "1px solid #1e293b", padding: 20 }}>
-          <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
-            <input style={{ ...iS, flex: 1 }} placeholder="Add a to-do..." value={newTodo} onChange={e => setNewTodo(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && newTodo.trim()) { save({ todos: [...(mp.todos || []), { id: genId(), text: newTodo.trim(), done: false }] }); setNewTodo(""); } }} />
-            <button onClick={() => { if (!newTodo.trim()) return; save({ todos: [...(mp.todos || []), { id: genId(), text: newTodo.trim(), done: false }] }); setNewTodo(""); }} style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: "#6366f1", color: "#fff", cursor: "pointer", flexShrink: 0 }}><Plus size={14} /></button>
-          </div>
-          {(mp.todos || []).filter(t => !t.done).map(todo => (<div key={todo.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid #1e293b" }}><button onClick={() => save({ todos: mp.todos.map(t => t.id === todo.id ? { ...t, done: true } : t) })} style={{ background: "none", border: "none", cursor: "pointer", color: "#334155", flexShrink: 0 }}><Circle size={18} /></button><span style={{ flex: 1, fontSize: 13, color: "#e2e8f0" }}>{todo.text}</span><button onClick={() => save({ todos: mp.todos.filter(t => t.id !== todo.id) })} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer" }}><X size={13} /></button></div>))}
-          {(mp.todos || []).filter(t => t.done).length > 0 && (<><div style={{ fontSize: 11, fontWeight: 600, color: "#475569", textTransform: "uppercase", marginTop: 16, marginBottom: 8 }}>Completed</div>{(mp.todos || []).filter(t => t.done).map(todo => (<div key={todo.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0" }}><button onClick={() => save({ todos: mp.todos.map(t => t.id === todo.id ? { ...t, done: false } : t) })} style={{ background: "none", border: "none", cursor: "pointer", color: "#10b981", flexShrink: 0 }}><CheckCircle2 size={18} /></button><span style={{ flex: 1, fontSize: 13, color: "#475569", textDecoration: "line-through" }}>{todo.text}</span><button onClick={() => save({ todos: mp.todos.filter(t => t.id !== todo.id) })} style={{ background: "none", border: "none", color: "#1e293b", cursor: "pointer" }}><X size={13} /></button></div>))}</>)}
-          {(mp.todos || []).length === 0 && <div style={{ textAlign: "center", padding: 24, color: "#334155", fontSize: 13 }}>No to-dos yet.</div>}
-        </div>
-      )}
-      {tab === "notes" && (
-        <div style={{ background: "#1a2332", borderRadius: 12, border: "1px solid #1e293b", padding: 20 }}>
-          <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
-            <textarea style={{ ...iS, minHeight: 60, resize: "vertical" }} placeholder="Write a note..." value={newNote} onChange={e => setNewNote(e.target.value)} />
-            <button onClick={() => { if (!newNote.trim()) return; save({ notes: [{ id: genId(), text: newNote.trim(), date: new Date().toISOString() }, ...(mp.notes || [])] }); setNewNote(""); }} style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: "#6366f1", color: "#fff", cursor: "pointer", flexShrink: 0, alignSelf: "flex-start" }}><Plus size={14} /></button>
-          </div>
-          {(mp.notes || []).map(note => (<div key={note.id} style={{ padding: "14px 0", borderBottom: "1px solid #1e293b", display: "flex", gap: 10 }}><StickyNote size={14} style={{ color: "#f59e0b", marginTop: 2, flexShrink: 0 }} /><div style={{ flex: 1 }}><div style={{ fontSize: 13, color: "#e2e8f0", whiteSpace: "pre-wrap" }}>{note.text}</div><div style={{ fontSize: 11, color: "#475569", marginTop: 6 }}>{new Date(note.date).toLocaleString()}</div></div><button onClick={() => save({ notes: mp.notes.filter(n => n.id !== note.id) })} style={{ background: "none", border: "none", color: "#1e293b", cursor: "pointer", alignSelf: "flex-start" }}><X size={13} /></button></div>))}
-          {(mp.notes || []).length === 0 && <div style={{ textAlign: "center", padding: 24, color: "#334155", fontSize: 13 }}>No notes yet.</div>}
-        </div>
-      )}
-    </div>
-  );
-}
-
 /* ─── KANBAN BOARD ─── */
 function KanbanBoard({ projects, phases, onSelectProject, onDragStart, onDrop, dragItem }) {
   return (<div style={{ display: "flex", gap: 12, padding: "16px 20px", height: "100%", overflowX: "auto", alignItems: "flex-start" }}>
@@ -593,7 +560,7 @@ function ProjectDetail({ project, phases, phaseMap, teamRoster, onUpdate, onDele
   const [ncT, setNcT] = useState(""); const [ncQ, setNcQ] = useState(""); const [ncF, setNcF] = useState(""); const [ncTo, setNcTo] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
   useEffect(() => { if (!editMode) setForm(project); }, [project, editMode]);
-  const tabs = [{ id: "overview", label: "Overview", icon: ClipboardList }, { id: "hours", label: "Hours", icon: Clock }, { id: "scope", label: "Scope & Devices", icon: Cable }, { id: "tasks", label: "Tasks", icon: CheckCircle2 }, { id: "docs", label: "Documents", icon: FileText }, { id: "notes", label: "Activity", icon: Clock }];
+  const tabs = [{ id: "overview", label: "Overview", icon: ClipboardList }, { id: "hours", label: "Hours", icon: Clock }, { id: "materials", label: "Materials", icon: Package }, { id: "scope", label: "Scope & Devices", icon: Cable }, { id: "tasks", label: "Tasks", icon: CheckCircle2 }, { id: "docs", label: "Documents", icon: FileText }, { id: "notes", label: "Activity", icon: Clock }];
   const cp = phaseMap[project.phaseId];
   function saveEdit() { onUpdate(form); setEditMode(false); }
   const iS = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1e293b", background: "#1a2332", color: "#e2e8f0", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none" };
@@ -646,6 +613,8 @@ function ProjectDetail({ project, phases, phaseMap, teamRoster, onUpdate, onDele
         ))}
 
         {detailTab === "hours" && <LaborHoursTab project={project} onUpdate={onUpdate} />}
+
+        {detailTab === "materials" && <MaterialsTab project={project} onUpdate={onUpdate} />}
 
         {detailTab === "scope" && (<div>
           <div style={{ marginBottom: 24 }}><label style={lS}>Scope Notes</label><textarea style={{ ...iS, minHeight: 80, resize: "vertical" }} value={project.scopeNotes || ""} onChange={e => onUpdate({ scopeNotes: e.target.value })} placeholder="Describe scope..." /></div>
@@ -708,6 +677,108 @@ function LaborHoursTab({ project, onUpdate }) {
 }
 function SC({ label, value, color }) { return (<div style={{ background: "#0f1729", borderRadius: 10, padding: "14px 16px", borderLeft: `3px solid ${color}` }}><div style={{ fontSize: 11, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>{label}</div><div style={{ fontSize: 20, fontWeight: 700, color, fontFamily: "'Outfit',sans-serif" }}>{value}</div></div>); }
 function IR({ icon: Icon, label, value }) { return (<div><div style={{ fontSize: 11, fontWeight: 600, color: "#64748b", marginBottom: 4, textTransform: "uppercase" }}>{label}</div><div style={{ fontSize: 13, color: value ? "#e2e8f0" : "#334155", display: "flex", alignItems: "center", gap: 6 }}><Icon size={13} style={{ color: "#475569" }} />{value || "—"}</div></div>); }
+
+/* ─── MATERIALS TAB ─── */
+function MaterialsTab({ project, onUpdate }) {
+  const [item, setItem] = useState(""); const [mfr, setMfr] = useState(""); const [qty, setQty] = useState(""); const [onHand, setOnHand] = useState("");
+  const [poNum, setPo] = useState(""); const [vendor, setVendor] = useState(""); const [status, setStatus] = useState("Pending Quote");
+  const [delivDate, setDelivDate] = useState(""); const [cost, setCost] = useState(""); const [mNotes, setMNotes] = useState("");
+  const [filter, setFilter] = useState("all"); const [editIdx, setEditIdx] = useState(null);
+  const materials = project.materials || [];
+  const iS = { width: "100%", padding: "7px 10px", borderRadius: 8, border: "1px solid #1e293b", background: "#0f1729", color: "#e2e8f0", fontSize: 12, fontFamily: "'DM Sans',sans-serif", outline: "none" };
+  const lS = { fontSize: 10, fontWeight: 600, color: "#64748b", marginBottom: 3, display: "block", textTransform: "uppercase", letterSpacing: "0.05em" };
+
+  const statusColors = { "Pending Quote": "#f59e0b", "Quoted": "#6366f1", "PO Issued": "#8b5cf6", "Ordered": "#3b82f6", "Backordered": "#ef4444", "Shipped": "#0ea5e9", "Delivered": "#10b981", "Installed": "#6b7280", "Returned": "#f06595" };
+
+  function addMaterial() {
+    if (!item.trim()) return;
+    const m = { id: genId(), item: item.trim(), manufacturer: mfr.trim(), qtyNeeded: qty, qtyOnHand: onHand, poNumber: poNum.trim(), vendor: vendor.trim(), status, deliveryDate: delivDate, cost: cost, notes: mNotes.trim() };
+    onUpdate({ materials: [...materials, m] });
+    setItem(""); setMfr(""); setQty(""); setOnHand(""); setPo(""); setVendor(""); setStatus("Pending Quote"); setDelivDate(""); setCost(""); setMNotes("");
+  }
+  function removeMaterial(idx) { onUpdate({ materials: materials.filter((_, i) => i !== idx) }); if (editIdx === idx) setEditIdx(null); }
+  function updateMaterial(idx, field, val) { const nm = materials.map((m, i) => i === idx ? { ...m, [field]: val } : m); onUpdate({ materials: nm }); }
+
+  const filtered = filter === "all" ? materials : materials.filter(m => m.status === filter);
+  const totalCost = materials.reduce((s, m) => s + (parseFloat(m.cost) || 0) * (parseInt(m.qtyNeeded) || 1), 0);
+  const deliveredCount = materials.filter(m => m.status === "Delivered" || m.status === "Installed").length;
+
+  return (
+    <div>
+      {/* Summary */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, marginBottom: 20 }}>
+        <SC label="Total Items" value={materials.length} color="#6366f1" />
+        <SC label="Delivered" value={deliveredCount} color="#10b981" />
+        <SC label="Backordered" value={materials.filter(m => m.status === "Backordered").length} color="#ef4444" />
+        <SC label="Est. Cost" value={`${totalCost.toLocaleString()}`} color="#f59e0b" />
+      </div>
+
+      {/* Filter */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 16, flexWrap: "wrap" }}>
+        <button onClick={() => setFilter("all")} style={{ padding: "4px 12px", borderRadius: 20, border: filter === "all" ? "2px solid #6366f1" : "1px solid #1e293b", background: filter === "all" ? "#6366f122" : "transparent", color: filter === "all" ? "#818cf8" : "#64748b", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>All ({materials.length})</button>
+        {MATERIAL_STATUSES.map(s => { const c = materials.filter(m => m.status === s).length; return c > 0 ? (
+          <button key={s} onClick={() => setFilter(s)} style={{ padding: "4px 12px", borderRadius: 20, border: filter === s ? `2px solid ${statusColors[s]}` : "1px solid #1e293b", background: filter === s ? statusColors[s] + "22" : "transparent", color: filter === s ? statusColors[s] : "#64748b", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{s} ({c})</button>
+        ) : null; })}
+      </div>
+
+      {/* Material List */}
+      {filtered.map((m, realIdx) => { const idx = materials.indexOf(m); return (
+        <div key={m.id} style={{ background: "#0f1729", borderRadius: 10, border: "1px solid #1e293b", padding: "14px 16px", marginBottom: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: editIdx === idx ? 12 : 0 }}>
+            <span style={{ fontSize: 12, padding: "3px 10px", borderRadius: 20, background: (statusColors[m.status] || "#6b7280") + "22", color: statusColors[m.status] || "#6b7280", fontWeight: 600, flexShrink: 0 }}>{m.status}</span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#fff" }}>{m.item}</div>
+              <div style={{ fontSize: 11, color: "#64748b" }}>{m.manufacturer}{m.vendor ? ` · ${m.vendor}` : ""}{m.poNumber ? ` · PO: ${m.poNumber}` : ""}</div>
+            </div>
+            <div style={{ textAlign: "right", flexShrink: 0 }}>
+              <div style={{ fontSize: 12, color: "#94a3b8" }}>Qty: {m.qtyNeeded || 0}{m.qtyOnHand ? ` (${m.qtyOnHand} on hand)` : ""}</div>
+              {m.cost && <div style={{ fontSize: 11, color: "#f59e0b" }}>${parseFloat(m.cost).toLocaleString()} ea</div>}
+            </div>
+            <button onClick={() => setEditIdx(editIdx === idx ? null : idx)} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer" }}><Edit2 size={13} /></button>
+            <button onClick={() => removeMaterial(idx)} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer" }}><X size={13} /></button>
+          </div>
+          {editIdx === idx && (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, paddingTop: 12, borderTop: "1px solid #1e293b" }}>
+              <div><label style={lS}>Item</label><input style={iS} value={m.item} onChange={e => updateMaterial(idx, "item", e.target.value)} /></div>
+              <div><label style={lS}>Manufacturer/Model</label><input style={iS} value={m.manufacturer} onChange={e => updateMaterial(idx, "manufacturer", e.target.value)} /></div>
+              <div><label style={lS}>Vendor</label><input style={iS} value={m.vendor} onChange={e => updateMaterial(idx, "vendor", e.target.value)} /></div>
+              <div><label style={lS}>Qty Needed</label><input type="number" style={iS} value={m.qtyNeeded} onChange={e => updateMaterial(idx, "qtyNeeded", e.target.value)} /></div>
+              <div><label style={lS}>Qty On Hand</label><input type="number" style={iS} value={m.qtyOnHand} onChange={e => updateMaterial(idx, "qtyOnHand", e.target.value)} /></div>
+              <div><label style={lS}>PO Number</label><input style={iS} value={m.poNumber} onChange={e => updateMaterial(idx, "poNumber", e.target.value)} /></div>
+              <div><label style={lS}>Status</label><select style={iS} value={m.status} onChange={e => updateMaterial(idx, "status", e.target.value)}>{MATERIAL_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
+              <div><label style={lS}>Delivery Date</label><input type="date" style={iS} value={m.deliveryDate} onChange={e => updateMaterial(idx, "deliveryDate", e.target.value)} /></div>
+              <div><label style={lS}>Unit Cost</label><input type="number" step="0.01" style={iS} value={m.cost} onChange={e => updateMaterial(idx, "cost", e.target.value)} /></div>
+              <div style={{ gridColumn: "1/-1" }}><label style={lS}>Notes</label><input style={iS} value={m.notes} onChange={e => updateMaterial(idx, "notes", e.target.value)} /></div>
+            </div>
+          )}
+        </div>
+      ); })}
+
+      {filtered.length === 0 && materials.length > 0 && <div style={{ textAlign: "center", padding: 24, color: "#334155", fontSize: 13 }}>No materials match this filter.</div>}
+      {materials.length === 0 && <div style={{ textAlign: "center", padding: 24, color: "#334155", fontSize: 13 }}>No materials added yet.</div>}
+
+      {/* Add New */}
+      <div style={{ background: "#1e293b", borderRadius: 10, padding: 16, marginTop: 16 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}><Package size={14} style={{ color: "#6366f1" }} /> Add Material</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+          <div><label style={lS}>Item *</label><input style={iS} value={item} onChange={e => setItem(e.target.value)} placeholder="e.g., 4MP Dome Camera" /></div>
+          <div><label style={lS}>Manufacturer/Model</label><input style={iS} value={mfr} onChange={e => setMfr(e.target.value)} placeholder="e.g., Axis M3106-LVE" /></div>
+          <div><label style={lS}>Vendor</label><input style={iS} value={vendor} onChange={e => setVendor(e.target.value)} placeholder="e.g., ADI / Anixter" /></div>
+          <div><label style={lS}>Qty Needed</label><input type="number" style={iS} value={qty} onChange={e => setQty(e.target.value)} /></div>
+          <div><label style={lS}>Qty On Hand</label><input type="number" style={iS} value={onHand} onChange={e => setOnHand(e.target.value)} /></div>
+          <div><label style={lS}>PO Number</label><input style={iS} value={poNum} onChange={e => setPo(e.target.value)} /></div>
+          <div><label style={lS}>Status</label><select style={iS} value={status} onChange={e => setStatus(e.target.value)}>{MATERIAL_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
+          <div><label style={lS}>Delivery Date</label><input type="date" style={iS} value={delivDate} onChange={e => setDelivDate(e.target.value)} /></div>
+          <div><label style={lS}>Unit Cost</label><input type="number" step="0.01" style={iS} value={cost} onChange={e => setCost(e.target.value)} /></div>
+          <div style={{ gridColumn: "1/-1" }}><label style={lS}>Notes</label><input style={iS} value={mNotes} onChange={e => setMNotes(e.target.value)} placeholder="Lead times, alternates, etc." /></div>
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
+          <button onClick={addMaterial} style={{ padding: "8px 18px", borderRadius: 8, border: "none", background: "#6366f1", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", opacity: item.trim() ? 1 : 0.4, display: "flex", alignItems: "center", gap: 6 }}><Plus size={14} /> Add Material</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /* ─── NEW PROJECT MODAL ─── */
 function NewProjectModal({ phases, onSave, onClose }) {
