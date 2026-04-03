@@ -1,8 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Plus, X, Users, Settings, LayoutGrid, Search, ArrowLeft, Layers, CalendarDays, Wifi, WifiOff, RefreshCw, Zap, LogOut, Shield, UserCheck, UserX, User, Clock, ChevronDown, ChevronUp, Target } from "lucide-react";
+import { Plus, X, Users, Settings, LayoutGrid, Search, ArrowLeft, Layers, CalendarDays, Wifi, WifiOff, RefreshCw, Zap, LogOut, Shield, UserCheck, UserX, User, Clock, ChevronDown, ChevronUp } from "lucide-react";
 import { auth, googleProvider, signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithPopup, onAuthStateChanged, signOut, updateProfile } from "./firebase.js";
-import DailyTracker, { TRACKER_SECTIONS } from "./DailyTracker.jsx";
-import SalesPipeline from "./SalesPipeline.jsx";
+import DailyTracker from "./DailyTracker.jsx";
 import Opportunities from "./Opportunities.jsx";
 import ProjectDetail from "./ProjectDetail.jsx";
 import TimesheetView from "./TimesheetView.jsx";
@@ -16,14 +15,14 @@ const DEFAULT_PHASES = [
   { id: "punch-list", name: "Punch List", color: "#ef4444" },
   { id: "closeout", name: "Closeout", color: "#6b7280" },
 ];
-const PROJECT_TYPES = ["Access Control", "Video Surveillance", "Intrusion Detection", "Structured Cabling", "Network Infrastructure"];
-const LABOR_PHASES = [
+export const PROJECT_TYPES = ["Access Control", "Video Surveillance", "Intrusion Detection", "Structured Cabling", "Network Infrastructure"];
+export const LABOR_PHASES = [
   { id: "rough-in", name: "Rough In" }, { id: "trim-out", name: "Trim Out" }, { id: "head-in", name: "Head In" },
   { id: "programming", name: "Programming" }, { id: "commissioning", name: "System Commissioning" },
   { id: "training", name: "Customer Training" }, { id: "pm", name: "Project Management" }, { id: "misc", name: "Miscellaneous" },
 ];
-const MATERIAL_STATUSES = ["Pending Quote", "Quoted", "PO Issued", "Ordered", "Backordered", "Shipped", "Delivered", "Installed", "Returned"];
-const TASK_CATEGORIES = [
+export const MATERIAL_STATUSES = ["Pending Quote", "Quoted", "PO Issued", "Ordered", "Backordered", "Shipped", "Delivered", "Installed", "Returned"];
+export const TASK_CATEGORIES = [
   { id: "priority", label: "Today's #1 Priority", icon: "🎯" },
   { id: "hotlist", label: "Hot List", icon: "🔥" },
   { id: "bids", label: "Bids & Estimates", icon: "📐" },
@@ -32,9 +31,9 @@ const TASK_CATEGORIES = [
   { id: "orders", label: "Orders & Submittals", icon: "📦" },
   { id: "scheduling", label: "Scheduling", icon: "📅" },
 ];
-const EMPTY_PROJECT = { id: "", name: "", customer: "", contactName: "", contactPhone: "", contactEmail: "", siteAddress: "", projectTypes: [], phaseId: "awarded", type: "retrofit", scopeNotes: "", bidAmount: "", contractAmount: "", devices: [], cableRuns: [], tasks: [], documents: [], notes: [], teamMembers: [], laborHours: null, materials: [], invoices: [], dailyLogs: [], createdAt: "", updatedAt: "" };
+export const EMPTY_PROJECT = { id: "", name: "", customer: "", contactName: "", contactPhone: "", contactEmail: "", siteAddress: "", projectTypes: [], phaseId: "awarded", type: "retrofit", scopeNotes: "", bidAmount: "", contractAmount: "", devices: [], cableRuns: [], tasks: [], documents: [], notes: [], teamMembers: [], laborHours: null, materials: [], invoices: [], dailyLogs: [], createdAt: "", updatedAt: "" };
 
-function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+export function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 
 const DEFAULTS = { projects: [], phases: DEFAULT_PHASES, teamRoster: [], schedule: {}, memberPrivate: {}, adminSettings: { predefinedEmail: "" } };
 
@@ -44,9 +43,6 @@ async function fbWrite(data) { const t = await getToken(); const r = await fetch
 async function fbReadUsers() { const t = await getToken(); const r = await fetch(`${FB_URL}/users.json${t ? `?auth=${t}` : ""}`); return await r.json() || {}; }
 async function fbWriteUser(uid, d) { const t = await getToken(); await fetch(`${FB_URL}/users/${uid}.json${t ? `?auth=${t}` : ""}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(d) }); }
 async function fbDeleteUser(uid) { const t = await getToken(); await fetch(`${FB_URL}/users/${uid}.json${t ? `?auth=${t}` : ""}`, { method: "DELETE" }); }
-
-// Export constants for child components
-export { PROJECT_TYPES, LABOR_PHASES, MATERIAL_STATUSES, TASK_CATEGORIES, EMPTY_PROJECT, genId, DEFAULT_PHASES };
 
 /* ═══ AUTH WRAPPER ═══ */
 export default function App() {
@@ -218,7 +214,6 @@ function Tracker({ user, userRecord }) {
     return () => { alive = false; if (es) es.close(); };
   }, []);
 
-  // Token refresh
   useEffect(() => {
     const interval = setInterval(async () => {
       if (eventSourceRef.current) eventSourceRef.current.close();
@@ -260,7 +255,6 @@ function Tracker({ user, userRecord }) {
   function getMyPrivate() { return (data.memberPrivate || {})[myName] || {}; }
   function saveMyPrivate(updates) { saveData({ ...data, memberPrivate: { ...(data.memberPrivate || {}), [myName]: { ...getMyPrivate(), ...updates } } }); }
 
-  // Auto-copy tasks to team member's daily tracker
   function assignTaskToMember(taskText, memberName, category) {
     const mp = (data.memberPrivate || {})[memberName] || {};
     const dt = mp.dailyTracker || {};
@@ -306,7 +300,6 @@ function Tracker({ user, userRecord }) {
             </button>
           ))}
 
-          {/* My Space */}
           <div style={{ padding: "16px 12px 6px", fontSize: 10, fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.08em" }}>My Space</div>
           {[
             { id: "daily", label: "Daily Task Board", icon: "📋" },
@@ -466,6 +459,7 @@ function UserAdminView() {
   const approved = Object.entries(users).filter(([, u]) => u.status === "approved");
   if (loading) return <div style={{ padding: 40, textAlign: "center", color: "#64748b" }}>Loading...</div>;
   return (<div style={{ maxWidth: 700, margin: "0 auto", padding: 24 }}>
+    <p style={{ fontSize: 13, color: "#64748b", marginBottom: 20 }}>Manage who can access FWT Workspaces.</p>
     {pending.length > 0 && <><div style={{ fontSize: 12, fontWeight: 700, color: "#f59e0b", marginBottom: 10, textTransform: "uppercase" }}>Pending ({pending.length})</div>
       {pending.map(([uid, u]) => (<div key={uid} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", background: "#1a2332", borderRadius: 10, border: "1px solid #f59e0b33", marginBottom: 6 }}><div style={{ flex: 1 }}><div style={{ fontSize: 14, fontWeight: 600, color: "#fff" }}>{u.displayName}</div><div style={{ fontSize: 12, color: "#64748b" }}>{u.email}</div></div><button onClick={() => approve(uid)} style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: "#10b981", color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Approve</button><button onClick={() => remove(uid)} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #7f1d1d", background: "transparent", color: "#ef4444", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Deny</button></div>))}</>}
     <div style={{ fontSize: 12, fontWeight: 700, color: "#10b981", marginBottom: 10, marginTop: pending.length > 0 ? 20 : 0, textTransform: "uppercase" }}>Approved ({approved.length})</div>
