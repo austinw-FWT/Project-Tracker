@@ -1,10 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Plus, X, Users, Settings, LayoutGrid, Search, ArrowLeft, Layers, CalendarDays, Wifi, WifiOff, RefreshCw, Zap, LogOut, Shield, UserCheck, UserX, User, Clock, ChevronDown, ChevronUp } from "lucide-react";
+import { Plus, X, Users, Settings, LayoutGrid, Search, ArrowLeft, Layers, CalendarDays, Wifi, WifiOff, RefreshCw, Zap, LogOut, Shield, UserCheck, UserX, User, Clock, ChevronDown, ChevronUp, Home, BookUser, ShieldCheck, Zap as ZapIcon, Copy } from "lucide-react";
 import { auth, googleProvider, signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithPopup, onAuthStateChanged, signOut, updateProfile } from "./firebase.js";
 import DailyTracker from "./DailyTracker.jsx";
 import Opportunities from "./Opportunities.jsx";
 import ProjectDetail from "./ProjectDetail.jsx";
 import TimesheetView from "./TimesheetView.jsx";
+import Dashboard from "./Dashboard.jsx";
+import Contacts from "./Contacts.jsx";
+import WarrantyTracker from "./WarrantyTracker.jsx";
 
 const FB_URL = "https://fwt-lv-tracker-default-rtdb.firebaseio.com";
 const DB_PATH = "/tracker";
@@ -35,7 +38,14 @@ export const EMPTY_PROJECT = { id: "", name: "", customer: "", contactName: "", 
 
 export function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 
-const DEFAULTS = { projects: [], phases: DEFAULT_PHASES, teamRoster: [], schedule: {}, memberPrivate: {}, adminSettings: { predefinedEmail: "" } };
+const DEFAULTS = { projects: [], phases: DEFAULT_PHASES, teamRoster: [], schedule: {}, memberPrivate: {}, contacts: [], adminSettings: { predefinedEmail: "" } };
+
+const PROJECT_TEMPLATES = [
+  { name: "Access Control Retrofit", projectTypes: ["Access Control"], type: "retrofit", tasks: [{ text: "Site survey — verify door hardware", category: "projects" }, { text: "Program controllers", category: "programming" }, { text: "Enroll credentials", category: "programming" }, { text: "Test all doors", category: "commissioning" }, { text: "Customer training", category: "training" }], devices: [{ name: "Card Reader", qty: "1", location: "" }, { name: "Door Controller", qty: "1", location: "" }, { name: "Electric Strike", qty: "1", location: "" }] },
+  { name: "Video Surveillance Retrofit", projectTypes: ["Video Surveillance"], type: "retrofit", tasks: [{ text: "Camera placement walkthrough", category: "projects" }, { text: "Run cable pathways", category: "projects" }, { text: "Mount and aim cameras", category: "projects" }, { text: "Configure NVR", category: "programming" }, { text: "Set up remote viewing", category: "programming" }, { text: "Customer training", category: "training" }], devices: [{ name: "IP Camera", qty: "1", location: "" }, { name: "NVR", qty: "1", location: "MDF" }] },
+  { name: "Structured Cabling — New Construction", projectTypes: ["Structured Cabling"], type: "new-construction", tasks: [{ text: "Review floor plans / drawings", category: "bids" }, { text: "Rough-in cable pathways", category: "projects" }, { text: "Pull cables", category: "projects" }, { text: "Terminate patch panels", category: "projects" }, { text: "Test and certify", category: "commissioning" }, { text: "As-built documentation", category: "projects" }], devices: [{ name: "Cat6 Cable (boxes)", qty: "1", location: "" }, { name: "Patch Panel 24-port", qty: "1", location: "MDF" }] },
+  { name: "Intrusion Detection System", projectTypes: ["Intrusion Detection"], type: "retrofit", tasks: [{ text: "Zone planning", category: "projects" }, { text: "Install sensors", category: "projects" }, { text: "Program alarm panel", category: "programming" }, { text: "Central station setup", category: "programming" }, { text: "Test all zones", category: "commissioning" }, { text: "Customer training", category: "training" }], devices: [{ name: "Alarm Panel", qty: "1", location: "" }, { name: "Motion Sensor", qty: "1", location: "" }, { name: "Door Contact", qty: "1", location: "" }] },
+];
 
 async function getToken() { if (!auth.currentUser) return null; return await auth.currentUser.getIdToken(); }
 async function fbRead() { const t = await getToken(); const r = await fetch(`${FB_URL}${DB_PATH}.json${t ? `?auth=${t}` : ""}`); if (!r.ok) throw new Error("Read failed"); return await r.json(); }
@@ -150,13 +160,15 @@ function PendingScreen({ user, error }) {
 function Tracker({ user, userRecord }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState("board");
+  const [view, setView] = useState("dashboard");
   const [mySpaceTab, setMySpaceTab] = useState("daily");
   const [selectedProject, setSelectedProject] = useState(null);
   const [detailTab, setDetailTab] = useState("overview");
   const [searchTerm, setSearchTerm] = useState("");
   const [dragItem, setDragItem] = useState(null);
   const [showNewProject, setShowNewProject] = useState(false);
+  const [showQuickAdd, setShowQuickAdd] = useState(false);
+  const [showTemplates, setShowTemplates] = useState(false);
   const [newPhaseName, setNewPhaseName] = useState(""); const [newPhaseColor, setNewPhaseColor] = useState("#6366f1");
   const [newTeamName, setNewTeamName] = useState(""); const [newTeamRole, setNewTeamRole] = useState("");
   const [syncStatus, setSyncStatus] = useState("connecting");
@@ -288,8 +300,11 @@ function Tracker({ user, userRecord }) {
         </div>
         <nav style={{ padding: "12px 8px", flex: 1, overflowY: "auto" }}>
           {[
+            { id: "dashboard", icon: Home, label: "Dashboard" },
             { id: "board", icon: LayoutGrid, label: "Project Board" },
             { id: "schedule", icon: CalendarDays, label: "Team Schedule" },
+            { id: "contacts", icon: BookUser, label: "Contacts" },
+            { id: "warranties", icon: ShieldCheck, label: "Warranties" },
             { id: "team", icon: Users, label: "Team" },
             { id: "settings", icon: Settings, label: "Phases" },
             ...(isAdmin ? [{ id: "admin", icon: Shield, label: "User Admin" }] : []),
@@ -343,15 +358,21 @@ function Tracker({ user, userRecord }) {
             </>
           ) : (
             <div style={{ fontSize: 15, fontWeight: 600, color: "#fff" }}>
-              {view === "myspace" ? (mySpaceTab === "daily" ? "My Daily Task Board" : mySpaceTab === "opportunities" ? "My Opportunities" : "My Timesheets") : view === "team" ? "Team Roster" : view === "schedule" ? "Team Schedule" : view === "admin" ? "User Administration" : "Phase Management"}
+              {view === "myspace" ? (mySpaceTab === "daily" ? "My Daily Task Board" : mySpaceTab === "opportunities" ? "My Opportunities" : "My Timesheets") : view === "team" ? "Team Roster" : view === "schedule" ? "Team Schedule" : view === "admin" ? "User Administration" : view === "contacts" ? "Contacts & Customers" : view === "warranties" ? "Warranty Tracker" : view === "dashboard" ? "Dashboard" : "Phase Management"}
             </div>
           )}
         </div>
         <div style={{ flex: 1, overflow: "auto" }}>
           {selectedProject ? (
             <ProjectDetail project={selectedProject} phases={data.phases} phaseMap={phaseMap} teamRoster={data.teamRoster} onUpdate={u => updateProject(selectedProject.id, u)} onDelete={() => deleteProject(selectedProject.id)} detailTab={detailTab} setDetailTab={setDetailTab} assignTaskToMember={assignTaskToMember} />
+          ) : view === "dashboard" ? (
+            <Dashboard data={data} myName={myName} onSelectProject={p => { setSelectedProject(p); setDetailTab("overview"); }} onNavigate={(v, tab) => { setView(v); if (tab) setMySpaceTab(tab); }} />
           ) : view === "board" ? (
             <KanbanBoard projects={filteredProjects} phases={data.phases} onSelectProject={p => { setSelectedProject(p); setDetailTab("overview"); }} onDragStart={setDragItem} onDrop={handleDrop} dragItem={dragItem} />
+          ) : view === "contacts" ? (
+            <Contacts contacts={data.contacts || []} projects={data.projects} onSave={c => saveData({ ...data, contacts: c })} />
+          ) : view === "warranties" ? (
+            <WarrantyTracker projects={data.projects} onUpdateProject={(pid, u) => updateProject(pid, u)} />
           ) : view === "myspace" && mySpaceTab === "daily" ? (
             <DailyTracker data={getMyPrivate().dailyTracker} archivedDays={getMyPrivate().archivedDays || []} onSave={dt => saveMyPrivate({ dailyTracker: dt })} onArchive={archive => saveMyPrivate({ archivedDays: archive })} />
           ) : view === "myspace" && mySpaceTab === "opportunities" ? (
@@ -377,14 +398,30 @@ function Tracker({ user, userRecord }) {
           )}
         </div>
       </div>
-      {showNewProject && <NewProjectModal phases={data.phases} onSave={addProject} onClose={() => setShowNewProject(false)} />}
+      {showNewProject && <NewProjectModal phases={data.phases} onSave={addProject} onClose={() => setShowNewProject(false)} templates={PROJECT_TEMPLATES} />}
+
+      {/* Quick Add Button */}
+      <QuickAddButton projects={data.projects} onAddTask={(pid, task) => updateProject(pid, { tasks: [...((data.projects.find(p => p.id === pid)?.tasks) || []), { ...task, id: genId(), done: false }] })} onAddNote={(pid, note) => updateProject(pid, { notes: [{ text: note, date: new Date().toISOString() }, ...((data.projects.find(p => p.id === pid)?.notes) || [])] })} onAddMaterial={(pid, item) => updateProject(pid, { materials: [...((data.projects.find(p => p.id === pid)?.materials) || []), { id: genId(), item, manufacturer: "", vendor: "", qtyNeeded: "1", qtyOnHand: "", poNumber: "", status: "Pending Quote", deliveryDate: "", cost: "", notes: "" }] })} />
     </div>
   );
 }
 
 /* ═══ KANBAN BOARD ═══ */
 function KanbanBoard({ projects, phases, onSelectProject, onDragStart, onDrop, dragItem }) {
+  const orphaned = projects.filter(p => !phases.some(ph => ph.id === p.phaseId));
   return (<div style={{ display: "flex", gap: 12, padding: "16px 20px", height: "100%", overflowX: "auto", alignItems: "flex-start" }}>
+    {orphaned.length > 0 && (
+      <div style={{ minWidth: 280, maxWidth: 280, background: "#1a2332", borderRadius: 12, border: "2px dashed #f59e0b", display: "flex", flexDirection: "column", maxHeight: "100%", flexShrink: 0 }}>
+        <div style={{ padding: "14px 14px 10px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid #1e293b" }}><div style={{ width: 10, height: 10, borderRadius: "50%", background: "#f59e0b" }} /><span style={{ fontSize: 13, fontWeight: 600, color: "#f59e0b", flex: 1 }}>Needs Reassignment</span><span style={{ fontSize: 11, color: "#64748b", background: "#0f1729", borderRadius: 10, padding: "2px 8px" }}>{orphaned.length}</span></div>
+        <div style={{ padding: 8, overflowY: "auto", flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+          {orphaned.map(p => (<div key={p.id} onClick={() => onSelectProject(p)} style={{ padding: 12, borderRadius: 8, background: "#0f1729", border: "1px solid #f59e0b33", cursor: "pointer" }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "#fff", marginBottom: 4 }}>{p.name}</div>
+            <div style={{ fontSize: 11, color: "#f59e0b", marginBottom: 4 }}>Phase "{p.phaseId}" no longer exists</div>
+            <div style={{ fontSize: 11, color: "#64748b" }}>{p.customer}</div>
+          </div>))}
+        </div>
+      </div>
+    )}
     {phases.map(phase => { const pp = projects.filter(p => p.phaseId === phase.id); const isOver = dragItem && dragItem.phaseId !== phase.id; return (
       <div key={phase.id} onDragOver={e => e.preventDefault()} onDrop={() => onDrop(phase.id)} style={{ minWidth: 280, maxWidth: 280, background: "#1a2332", borderRadius: 12, border: isOver ? `2px dashed ${phase.color}` : "1px solid #1e293b", display: "flex", flexDirection: "column", maxHeight: "100%", flexShrink: 0 }}>
         <div style={{ padding: "14px 14px 10px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid #1e293b" }}><div style={{ width: 10, height: 10, borderRadius: "50%", background: phase.color }} /><span style={{ fontSize: 13, fontWeight: 600, color: "#fff", flex: 1 }}>{phase.name}</span><span style={{ fontSize: 11, color: "#64748b", background: "#0f1729", borderRadius: 10, padding: "2px 8px" }}>{pp.length}</span></div>
@@ -467,8 +504,43 @@ function UserAdminView() {
   </div>);
 }
 
+/* ═══ QUICK ADD BUTTON ═══ */
+function QuickAddButton({ projects, onAddTask, onAddNote, onAddMaterial }) {
+  const [open, setOpen] = useState(false);
+  const [type, setType] = useState("task");
+  const [pid, setPid] = useState("");
+  const [text, setText] = useState("");
+  const qS = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1e293b", background: "#0f1729", color: "#e2e8f0", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none" };
+  function submit() {
+    if (!text.trim() || !pid) return;
+    if (type === "task") onAddTask(pid, { text: text.trim(), assignee: "", category: "projects" });
+    else if (type === "note") onAddNote(pid, text.trim());
+    else if (type === "material") onAddMaterial(pid, text.trim());
+    setText(""); setOpen(false);
+  }
+  return (<>
+    <button onClick={() => setOpen(!open)} style={{ position: "fixed", bottom: 24, right: 24, width: 52, height: 52, borderRadius: "50%", border: "none", background: "linear-gradient(135deg, #6366f1, #8b5cf6)", color: "#fff", fontSize: 24, cursor: "pointer", boxShadow: "0 4px 20px rgba(99,102,241,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 90, transition: "transform 0.2s", transform: open ? "rotate(45deg)" : "none" }}><Plus size={24} /></button>
+    {open && (
+      <div style={{ position: "fixed", bottom: 88, right: 24, width: 340, background: "#1a2332", borderRadius: 16, border: "1px solid #1e293b", padding: 20, zIndex: 90, boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}>⚡ Quick Add</div>
+        <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
+          {["task", "note", "material"].map(t => (<button key={t} onClick={() => setType(t)} style={{ flex: 1, padding: "6px", borderRadius: 8, border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", background: type === t ? "#6366f1" : "transparent", color: type === t ? "#fff" : "#64748b", textTransform: "capitalize" }}>{t}</button>))}
+        </div>
+        <select style={{ ...qS, marginBottom: 8 }} value={pid} onChange={e => setPid(e.target.value)}>
+          <option value="">Select project...</option>
+          {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+        <input style={qS} value={text} onChange={e => setText(e.target.value)} placeholder={type === "task" ? "Task description..." : type === "note" ? "Note..." : "Material item..."} onKeyDown={e => { if (e.key === "Enter") submit(); }} />
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
+          <button onClick={submit} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: "#6366f1", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", opacity: text.trim() && pid ? 1 : 0.4 }}>Add</button>
+        </div>
+      </div>
+    )}
+  </>);
+}
+
 /* ═══ NEW PROJECT MODAL ═══ */
-function NewProjectModal({ phases, onSave, onClose }) {
+function NewProjectModal({ phases, onSave, onClose, templates }) {
   const [form, setForm] = useState({ ...EMPTY_PROJECT, phaseId: phases[0]?.id || "" });
   const iS = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1e293b", background: "#0f1729", color: "#e2e8f0", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none" };
   const lS = { fontSize: 11, fontWeight: 600, color: "#64748b", marginBottom: 4, display: "block", textTransform: "uppercase", letterSpacing: "0.05em" };
@@ -476,6 +548,14 @@ function NewProjectModal({ phases, onSave, onClose }) {
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
       <div style={{ background: "#1a2332", borderRadius: 16, border: "1px solid #1e293b", padding: 24, width: 520, maxHeight: "85vh", overflowY: "auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 20 }}><h2 style={{ fontSize: 18, fontWeight: 700, color: "#fff", fontFamily: "'Outfit',sans-serif", margin: 0 }}>New Project</h2><button onClick={onClose} style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer" }}><X size={18} /></button></div>
+        {templates && templates.length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: "#64748b", marginBottom: 6, textTransform: "uppercase" }}>Start from template</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {templates.map((t, i) => (<button key={i} onClick={() => setForm({ ...form, name: form.name || t.name, projectTypes: t.projectTypes || [], type: t.type || "retrofit", tasks: (t.tasks || []).map(tk => ({ ...tk, id: genId(), done: false })), devices: t.devices || [] })} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #1e293b", background: "#0f1729", color: "#94a3b8", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 4 }}><Copy size={11} /> {t.name}</button>))}
+            </div>
+          </div>
+        )}
         <div style={{ display: "grid", gap: 14 }}>
           <div><label style={lS}>Project Name *</label><input style={iS} value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}><div><label style={lS}>Customer *</label><input style={iS} value={form.customer} onChange={e => setForm({ ...form, customer: e.target.value })} /></div><div><label style={lS}>Contact</label><input style={iS} value={form.contactName} onChange={e => setForm({ ...form, contactName: e.target.value })} /></div></div>
