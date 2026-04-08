@@ -485,6 +485,38 @@ function PhaseSettings({ phases, newPhaseName, setNewPhaseName, newPhaseColor, s
   </div>);
 }
 
+function PredefinedEmailSetting() {
+  const [email, setEmail] = useState("");
+  const [saved, setSaved] = useState(false);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    (async () => {
+      try {
+        const t = await getToken();
+        const r = await fetch(`${FB_URL}/tracker/adminSettings.json${t ? `?auth=${t}` : ""}`);
+        const d = await r.json();
+        if (d?.predefinedEmail) setEmail(d.predefinedEmail);
+      } catch {}
+      setLoading(false);
+    })();
+  }, []);
+  async function save() {
+    try {
+      const t = await getToken();
+      await fetch(`${FB_URL}/tracker/adminSettings.json${t ? `?auth=${t}` : ""}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ predefinedEmail: email.trim() }) });
+      setSaved(true); setTimeout(() => setSaved(false), 2000);
+    } catch {}
+  }
+  const eS = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1e293b", background: "#0f1729", color: "#e2e8f0", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none" };
+  if (loading) return <div style={{ fontSize: 12, color: "#475569" }}>Loading...</div>;
+  return (
+    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+      <input style={{ ...eS, flex: 1 }} type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="additional-recipient@company.com" />
+      <button onClick={save} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: saved ? "#10b981" : "#6366f1", color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>{saved ? "✓ Saved" : "Save"}</button>
+    </div>
+  );
+}
+
 function UserAdminView() {
   const [users, setUsers] = useState({}); const [loading, setLoading] = useState(true);
   useEffect(() => { load(); }, []);
@@ -497,6 +529,14 @@ function UserAdminView() {
   if (loading) return <div style={{ padding: 40, textAlign: "center", color: "#64748b" }}>Loading...</div>;
   return (<div style={{ maxWidth: 700, margin: "0 auto", padding: 24 }}>
     <p style={{ fontSize: 13, color: "#64748b", marginBottom: 20 }}>Manage who can access FWT Workspaces.</p>
+
+    {/* Predefined Email Setting */}
+    <div style={{ background: "#1a2332", borderRadius: 12, border: "1px solid #1e293b", padding: 20, marginBottom: 24 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", marginBottom: 10, textTransform: "uppercase" }}>Email Notifications</div>
+      <p style={{ fontSize: 12, color: "#64748b", marginBottom: 10 }}>Daily logs, timesheets, and task notifications are automatically emailed to all admins. Add an additional recipient below (e.g., office manager, payroll).</p>
+      <PredefinedEmailSetting />
+    </div>
+
     {pending.length > 0 && <><div style={{ fontSize: 12, fontWeight: 700, color: "#f59e0b", marginBottom: 10, textTransform: "uppercase" }}>Pending ({pending.length})</div>
       {pending.map(([uid, u]) => (<div key={uid} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", background: "#1a2332", borderRadius: 10, border: "1px solid #f59e0b33", marginBottom: 6 }}><div style={{ flex: 1 }}><div style={{ fontSize: 14, fontWeight: 600, color: "#fff" }}>{u.displayName}</div><div style={{ fontSize: 12, color: "#64748b" }}>{u.email}</div></div><button onClick={() => approve(uid)} style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: "#10b981", color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Approve</button><button onClick={() => remove(uid)} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #7f1d1d", background: "transparent", color: "#ef4444", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Deny</button></div>))}</>}
     <div style={{ fontSize: 12, fontWeight: 700, color: "#10b981", marginBottom: 10, marginTop: pending.length > 0 ? 20 : 0, textTransform: "uppercase" }}>Approved ({approved.length})</div>
