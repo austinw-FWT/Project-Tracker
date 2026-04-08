@@ -8,6 +8,20 @@ const sS = { fontSize: 10, fontWeight: 600, color: "#64748b", marginBottom: 3, d
 function IR({ icon: Icon, label, value }) { return (<div><div style={lS}>{label}</div><div style={{ fontSize: 13, color: value ? "#e2e8f0" : "#334155", display: "flex", alignItems: "center", gap: 6 }}><Icon size={13} style={{ color: "#475569" }} />{value || "—"}</div></div>); }
 function SC({ label, value, color }) { return (<div style={{ background: "#0f1729", borderRadius: 10, padding: "14px 16px", borderLeft: `3px solid ${color}` }}><div style={{ fontSize: 11, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>{label}</div><div style={{ fontSize: 20, fontWeight: 700, color, fontFamily: "'Outfit',sans-serif" }}>{value}</div></div>); }
 
+const FB_FUNCTIONS_URL = "https://us-central1-fwt-lv-tracker.cloudfunctions.net";
+
+async function callFunction(name, data) {
+  try {
+    const { getAuth } = await import("firebase/auth");
+    const token = await getAuth().currentUser?.getIdToken();
+    const r = await fetch(`${FB_FUNCTIONS_URL}/${name}`, {
+      method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+      body: JSON.stringify({ data }),
+    });
+    return await r.json();
+  } catch (e) { console.error(`Function ${name} failed:`, e); return null; }
+}
+
 export default function ProjectDetail({ project, phases, phaseMap, teamRoster, onUpdate, onDelete, detailTab, setDetailTab, assignTaskToMember }) {
   const [editMode, setEditMode] = useState(false);
   const [form, setForm] = useState(project);
@@ -259,7 +273,20 @@ function ScopeTab({ project, onUpdate }) {
 /* ── TASKS ── */
 function TasksTab({ project, onUpdate, teamRoster, assignTaskToMember }) {
   const [nt, setNt] = useState(""); const [na, setNa] = useState(""); const [nc, setNc] = useState("projects");
-  function add() { if (!nt.trim()) return; const task = { text: nt.trim(), assignee: na, category: nc, done: false, id: genId() }; onUpdate({ tasks: [...(project.tasks || []), task] }); if (na && assignTaskToMember) assignTaskToMember(nt.trim(), na, nc); setNt(""); setNa(""); }
+  function add() {
+    if (!nt.trim()) return;
+    const task = { text: nt.trim(), assignee: na, category: nc, done: false, id: genId() };
+    onUpdate({ tasks: [...(project.tasks || []), task] });
+    if (na && assignTaskToMember) {
+      assignTaskToMember(nt.trim(), na, nc);
+      // Send email notification
+      const member = teamRoster.find(t => t.name === na);
+      if (member?.email) {
+        callFunction("emailTaskAssignment", { projectName: project.name, task, assigneeEmail: member.email });
+      }
+    }
+    setNt(""); setNa("");
+  }
   return (<div>
     {(project.tasks || []).map((t, i) => (
       <div key={t.id || i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 0", borderBottom: "1px solid #1e293b" }}>
@@ -282,8 +309,20 @@ function TasksTab({ project, onUpdate, teamRoster, assignTaskToMember }) {
 /* ── DAILY LOG ── */
 function DailyLogTab({ project, onUpdate }) {
   const [date, setDate] = useState(new Date().toISOString().split("T")[0]); const [member, setMember] = useState(""); const [hours, setHours] = useState(""); const [act, setAct] = useState("");
+  const [sending, setSending] = useState(false); const [sent, setSent] = useState(false);
   const logs = project.dailyLogs || [];
-  function add() { if (!act.trim()) return; onUpdate({ dailyLogs: [{ id: genId(), date, member, hours: parseFloat(hours) || 0, activities: act.trim(), createdAt: new Date().toISOString() }, ...logs] }); setAct(""); setHours(""); }
+  function add() {
+    if (!act.trim()) return;
+    const log = { id: genId(), date, member, hours: parseFloat(hours) || 0, activities: act.trim(), createdAt: new Date().toISOString() };
+    onUpdate({ dailyLogs: [log, ...logs] });
+    // Send email
+    setSending(true);
+    callFunction("emailDailyLog", { projectName: project.name, log }).then(r => {
+      if (r?.result?.success) { setSent(true); setTimeout(() => setSent(false), 3000); }
+      setSending(false);
+    });
+    setAct(""); setHours("");
+  }
   return (<div>
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
       <div><label style={sS}>Date</label><input type="date" style={iS} value={date} onChange={e => setDate(e.target.value)} /></div>
@@ -291,7 +330,11 @@ function DailyLogTab({ project, onUpdate }) {
       <div><label style={sS}>Hours</label><input type="number" step="0.25" style={iS} value={hours} onChange={e => setHours(e.target.value)} /></div>
     </div>
     <div><label style={sS}>Activities</label><textarea style={{ ...iS, minHeight: 50, resize: "vertical" }} value={act} onChange={e => setAct(e.target.value)} placeholder="Work performed..." /></div>
-    <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8, marginBottom: 16 }}><button onClick={add} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: "#6366f1", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", opacity: act.trim() ? 1 : 0.4 }}><Plus size={14} /> Log</button></div>
+    <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8, marginBottom: 16, gap: 8, alignItems: "center" }}>
+      {sent && <span style={{ fontSize: 12, color: "#10b981", fontWeight: 600 }}>✓ Email sent to admins</span>}
+      {sending && <span style={{ fontSize: 12, color: "#6366f1" }}>Sending email...</span>}
+      <button onClick={add} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: "#6366f1", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", opacity: act.trim() ? 1 : 0.4 }}><Plus size={14} /> Post & Email Log</button>
+    </div>
     {logs.map((l, i) => (<div key={l.id} style={{ padding: "12px 14px", background: "#0f1729", borderRadius: 10, border: "1px solid #1e293b", marginBottom: 6 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}><span style={{ fontSize: 12, fontWeight: 600, color: "#fff" }}>{l.date}</span>{l.member && <span style={{ fontSize: 11, color: "#64748b" }}>· {l.member}</span>}{l.hours > 0 && <span style={{ fontSize: 11, color: "#f59e0b", fontWeight: 600 }}>{l.hours}h</span>}<button onClick={() => onUpdate({ dailyLogs: logs.filter((_, idx) => idx !== i) })} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer", marginLeft: "auto" }}><X size={12} /></button></div>
       <div style={{ fontSize: 13, color: "#e2e8f0", whiteSpace: "pre-wrap" }}>{l.activities}</div>
