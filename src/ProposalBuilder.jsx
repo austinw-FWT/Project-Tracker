@@ -41,26 +41,26 @@ const DEFAULT_TERMS = [
 ];
 
 const DEFAULT_LABOR_ROWS = [
-  { id: "lr", manf: "FWT", partNum: "FWT", desc: "LABOR - ROUGH IN", qty: 0, unit: "HR", costPU: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isLabor: true },
-  { id: "lt", manf: "FWT", partNum: "FWT", desc: "LABOR - TRIM", qty: 0, unit: "HR", costPU: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isLabor: true },
-  { id: "lh", manf: "FWT", partNum: "FWT", desc: "LABOR - HEAD END", qty: 0, unit: "HR", costPU: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isLabor: true },
-  { id: "lp", manf: "FWT", partNum: "FWT", desc: "LABOR - PROGRAMMING", qty: 0, unit: "HR", costPU: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isLabor: true },
-  { id: "lm", manf: "FWT", partNum: "FWT", desc: "LABOR - PROJECT MGT", qty: 0, unit: "HR", costPU: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isLabor: true },
-  { id: "lv", manf: "FWT", partNum: "FWT", desc: "LABOR - TRAVEL", qty: 0, unit: "HR", costPU: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isLabor: true },
+  { id: "lr", manf: "FWT", partNum: "FWT", desc: "LABOR - ROUGH IN", qty: 0, unit: "HR", costPU: 0, markupPct: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isLabor: true },
+  { id: "lt", manf: "FWT", partNum: "FWT", desc: "LABOR - TRIM", qty: 0, unit: "HR", costPU: 0, markupPct: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isLabor: true },
+  { id: "lh", manf: "FWT", partNum: "FWT", desc: "LABOR - HEAD END", qty: 0, unit: "HR", costPU: 0, markupPct: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isLabor: true },
+  { id: "lp", manf: "FWT", partNum: "FWT", desc: "LABOR - PROGRAMMING", qty: 0, unit: "HR", costPU: 0, markupPct: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isLabor: true },
+  { id: "lm", manf: "FWT", partNum: "FWT", desc: "LABOR - PROJECT MGT", qty: 0, unit: "HR", costPU: 0, markupPct: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isLabor: true },
+  { id: "lv", manf: "FWT", partNum: "FWT", desc: "LABOR - TRAVEL", qty: 0, unit: "HR", costPU: 0, markupPct: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isLabor: true },
 ];
 
 const DEFAULT_COST_ROWS = [
-  { id: "cp", manf: "FWT", partNum: "FWT", desc: "PERMIT ALLOWANCE", qty: 1, unit: "EA", costPU: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isCost: true },
-  { id: "cr", manf: "FWT", partNum: "FWT", desc: "RENTAL EQUIPMENT", qty: 1, unit: "EA", costPU: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isCost: true },
-  { id: "cd", manf: "FWT", partNum: "FWT", desc: "PER DIEM PER TECH", qty: 0, unit: "DAY", costPU: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isCost: true },
-  { id: "cs", manf: "FWT", partNum: "FWT", desc: "VENDOR SHIPPING ALLOWANCE", qty: 1, unit: "EA", costPU: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isCost: true },
+  { id: "cp", manf: "FWT", partNum: "FWT", desc: "PERMIT ALLOWANCE", qty: 1, unit: "EA", costPU: 0, markupPct: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isCost: true },
+  { id: "cr", manf: "FWT", partNum: "FWT", desc: "RENTAL EQUIPMENT", qty: 1, unit: "EA", costPU: 0, markupPct: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isCost: true },
+  { id: "cd", manf: "FWT", partNum: "FWT", desc: "PER DIEM PER TECH", qty: 0, unit: "DAY", costPU: 0, markupPct: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isCost: true },
+  { id: "cs", manf: "FWT", partNum: "FWT", desc: "VENDOR SHIPPING ALLOWANCE", qty: 1, unit: "EA", costPU: 0, markupPct: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isCost: true },
 ];
 
 const DEFAULT_RMR_ROWS = [
-  { id: "r1", manf: "FWT", partNum: "FWT-RMR", desc: "", qty: 1, unit: "MO", costPU: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isRmr: true },
+  { id: "r1", manf: "FWT", partNum: "FWT-RMR", desc: "", qty: 1, unit: "MO", costPU: 0, markupPct: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isRmr: true },
 ];
 
-function emptyMaterialRow() { return { id: genId(), manf: "", partNum: "", desc: "", qty: 0, unit: "EA", costPU: 0, pricePU: 0, laborHrs: 0, laborRate: 0 }; }
+function emptyMaterialRow() { return { id: genId(), manf: "", partNum: "", desc: "", qty: 0, unit: "EA", costPU: 0, markupPct: 25, pricePU: 0, laborHrs: 0, laborRate: 0 }; }
 
 const iS = { width: "100%", padding: "5px 8px", borderRadius: 6, border: "1px solid #1e293b", background: "#0f1729", color: "#e2e8f0", fontSize: 12, fontFamily: "'DM Sans',sans-serif", outline: "none" };
 const nS = { ...iS, textAlign: "right" };
@@ -81,7 +81,17 @@ export function TakeoffBuilder({ takeoff, onSave }) {
   function save(m, l, c, r, oh, n) { onSave({ materials: m || materials, labor: l || labor, costs: c || costs, rmr: r || rmr, overheadPct: oh !== undefined ? oh : overheadPct, notes: n !== undefined ? n : notes }); }
 
   function updRow(arr, setArr, idx, field, val, section) {
-    const n = arr.map((r, i) => i === idx ? { ...r, [field]: field === "desc" || field === "manf" || field === "partNum" || field === "unit" ? val : parseFloat(val) || 0 } : r);
+    const n = arr.map((r, i) => {
+      if (i !== idx) return r;
+      const updated = { ...r, [field]: field === "desc" || field === "manf" || field === "partNum" || field === "unit" ? val : parseFloat(val) || 0 };
+      // Auto-calculate price from cost + markup
+      if (field === "costPU" || field === "markupPct") {
+        const cost = field === "costPU" ? (parseFloat(val) || 0) : updated.costPU;
+        const markup = field === "markupPct" ? (parseFloat(val) || 0) : updated.markupPct;
+        updated.pricePU = Math.round(cost * (1 + markup / 100) * 100) / 100;
+      }
+      return updated;
+    });
     setArr(n);
     if (section === "materials") save(n, null, null, null);
     else if (section === "labor") save(null, n, null, null);
@@ -127,15 +137,16 @@ export function TakeoffBuilder({ takeoff, onSave }) {
       <div style={{ marginBottom: 16 }}>
         <div style={{ fontSize: 12, fontWeight: 700, color, textTransform: "uppercase", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>{title}</div>
         {rows.map((row, idx) => (
-          <div key={row.id} style={{ display: "grid", gridTemplateColumns: "80px 90px 1fr 50px 40px 80px 80px 80px 50px 60px 80px 24px", gap: 4, marginBottom: 3, alignItems: "center" }}>
+          <div key={row.id} style={{ display: "grid", gridTemplateColumns: "80px 90px 1fr 50px 40px 80px 55px 80px 80px 50px 60px 80px 24px", gap: 4, marginBottom: 3, alignItems: "center" }}>
             <input style={iS} value={row.manf} onChange={e => updRow(rows, setRows, idx, "manf", e.target.value, section)} placeholder="Manf" />
             <input style={iS} value={row.partNum} onChange={e => updRow(rows, setRows, idx, "partNum", e.target.value, section)} placeholder="Part #" />
             <input style={iS} value={row.desc} onChange={e => updRow(rows, setRows, idx, "desc", e.target.value, section)} placeholder="Description" />
             <input type="number" style={nS} value={row.qty || ""} onChange={e => updRow(rows, setRows, idx, "qty", e.target.value, section)} placeholder="0" />
             <input style={iS} value={row.unit} onChange={e => updRow(rows, setRows, idx, "unit", e.target.value, section)} placeholder="EA" />
             <input type="number" step="0.01" style={nS} value={row.costPU || ""} onChange={e => updRow(rows, setRows, idx, "costPU", e.target.value, section)} placeholder="Cost" />
-            <input type="number" step="0.01" style={nS} value={row.pricePU || ""} onChange={e => updRow(rows, setRows, idx, "pricePU", e.target.value, section)} placeholder="Price" />
-            <div style={{ fontSize: 12, color: "#e2e8f0", textAlign: "right", fontWeight: 600 }}>${(row.qty * row.pricePU).toFixed(2)}</div>
+            <input type="number" step="1" style={{ ...nS, color: "#f59e0b" }} value={row.markupPct ?? ""} onChange={e => updRow(rows, setRows, idx, "markupPct", e.target.value, section)} placeholder="%" />
+            <div style={{ fontSize: 12, color: "#10b981", textAlign: "right", fontWeight: 600 }}>${(row.pricePU || 0).toFixed(2)}</div>
+            <div style={{ fontSize: 12, color: "#e2e8f0", textAlign: "right", fontWeight: 600 }}>${(row.qty * (row.pricePU || 0)).toFixed(2)}</div>
             <input type="number" step="0.5" style={nS} value={row.laborHrs || ""} onChange={e => updRow(rows, setRows, idx, "laborHrs", e.target.value, section)} placeholder="Hrs" />
             <input type="number" step="0.01" style={nS} value={row.laborRate || ""} onChange={e => updRow(rows, setRows, idx, "laborRate", e.target.value, section)} placeholder="Rate" />
             <div style={{ fontSize: 12, color: "#f59e0b", textAlign: "right", fontWeight: 600 }}>${(row.laborHrs * row.laborRate).toFixed(2)}</div>
@@ -158,8 +169,8 @@ export function TakeoffBuilder({ takeoff, onSave }) {
       </div>
 
       {/* Column Headers */}
-      <div style={{ display: "grid", gridTemplateColumns: "80px 90px 1fr 50px 40px 80px 80px 80px 50px 60px 80px 24px", gap: 4, marginBottom: 8, padding: "0 0 6px", borderBottom: "1px solid #1e293b" }}>
-        {["Manf", "Part #", "Description", "Qty", "Unit", "Cost/U", "Price/U", "Ext Price", "Hrs", "Rate", "Ext Labor", ""].map(h => (
+      <div style={{ display: "grid", gridTemplateColumns: "80px 90px 1fr 50px 40px 80px 55px 80px 80px 50px 60px 80px 24px", gap: 4, marginBottom: 8, padding: "0 0 6px", borderBottom: "1px solid #1e293b" }}>
+        {["Manf", "Part #", "Description", "Qty", "Unit", "Cost/U", "Mkup%", "Price/U", "Ext Price", "Hrs", "Rate", "Ext Labor", ""].map(h => (
           <div key={h} style={{ fontSize: 10, fontWeight: 700, color: "#475569", textTransform: "uppercase" }}>{h}</div>
         ))}
       </div>
@@ -168,13 +179,13 @@ export function TakeoffBuilder({ takeoff, onSave }) {
       {renderSection("Materials", "#6366f1", materials, setMaterials, "materials", () => addRow(materials, setMaterials, emptyMaterialRow, "materials"))}
 
       {/* Labor */}
-      {renderSection("FWT Labor", "#f59e0b", labor, setLabor, "labor", () => addRow(labor, setLabor, () => ({ id: genId(), manf: "FWT", partNum: "FWT", desc: "", qty: 0, unit: "HR", costPU: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isLabor: true }), "labor"))}
+      {renderSection("FWT Labor", "#f59e0b", labor, setLabor, "labor", () => addRow(labor, setLabor, () => ({ id: genId(), manf: "FWT", partNum: "FWT", desc: "", qty: 0, unit: "HR", costPU: 0, markupPct: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isLabor: true }), "labor"))}
 
       {/* Project Costs */}
-      {renderSection("Project Costs", "#ef4444", costs, setCosts, "costs", () => addRow(costs, setCosts, () => ({ id: genId(), manf: "FWT", partNum: "FWT", desc: "", qty: 1, unit: "EA", costPU: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isCost: true }), "costs"))}
+      {renderSection("Project Costs", "#ef4444", costs, setCosts, "costs", () => addRow(costs, setCosts, () => ({ id: genId(), manf: "FWT", partNum: "FWT", desc: "", qty: 1, unit: "EA", costPU: 0, markupPct: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isCost: true }), "costs"))}
 
       {/* RMR */}
-      {renderSection("RMR — First Month Included", "#8b5cf6", rmr, setRmr, "rmr", () => addRow(rmr, setRmr, () => ({ id: genId(), manf: "FWT", partNum: "FWT-RMR", desc: "", qty: 1, unit: "MO", costPU: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isRmr: true }), "rmr"))}
+      {renderSection("RMR — First Month Included", "#8b5cf6", rmr, setRmr, "rmr", () => addRow(rmr, setRmr, () => ({ id: genId(), manf: "FWT", partNum: "FWT-RMR", desc: "", qty: 1, unit: "MO", costPU: 0, markupPct: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isRmr: true }), "rmr"))}
 
       {/* Overhead & Total */}
       <div style={{ display: "flex", gap: 16, alignItems: "center", padding: "16px 0", borderTop: "2px solid #1e293b", marginTop: 8 }}>
