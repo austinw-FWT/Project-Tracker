@@ -1,8 +1,10 @@
 import { useState } from "react";
-import { Plus, X, Clock, Users, ChevronDown } from "lucide-react";
+import { Plus, X, Clock, Users, Send } from "lucide-react";
 
 const CATEGORIES = ["Installation", "Programming", "Termination", "Cable Pull", "Site Walk", "Design", "Commissioning", "Punch List", "Training", "Travel", "Other"];
 const DEPARTMENTS = ["Low Voltage", "Networking", "Structured Cabling", "Security", "Fire Alarm", "Audio Visual", "General"];
+
+const FB_URL = "https://fwt-lv-tracker-default-rtdb.firebaseio.com";
 
 export default function TimesheetView({ timesheets, projects, myName, isAdmin, allMemberPrivate, teamRoster, onAdd, onRemove }) {
   const [jobName, setJobName] = useState(""); const [jobNumber, setJobNumber] = useState(""); const [department, setDepartment] = useState("Low Voltage");
@@ -10,6 +12,43 @@ export default function TimesheetView({ timesheets, projects, myName, isAdmin, a
   const [hoursType, setHoursType] = useState("regular"); const [notes, setNotes] = useState("");
   const [filterWeek, setFilterWeek] = useState("all"); const [viewMode, setViewMode] = useState("mine");
   const [showAdminMember, setShowAdminMember] = useState(null);
+  const [sending, setSending] = useState(false); const [sendResult, setSendResult] = useState(null);
+
+  async function emailTimesheet() {
+    if (filterWeek === "all" || filtered.length === 0) return;
+    setSending(true); setSendResult(null);
+    try {
+      // Get auth token
+      const { getAuth } = await import("firebase/auth");
+      const auth = getAuth();
+      const token = await auth.currentUser?.getIdToken();
+      // Get project ID for cloud function
+      const projectId = await (async () => {
+        const r = await fetch(`${FB_URL}/tracker.json?auth=${token}`);
+        const d = await r.json();
+        return d;
+      })();
+      // Call the callable function via REST
+      const region = "us-central1";
+      const projectIdFb = "fwt-lv-tracker";
+      const fnUrl = `https://${region}-${projectIdFb}.cloudfunctions.net/emailTimesheet`;
+      const resp = await fetch(fnUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        body: JSON.stringify({ data: { memberName: myName, weekOf: filterWeek, entries: filtered } }),
+      });
+      const result = await resp.json();
+      if (result.result?.success) {
+        setSendResult({ ok: true, msg: `Sent to ${result.result.sentTo} recipient(s)` });
+      } else {
+        setSendResult({ ok: false, msg: result.error?.message || "Failed to send" });
+      }
+    } catch (err) {
+      setSendResult({ ok: false, msg: err.message });
+    }
+    setSending(false);
+    setTimeout(() => setSendResult(null), 4000);
+  }
 
   const iS = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1e293b", background: "#1a2332", color: "#e2e8f0", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none" };
   const lS = { fontSize: 11, fontWeight: 600, color: "#64748b", marginBottom: 4, display: "block", textTransform: "uppercase", letterSpacing: "0.05em" };
@@ -89,6 +128,16 @@ export default function TimesheetView({ timesheets, projects, myName, isAdmin, a
               <span style={{ fontSize: 15, color: "#fff", fontWeight: 700, fontFamily: "'Outfit',sans-serif" }}>Total: {(totalReg + totalOT).toFixed(1)}h</span>
             </div>
           </div>
+
+          {/* Email Export */}
+          {filterWeek !== "all" && filtered.length > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+              <button onClick={emailTimesheet} disabled={sending} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, border: "none", background: "#10b981", color: "#fff", fontSize: 13, fontWeight: 600, cursor: sending ? "wait" : "pointer", fontFamily: "inherit", opacity: sending ? 0.6 : 1 }}>
+                <Send size={14} /> {sending ? "Sending..." : "Email Timesheet"}
+              </button>
+              {sendResult && <span style={{ fontSize: 12, color: sendResult.ok ? "#10b981" : "#ef4444", fontWeight: 600 }}>{sendResult.msg}</span>}
+            </div>
+          )}
 
           {/* Entries */}
           {filtered.length === 0 && <div style={{ textAlign: "center", padding: 40, color: "#334155", fontSize: 13 }}>No time entries yet.</div>}
