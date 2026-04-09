@@ -3,6 +3,9 @@ import { Plus, X, Printer, ChevronDown, ChevronUp, FileText, Calculator } from "
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 
+// Safe number coercion — treats undefined, null, "", NaN all as 0
+const n = v => parseFloat(v) || 0;
+
 const DEFAULT_EXCLUSIONS = [
   "Power circuits for customer provided/installed equipment",
   "Power poles, basket trays, surface mount raceways, underfloor raceways, and floor monuments",
@@ -78,76 +81,74 @@ export function TakeoffBuilder({ takeoff, onSave }) {
   const [overheadPct, setOverheadPct] = useState(data.overheadPct || 0);
   const [notes, setNotes] = useState(data.notes || "");
 
-  function save(m, l, c, r, oh, n) { onSave({ materials: m || materials, labor: l || labor, costs: c || costs, rmr: r || rmr, overheadPct: oh !== undefined ? oh : overheadPct, notes: n !== undefined ? n : notes }); }
+  function save(m, l, c, r, oh, nt) { onSave({ materials: m || materials, labor: l || labor, costs: c || costs, rmr: r || rmr, overheadPct: oh !== undefined ? oh : overheadPct, notes: nt !== undefined ? nt : notes }); }
 
   function updRow(arr, setArr, idx, field, val, section) {
-    const n = arr.map((r, i) => {
+    const updated = arr.map((r, i) => {
       if (i !== idx) return r;
-      const updated = { ...r, [field]: field === "desc" || field === "manf" || field === "partNum" || field === "unit" ? val : parseFloat(val) || 0 };
+      const row = { ...r, [field]: field === "desc" || field === "manf" || field === "partNum" || field === "unit" ? val : parseFloat(val) || 0 };
       if (field === "costPU" || field === "markupPct") {
-        const cost = field === "costPU" ? (parseFloat(val) || 0) : updated.costPU;
-        const markup = field === "markupPct" ? (parseFloat(val) || 0) : updated.markupPct;
-        updated.pricePU = Math.round(cost * (1 + markup / 100) * 100) / 100;
+        const cost = field === "costPU" ? (parseFloat(val) || 0) : n(row.costPU);
+        const markup = field === "markupPct" ? (parseFloat(val) || 0) : n(row.markupPct);
+        row.pricePU = Math.round(cost * (1 + markup / 100) * 100) / 100;
       }
-      return updated;
+      return row;
     });
-    setArr(n);
-    if (section === "materials") save(n, null, null, null);
-    else if (section === "costs") save(null, null, n, null);
-    else if (section === "rmr") save(null, null, null, n);
+    setArr(updated);
+    if (section === "materials") save(updated, null, null, null);
+    else if (section === "costs") save(null, null, updated, null);
+    else if (section === "rmr") save(null, null, null, updated);
   }
 
   function updLaborRow(idx, field, val) {
-    const n = labor.map((r, i) => i === idx ? { ...r, [field]: field === "desc" ? val : parseFloat(val) || 0 } : r);
-    setLabor(n);
-    save(null, n, null, null);
+    const updated = labor.map((r, i) => i === idx ? { ...r, [field]: field === "desc" ? val : parseFloat(val) || 0 } : r);
+    setLabor(updated);
+    save(null, updated, null, null);
   }
 
   function addLaborRow() {
-    const n = [...labor, { id: genId(), desc: "", hours: 0, costPerHr: 0, ratePerHr: 0, isLabor: true }];
-    setLabor(n);
-    save(null, n, null, null);
+    const updated = [...labor, { id: genId(), desc: "", hours: 0, costPerHr: 0, ratePerHr: 0, isLabor: true }];
+    setLabor(updated);
+    save(null, updated, null, null);
   }
 
   function removeLaborRow(idx) {
-    const n = labor.filter((_, i) => i !== idx);
-    setLabor(n);
-    save(null, n, null, null);
+    const updated = labor.filter((_, i) => i !== idx);
+    setLabor(updated);
+    save(null, updated, null, null);
   }
 
   function addRow(arr, setArr, template, section) {
-    const n = [...arr, template()];
-    setArr(n);
-    if (section === "materials") save(n, null, null, null);
-    else if (section === "labor") save(null, n, null, null);
-    else if (section === "costs") save(null, null, n, null);
-    else if (section === "rmr") save(null, null, null, n);
+    const updated = [...arr, template()];
+    setArr(updated);
+    if (section === "materials") save(updated, null, null, null);
+    else if (section === "costs") save(null, null, updated, null);
+    else if (section === "rmr") save(null, null, null, updated);
   }
 
   function removeRow(arr, setArr, idx, section) {
-    const n = arr.filter((_, i) => i !== idx);
-    setArr(n);
-    if (section === "materials") save(n, null, null, null);
-    else if (section === "labor") save(null, n, null, null);
-    else if (section === "costs") save(null, null, n, null);
-    else if (section === "rmr") save(null, null, null, n);
+    const updated = arr.filter((_, i) => i !== idx);
+    setArr(updated);
+    if (section === "materials") save(updated, null, null, null);
+    else if (section === "costs") save(null, null, updated, null);
+    else if (section === "rmr") save(null, null, null, updated);
   }
 
-  // Calculations
-  const matTotal = materials.reduce((s, r) => s + (r.qty * r.pricePU) + (r.laborHrs * r.laborRate), 0);
-  const laborPrice = labor.reduce((s, r) => s + (r.hours * r.ratePerHr), 0);
-  const laborCostTotal = labor.reduce((s, r) => s + (r.hours * r.costPerHr), 0);
-  const totalLaborHrs = labor.reduce((s, r) => s + (r.hours || 0), 0);
-  const costTotal = costs.reduce((s, r) => s + (r.qty * r.pricePU), 0);
-  const rmrTotal = rmr.reduce((s, r) => s + (r.qty * r.pricePU), 0);
-  const subtotal = matTotal + laborPrice + costTotal + rmrTotal;
-  const overhead = subtotal * (overheadPct / 100);
-  const grandTotal = subtotal + overhead;
+  // ── Calculations (all fields coerced via n() to prevent NaN from Firebase strings) ──
+  const matTotal       = materials.reduce((s, r) => s + (n(r.qty) * n(r.pricePU)) + (n(r.laborHrs) * n(r.laborRate)), 0);
+  const laborPrice     = labor.reduce((s, r) => s + (n(r.hours) * n(r.ratePerHr)), 0);
+  const laborCostTotal = labor.reduce((s, r) => s + (n(r.hours) * n(r.costPerHr)), 0);
+  const totalLaborHrs  = labor.reduce((s, r) => s + n(r.hours), 0);
+  const costTotal      = costs.reduce((s, r) => s + (n(r.qty) * n(r.pricePU)), 0);
+  const rmrTotal       = rmr.reduce((s, r) => s + (n(r.qty) * n(r.pricePU)), 0);
+  const subtotal       = matTotal + laborPrice + costTotal + rmrTotal;
+  const overhead       = subtotal * (n(overheadPct) / 100);
+  const grandTotal     = subtotal + overhead;
 
-  const matCost = materials.reduce((s, r) => s + (r.qty * r.costPU), 0);
-  const costsCost = costs.reduce((s, r) => s + (r.qty * r.costPU), 0);
+  const matCost   = materials.reduce((s, r) => s + (n(r.qty) * n(r.costPU)), 0);
+  const costsCost = costs.reduce((s, r) => s + (n(r.qty) * n(r.costPU)), 0);
   const totalCost = matCost + laborCostTotal + costsCost;
-  const margin = grandTotal > 0 ? Math.round(((grandTotal - totalCost) / grandTotal) * 100) : 0;
+  const margin    = grandTotal > 0 ? Math.round(((grandTotal - totalCost) / grandTotal) * 100) : 0;
 
   function renderSection(title, color, rows, setRows, section, addFn, hideMarkup) {
     return (
@@ -165,12 +166,12 @@ export function TakeoffBuilder({ takeoff, onSave }) {
             {hideMarkup ? (
               <input type="number" step="0.01" style={nS} value={row.pricePU || ""} onChange={e => updRow(rows, setRows, idx, "pricePU", e.target.value, section)} placeholder="Rate" />
             ) : (
-              <div style={{ fontSize: 12, color: "#10b981", textAlign: "right", fontWeight: 600 }}>${(row.pricePU || 0).toFixed(2)}</div>
+              <div style={{ fontSize: 12, color: "#10b981", textAlign: "right", fontWeight: 600 }}>${n(row.pricePU).toFixed(2)}</div>
             )}
-            <div style={{ fontSize: 12, color: "#e2e8f0", textAlign: "right", fontWeight: 600 }}>${(row.qty * (row.pricePU || 0)).toFixed(2)}</div>
+            <div style={{ fontSize: 12, color: "#e2e8f0", textAlign: "right", fontWeight: 600 }}>${(n(row.qty) * n(row.pricePU)).toFixed(2)}</div>
             <input type="number" step="0.5" style={nS} value={row.laborHrs || ""} onChange={e => updRow(rows, setRows, idx, "laborHrs", e.target.value, section)} placeholder="Hrs" />
             <input type="number" step="0.01" style={nS} value={row.laborRate || ""} onChange={e => updRow(rows, setRows, idx, "laborRate", e.target.value, section)} placeholder="Rate" />
-            <div style={{ fontSize: 12, color: "#f59e0b", textAlign: "right", fontWeight: 600 }}>${(row.laborHrs * row.laborRate).toFixed(2)}</div>
+            <div style={{ fontSize: 12, color: "#f59e0b", textAlign: "right", fontWeight: 600 }}>${(n(row.laborHrs) * n(row.laborRate)).toFixed(2)}</div>
             <button onClick={() => removeRow(rows, setRows, idx, section)} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer" }}><X size={12} /></button>
           </div>
         ))}
@@ -182,10 +183,10 @@ export function TakeoffBuilder({ takeoff, onSave }) {
   return (
     <div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr 1fr", gap: 10, marginBottom: 20 }}>
-        <div style={{ background: "#0f1729", borderRadius: 10, padding: "12px 14px", borderLeft: "3px solid #6366f1" }}><div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", marginBottom: 2 }}>Material Price</div><div style={{ fontSize: 18, fontWeight: 700, color: "#6366f1", fontFamily: "'Outfit',sans-serif" }}>${matTotal.toLocaleString()}</div></div>
-        <div style={{ background: "#0f1729", borderRadius: 10, padding: "12px 14px", borderLeft: "3px solid #f59e0b" }}><div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", marginBottom: 2 }}>Labor ({totalLaborHrs}h)</div><div style={{ fontSize: 18, fontWeight: 700, color: "#f59e0b", fontFamily: "'Outfit',sans-serif" }}>${laborPrice.toLocaleString()}</div></div>
-        <div style={{ background: "#0f1729", borderRadius: 10, padding: "12px 14px", borderLeft: "3px solid #10b981" }}><div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", marginBottom: 2 }}>Total Cost</div><div style={{ fontSize: 18, fontWeight: 700, color: "#10b981", fontFamily: "'Outfit',sans-serif" }}>${totalCost.toLocaleString()}</div></div>
-        <div style={{ background: "#0f1729", borderRadius: 10, padding: "12px 14px", borderLeft: "3px solid #3b82f6" }}><div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", marginBottom: 2 }}>Quoted Price</div><div style={{ fontSize: 18, fontWeight: 700, color: "#3b82f6", fontFamily: "'Outfit',sans-serif" }}>${grandTotal.toLocaleString()}</div></div>
+        <div style={{ background: "#0f1729", borderRadius: 10, padding: "12px 14px", borderLeft: "3px solid #6366f1" }}><div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", marginBottom: 2 }}>Material Price</div><div style={{ fontSize: 18, fontWeight: 700, color: "#6366f1", fontFamily: "'Outfit',sans-serif" }}>${matTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div></div>
+        <div style={{ background: "#0f1729", borderRadius: 10, padding: "12px 14px", borderLeft: "3px solid #f59e0b" }}><div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", marginBottom: 2 }}>Labor ({totalLaborHrs}h)</div><div style={{ fontSize: 18, fontWeight: 700, color: "#f59e0b", fontFamily: "'Outfit',sans-serif" }}>${laborPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div></div>
+        <div style={{ background: "#0f1729", borderRadius: 10, padding: "12px 14px", borderLeft: "3px solid #10b981" }}><div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", marginBottom: 2 }}>Total Cost</div><div style={{ fontSize: 18, fontWeight: 700, color: "#10b981", fontFamily: "'Outfit',sans-serif" }}>${totalCost.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div></div>
+        <div style={{ background: "#0f1729", borderRadius: 10, padding: "12px 14px", borderLeft: "3px solid #3b82f6" }}><div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", marginBottom: 2 }}>Quoted Price</div><div style={{ fontSize: 18, fontWeight: 700, color: "#3b82f6", fontFamily: "'Outfit',sans-serif" }}>${grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div></div>
         <div style={{ background: "#0f1729", borderRadius: 10, padding: "12px 14px", borderLeft: `3px solid ${margin >= 20 ? "#10b981" : margin >= 10 ? "#f59e0b" : "#ef4444"}` }}><div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", marginBottom: 2 }}>Margin</div><div style={{ fontSize: 18, fontWeight: 700, color: margin >= 20 ? "#10b981" : margin >= 10 ? "#f59e0b" : "#ef4444", fontFamily: "'Outfit',sans-serif" }}>{margin}%</div></div>
       </div>
 
@@ -199,7 +200,6 @@ export function TakeoffBuilder({ takeoff, onSave }) {
       {/* Material Items */}
       {renderSection("Materials", "#6366f1", materials, setMaterials, "materials", () => addRow(materials, setMaterials, emptyMaterialRow, "materials"))}
 
-      {/* Labor */}
       {/* FWT Labor */}
       <div style={{ marginBottom: 16 }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: "#f59e0b", textTransform: "uppercase", marginBottom: 8 }}>FWT Labor</div>
@@ -213,9 +213,9 @@ export function TakeoffBuilder({ takeoff, onSave }) {
             <input style={iS} value={row.desc} onChange={e => updLaborRow(idx, "desc", e.target.value)} placeholder="Labor description" />
             <input type="number" step="0.5" style={nS} value={row.hours || ""} onChange={e => updLaborRow(idx, "hours", e.target.value)} placeholder="0" />
             <input type="number" step="0.01" style={nS} value={row.costPerHr || ""} onChange={e => updLaborRow(idx, "costPerHr", e.target.value)} placeholder="$/hr" />
-            <div style={{ fontSize: 12, color: "#ef4444", textAlign: "right", fontWeight: 600 }}>${((row.hours || 0) * (row.costPerHr || 0)).toFixed(2)}</div>
+            <div style={{ fontSize: 12, color: "#ef4444", textAlign: "right", fontWeight: 600 }}>${(n(row.hours) * n(row.costPerHr)).toFixed(2)}</div>
             <input type="number" step="0.01" style={nS} value={row.ratePerHr || ""} onChange={e => updLaborRow(idx, "ratePerHr", e.target.value)} placeholder="$/hr" />
-            <div style={{ fontSize: 12, color: "#10b981", textAlign: "right", fontWeight: 600 }}>${((row.hours || 0) * (row.ratePerHr || 0)).toFixed(2)}</div>
+            <div style={{ fontSize: 12, color: "#10b981", textAlign: "right", fontWeight: 600 }}>${(n(row.hours) * n(row.ratePerHr)).toFixed(2)}</div>
             <button onClick={() => removeLaborRow(idx)} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer" }}><X size={12} /></button>
           </div>
         ))}
@@ -223,9 +223,9 @@ export function TakeoffBuilder({ takeoff, onSave }) {
           <div style={{ fontSize: 12, fontWeight: 700, color: "#f59e0b" }}>LABOR TOTALS</div>
           <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", textAlign: "right" }}>{totalLaborHrs}h</div>
           <div></div>
-          <div style={{ fontSize: 12, fontWeight: 700, color: "#ef4444", textAlign: "right" }}>${laborCostTotal.toLocaleString()}</div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#ef4444", textAlign: "right" }}>${laborCostTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
           <div></div>
-          <div style={{ fontSize: 12, fontWeight: 700, color: "#10b981", textAlign: "right" }}>${laborPrice.toLocaleString()}</div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#10b981", textAlign: "right" }}>${laborPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
           <div></div>
         </div>
         <button onClick={addLaborRow} style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 8, background: "none", border: "none", color: "#f59e0b", fontSize: 11, cursor: "pointer", fontFamily: "inherit", fontWeight: 600, padding: "4px 0" }}><Plus size={12} /> Add Labor Row</button>
@@ -277,7 +277,7 @@ export function ProposalBuilder({ opportunity, proposal, onSave, takeoff }) {
   const [showPrint, setShowPrint] = useState(false);
   const printRef = useRef(null);
 
-  function upd(updates) { const n = { ...d, ...updates }; setD(n); onSave(n); }
+  function upd(updates) { const updated = { ...d, ...updates }; setD(updated); onSave(updated); }
 
   const totalPrice = d.scopes.reduce((s, sc) => s + (parseFloat(sc.price) || 0), 0);
   const opp = opportunity || {};
@@ -287,15 +287,14 @@ export function ProposalBuilder({ opportunity, proposal, onSave, takeoff }) {
 
   function printProposal() { setShowPrint(true); setTimeout(() => { window.print(); setShowPrint(false); }, 300); }
 
-  // Auto-fill from takeoff if available
   function pullFromTakeoff() {
     if (!takeoff) return;
-    const matTotal = (takeoff.materials || []).reduce((s, r) => s + (r.qty * r.pricePU) + (r.laborHrs * r.laborRate), 0);
-    const laborTotal = (takeoff.labor || []).reduce((s, r) => s + ((r.hours || 0) * (r.ratePerHr || 0)), 0);
-    const costTotal = (takeoff.costs || []).reduce((s, r) => s + (r.qty * r.pricePU), 0);
-    const rmrTotal = (takeoff.rmr || []).reduce((s, r) => s + (r.qty * r.pricePU), 0);
-    const sub = matTotal + laborTotal + costTotal + rmrTotal;
-    const oh = sub * ((takeoff.overheadPct || 0) / 100);
+    const matT  = (takeoff.materials || []).reduce((s, r) => s + (n(r.qty) * n(r.pricePU)) + (n(r.laborHrs) * n(r.laborRate)), 0);
+    const labT  = (takeoff.labor || []).reduce((s, r) => s + (n(r.hours) * n(r.ratePerHr)), 0);
+    const cosT  = (takeoff.costs || []).reduce((s, r) => s + (n(r.qty) * n(r.pricePU)), 0);
+    const rmrT  = (takeoff.rmr || []).reduce((s, r) => s + (n(r.qty) * n(r.pricePU)), 0);
+    const sub   = matT + labT + cosT + rmrT;
+    const oh    = sub * (n(takeoff.overheadPct) / 100);
     const total = sub + oh;
     if (d.scopes.length > 0) {
       upd({ scopes: d.scopes.map((s, i) => i === 0 ? { ...s, price: total.toFixed(2) } : s) });
