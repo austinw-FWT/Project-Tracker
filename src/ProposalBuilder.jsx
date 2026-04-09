@@ -132,20 +132,24 @@ export function TakeoffBuilder({ takeoff, onSave }) {
   const totalCost = matCost + laborCost + costsCost;
   const margin = grandTotal > 0 ? Math.round(((grandTotal - totalCost) / grandTotal) * 100) : 0;
 
-  function renderSection(title, color, rows, setRows, section, addFn) {
+  function renderSection(title, color, rows, setRows, section, addFn, hideMarkup) {
     return (
       <div style={{ marginBottom: 16 }}>
         <div style={{ fontSize: 12, fontWeight: 700, color, textTransform: "uppercase", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>{title}</div>
         {rows.map((row, idx) => (
-          <div key={row.id} style={{ display: "grid", gridTemplateColumns: "80px 90px 1fr 50px 40px 80px 55px 80px 80px 50px 60px 80px 24px", gap: 4, marginBottom: 3, alignItems: "center" }}>
+          <div key={row.id} style={{ display: "grid", gridTemplateColumns: hideMarkup ? "80px 90px 1fr 50px 40px 80px 80px 80px 50px 60px 80px 24px" : "80px 90px 1fr 50px 40px 80px 55px 80px 80px 50px 60px 80px 24px", gap: 4, marginBottom: 3, alignItems: "center" }}>
             <input style={iS} value={row.manf} onChange={e => updRow(rows, setRows, idx, "manf", e.target.value, section)} placeholder="Manf" />
             <input style={iS} value={row.partNum} onChange={e => updRow(rows, setRows, idx, "partNum", e.target.value, section)} placeholder="Part #" />
             <input style={iS} value={row.desc} onChange={e => updRow(rows, setRows, idx, "desc", e.target.value, section)} placeholder="Description" />
             <input type="number" style={nS} value={row.qty || ""} onChange={e => updRow(rows, setRows, idx, "qty", e.target.value, section)} placeholder="0" />
             <input style={iS} value={row.unit} onChange={e => updRow(rows, setRows, idx, "unit", e.target.value, section)} placeholder="EA" />
             <input type="number" step="0.01" style={nS} value={row.costPU || ""} onChange={e => updRow(rows, setRows, idx, "costPU", e.target.value, section)} placeholder="Cost" />
-            <input type="number" step="1" style={{ ...nS, color: "#f59e0b" }} value={row.markupPct ?? ""} onChange={e => updRow(rows, setRows, idx, "markupPct", e.target.value, section)} placeholder="%" />
-            <div style={{ fontSize: 12, color: "#10b981", textAlign: "right", fontWeight: 600 }}>${(row.pricePU || 0).toFixed(2)}</div>
+            {!hideMarkup && <input type="number" step="1" style={{ ...nS, color: "#f59e0b" }} value={row.markupPct ?? ""} onChange={e => updRow(rows, setRows, idx, "markupPct", e.target.value, section)} placeholder="%" />}
+            {hideMarkup ? (
+              <input type="number" step="0.01" style={nS} value={row.pricePU || ""} onChange={e => updRow(rows, setRows, idx, "pricePU", e.target.value, section)} placeholder="Rate" />
+            ) : (
+              <div style={{ fontSize: 12, color: "#10b981", textAlign: "right", fontWeight: 600 }}>${(row.pricePU || 0).toFixed(2)}</div>
+            )}
             <div style={{ fontSize: 12, color: "#e2e8f0", textAlign: "right", fontWeight: 600 }}>${(row.qty * (row.pricePU || 0)).toFixed(2)}</div>
             <input type="number" step="0.5" style={nS} value={row.laborHrs || ""} onChange={e => updRow(rows, setRows, idx, "laborHrs", e.target.value, section)} placeholder="Hrs" />
             <input type="number" step="0.01" style={nS} value={row.laborRate || ""} onChange={e => updRow(rows, setRows, idx, "laborRate", e.target.value, section)} placeholder="Rate" />
@@ -179,7 +183,7 @@ export function TakeoffBuilder({ takeoff, onSave }) {
       {renderSection("Materials", "#6366f1", materials, setMaterials, "materials", () => addRow(materials, setMaterials, emptyMaterialRow, "materials"))}
 
       {/* Labor */}
-      {renderSection("FWT Labor", "#f59e0b", labor, setLabor, "labor", () => addRow(labor, setLabor, () => ({ id: genId(), manf: "FWT", partNum: "FWT", desc: "", qty: 0, unit: "HR", costPU: 0, markupPct: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isLabor: true }), "labor"))}
+      {renderSection("FWT Labor", "#f59e0b", labor, setLabor, "labor", () => addRow(labor, setLabor, () => ({ id: genId(), manf: "FWT", partNum: "FWT", desc: "", qty: 0, unit: "HR", costPU: 0, markupPct: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isLabor: true }), "labor"), true)}
 
       {/* Project Costs */}
       {renderSection("Project Costs", "#ef4444", costs, setCosts, "costs", () => addRow(costs, setCosts, () => ({ id: genId(), manf: "FWT", partNum: "FWT", desc: "", qty: 1, unit: "EA", costPU: 0, markupPct: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isCost: true }), "costs"))}
