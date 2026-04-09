@@ -190,31 +190,68 @@ function MaterialsTab({ project, onUpdate }) {
 
 /* ── INVOICES ── */
 function InvoiceTab({ project, onUpdate }) {
-  const [num, setNum] = useState(""); const [amt, setAmt] = useState(""); const [date, setDate] = useState(new Date().toISOString().split("T")[0]); const [desc, setDesc] = useState(""); const [st, setSt] = useState("sent");
+  const [num, setNum] = useState(""); const [amt, setAmt] = useState(""); const [date, setDate] = useState(new Date().toISOString().split("T")[0]); const [desc, setDesc] = useState(""); const [st, setSt] = useState("requested");
   const inv = project.invoices || [];
   const contract = parseFloat(project.contractAmount) || 0;
   const totalInv = inv.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
   const pct = contract > 0 ? Math.round((totalInv / contract) * 100) : 0;
   const paid = inv.filter(i => i.status === "paid").reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
-  const stC = { sent: "#3b82f6", paid: "#10b981", overdue: "#ef4444" };
-  function add() { if (!num.trim() || !amt) return; onUpdate({ invoices: [...inv, { id: genId(), invoiceNumber: num, amount: amt, date, description: desc, status: st, createdAt: new Date().toISOString() }] }); setNum(""); setAmt(""); setDesc(""); }
+
+  // Status config: value → { label, color }
+  const STATUS_OPTIONS = [
+    { value: "requested", label: "Invoice Requested", color: "#f59e0b" },
+    { value: "sent",      label: "Invoice Approved/Sent", color: "#3b82f6" },
+    { value: "paid",      label: "Paid",                  color: "#10b981" },
+    { value: "overdue",   label: "Overdue",               color: "#ef4444" },
+  ];
+  const statusMap = Object.fromEntries(STATUS_OPTIONS.map(s => [s.value, s]));
+
+  function add() {
+    if (!num.trim() || !amt) return;
+    onUpdate({ invoices: [...inv, { id: genId(), invoiceNumber: num, amount: amt, date, description: desc, status: st, createdAt: new Date().toISOString() }] });
+    setNum(""); setAmt(""); setDesc("");
+  }
+
   return (<div>
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, marginBottom: 16 }}><SC label="Contract" value={contract ? `$${contract.toLocaleString()}` : "—"} color="#6366f1" /><SC label="Invoiced" value={`$${totalInv.toLocaleString()}`} color="#f59e0b" /><SC label="Collected" value={`$${paid.toLocaleString()}`} color="#10b981" /><SC label="% Invoiced" value={`${pct}%`} color={pct >= 100 ? "#10b981" : "#f59e0b"} /></div>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, marginBottom: 16 }}>
+      <SC label="Contract"   value={contract ? `$${contract.toLocaleString()}` : "—"} color="#6366f1" />
+      <SC label="Invoiced"   value={`$${totalInv.toLocaleString()}`}                  color="#f59e0b" />
+      <SC label="Collected"  value={`$${paid.toLocaleString()}`}                      color="#10b981" />
+      <SC label="% Invoiced" value={`${pct}%`}                                        color={pct >= 100 ? "#10b981" : "#f59e0b"} />
+    </div>
     {pct > 0 && <div style={{ height: 8, background: "#1e293b", borderRadius: 4, overflow: "hidden", marginBottom: 16 }}><div style={{ width: `${Math.min(pct, 100)}%`, height: "100%", background: "linear-gradient(90deg, #6366f1, #10b981)", borderRadius: 4 }} /></div>}
-    {inv.sort((a, b) => (b.date || "").localeCompare(a.date || "")).map((v, idx) => (
-      <div key={v.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "#0f1729", borderRadius: 10, border: "1px solid #1e293b", marginBottom: 6 }}>
-        <div style={{ width: 36, textAlign: "center", fontSize: 11, fontWeight: 700, color: "#818cf8" }}>#{v.invoiceNumber}</div>
-        <div style={{ flex: 1 }}><div style={{ fontSize: 13, fontWeight: 600, color: "#fff" }}>${parseFloat(v.amount).toLocaleString()}</div><div style={{ fontSize: 11, color: "#64748b" }}>{v.date}{v.description ? ` — ${v.description}` : ""}</div></div>
-        <select value={v.status} onChange={e => onUpdate({ invoices: inv.map((x, i) => i === idx ? { ...x, status: e.target.value } : x) })} style={{ padding: "4px 8px", borderRadius: 8, border: "1px solid #1e293b", background: (stC[v.status]) + "22", color: stC[v.status], fontSize: 11, fontWeight: 600, fontFamily: "inherit", outline: "none", cursor: "pointer" }}><option value="sent">Sent</option><option value="paid">Paid</option><option value="overdue">Overdue</option></select>
-        <button onClick={() => onUpdate({ invoices: inv.filter((_, i) => i !== idx) })} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer" }}><X size={12} /></button>
-      </div>
-    ))}
+
+    {inv.sort((a, b) => (b.date || "").localeCompare(a.date || "")).map((v, idx) => {
+      const s = statusMap[v.status] || statusMap["requested"];
+      return (
+        <div key={v.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "#0f1729", borderRadius: 10, border: "1px solid #1e293b", marginBottom: 6 }}>
+          <div style={{ width: 36, textAlign: "center", fontSize: 11, fontWeight: 700, color: "#818cf8" }}>#{v.invoiceNumber}</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "#fff" }}>${parseFloat(v.amount).toLocaleString()}</div>
+            <div style={{ fontSize: 11, color: "#64748b" }}>{v.date}{v.description ? ` — ${v.description}` : ""}</div>
+          </div>
+          <select
+            value={v.status}
+            onChange={e => onUpdate({ invoices: inv.map((x, i) => i === idx ? { ...x, status: e.target.value } : x) })}
+            style={{ padding: "4px 8px", borderRadius: 8, border: "1px solid #1e293b", background: s.color + "22", color: s.color, fontSize: 11, fontWeight: 600, fontFamily: "inherit", outline: "none", cursor: "pointer" }}
+          >
+            {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+          <button onClick={() => onUpdate({ invoices: inv.filter((_, i) => i !== idx) })} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer" }}><X size={12} /></button>
+        </div>
+      );
+    })}
+
     {inv.length === 0 && <div style={{ textAlign: "center", padding: 20, color: "#334155", fontSize: 13 }}>No invoices yet.</div>}
+
     <div style={{ display: "flex", gap: 6, marginTop: 14 }}>
       <input style={{ ...iS, flex: 0.5 }} placeholder="Inv #" value={num} onChange={e => setNum(e.target.value)} />
       <input type="number" step="0.01" style={{ ...iS, flex: 0.8 }} placeholder="Amount" value={amt} onChange={e => setAmt(e.target.value)} />
       <input type="date" style={{ ...iS, flex: 0.8 }} value={date} onChange={e => setDate(e.target.value)} />
       <input style={{ ...iS, flex: 1.5 }} placeholder="Description" value={desc} onChange={e => setDesc(e.target.value)} />
+      <select style={{ ...iS, flex: 1 }} value={st} onChange={e => setSt(e.target.value)}>
+        {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
       <button onClick={add} style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: "#6366f1", color: "#fff", cursor: "pointer", flexShrink: 0, opacity: num.trim() && amt ? 1 : 0.4 }}><Plus size={14} /></button>
     </div>
   </div>);
@@ -279,7 +316,6 @@ function TasksTab({ project, onUpdate, teamRoster, assignTaskToMember }) {
     onUpdate({ tasks: [...(project.tasks || []), task] });
     if (na && assignTaskToMember) {
       assignTaskToMember(nt.trim(), na, nc);
-      // Send email notification
       const member = teamRoster.find(t => t.name === na);
       if (member?.email) {
         callFunction("emailTaskAssignment", { projectName: project.name, task, assigneeEmail: member.email });
@@ -315,7 +351,6 @@ function DailyLogTab({ project, onUpdate }) {
     if (!act.trim()) return;
     const log = { id: genId(), date, member, hours: parseFloat(hours) || 0, activities: act.trim(), createdAt: new Date().toISOString() };
     onUpdate({ dailyLogs: [log, ...logs] });
-    // Send email
     setSending(true);
     callFunction("emailDailyLog", { projectName: project.name, log }).then(r => {
       if (r?.result?.success) { setSent(true); setTimeout(() => setSent(false), 3000); }
@@ -417,7 +452,7 @@ function ProfitTab({ project }) {
   const lh = project.laborHours || {};
   const totalBid = Object.values(lh).reduce((s, v) => s + (v.bid || 0), 0);
   const totalUsed = totalBid - Object.values(lh).reduce((s, v) => s + (v.remaining || 0), 0);
-  const laborRate = 75; // Burdened labor rate estimate
+  const laborRate = 75;
   const laborCost = totalUsed * laborRate;
   const materialCost = (project.materials || []).reduce((s, m) => s + (parseFloat(m.cost) || 0) * (parseInt(m.qtyNeeded) || 1), 0);
   const totalCost = laborCost + materialCost;
