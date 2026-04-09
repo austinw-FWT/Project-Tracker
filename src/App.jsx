@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Plus, X, Users, Settings, LayoutGrid, Search, ArrowLeft, Layers, CalendarDays, Wifi, WifiOff, RefreshCw, Zap, LogOut, Shield, UserCheck, UserX, User, Clock, ChevronDown, ChevronUp, Home, BookUser, ShieldCheck, Zap as ZapIcon, Copy } from "lucide-react";
+import { Plus, X, Users, Settings, LayoutGrid, Search, ArrowLeft, Layers, CalendarDays, Wifi, WifiOff, RefreshCw, Zap, LogOut, Shield, UserCheck, UserX, User, Clock, ChevronDown, ChevronUp, Home, BookUser, ShieldCheck, Zap as ZapIcon, Copy, Menu } from "lucide-react";
 import { auth, googleProvider, signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithPopup, onAuthStateChanged, signOut, updateProfile } from "./firebase.js";
 import DailyTracker from "./DailyTracker.jsx";
 import Opportunities from "./Opportunities.jsx";
@@ -53,6 +53,17 @@ async function fbWrite(data) { const t = await getToken(); const r = await fetch
 async function fbReadUsers() { const t = await getToken(); const r = await fetch(`${FB_URL}/users.json${t ? `?auth=${t}` : ""}`); return await r.json() || {}; }
 async function fbWriteUser(uid, d) { const t = await getToken(); await fetch(`${FB_URL}/users/${uid}.json${t ? `?auth=${t}` : ""}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(d) }); }
 async function fbDeleteUser(uid) { const t = await getToken(); await fetch(`${FB_URL}/users/${uid}.json${t ? `?auth=${t}` : ""}`, { method: "DELETE" }); }
+
+/* ═══ MOBILE HOOK ═══ */
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener("resize", handler);
+    return () => window.removeEventListener("resize", handler);
+  }, []);
+  return isMobile;
+}
 
 /* ═══ AUTH WRAPPER ═══ */
 export default function App() {
@@ -113,9 +124,9 @@ function LoginScreen() {
   const iS = { width: "100%", padding: "12px 14px", borderRadius: 10, border: "1px solid #1e293b", background: "#0f1729", color: "#e2e8f0", fontSize: 14, fontFamily: "'DM Sans',sans-serif", outline: "none" };
   const lS = { fontSize: 11, fontWeight: 600, color: "#64748b", marginBottom: 4, display: "block", textTransform: "uppercase", letterSpacing: "0.05em" };
   return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#0f1729", fontFamily: "'DM Sans',sans-serif" }}>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: "#0f1729", fontFamily: "'DM Sans',sans-serif", padding: 16 }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet" />
-      <div style={{ width: 400, padding: 32 }}>
+      <div style={{ width: "100%", maxWidth: 400 }}>
         <div style={{ textAlign: "center", marginBottom: 32 }}>
           <img src="/FWT_LOGO_FULL.png" alt="FWT" style={{ width: 72, height: 72, objectFit: "contain", marginBottom: 12 }} onError={e => { e.target.style.display = "none"; }} />
           <h1 style={{ fontSize: 26, fontWeight: 800, color: "#fff", fontFamily: "'Outfit',sans-serif", margin: "0 0 4px" }}>FWT Workspaces</h1>
@@ -142,9 +153,9 @@ function LoginScreen() {
 }
 
 function PendingScreen({ user, error }) {
-  return (<div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#0f1729", fontFamily: "'DM Sans',sans-serif" }}>
+  return (<div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#0f1729", fontFamily: "'DM Sans',sans-serif", padding: 16 }}>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet" />
-    <div style={{ width: 420, padding: 32, textAlign: "center" }}>
+    <div style={{ width: "100%", maxWidth: 420, padding: 32, textAlign: "center" }}>
       <div style={{ width: 56, height: 56, borderRadius: 16, background: error ? "#7f1d1d22" : "#f59e0b22", display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 20, color: error ? "#ef4444" : "#f59e0b" }}><Clock size={28} /></div>
       <h2 style={{ fontSize: 22, fontWeight: 700, color: "#fff", fontFamily: "'Outfit',sans-serif", margin: "0 0 8px" }}>{error ? "Connection Error" : "Awaiting Approval"}</h2>
       <p style={{ fontSize: 14, color: "#94a3b8", lineHeight: 1.6, margin: "0 0 24px" }}>{error ? "Unable to verify your account." : `Your account (${user.email}) is pending admin approval.`}</p>
@@ -174,6 +185,7 @@ function Tracker({ user, userRecord }) {
   const [syncStatus, setSyncStatus] = useState("connecting");
   const [lastSync, setLastSync] = useState(null);
   const [syncPulse, setSyncPulse] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const eventSourceRef = useRef(null);
   const saveTimeout = useRef(null);
   const isSaving = useRef(false);
@@ -181,6 +193,7 @@ function Tracker({ user, userRecord }) {
   const hasCheckedRoster = useRef(false);
   const isAdmin = userRecord.role === "admin";
   const myName = user.displayName || user.email;
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     let es = null, alive = true;
@@ -278,6 +291,14 @@ function Tracker({ user, userRecord }) {
     }
   }
 
+  // Close sidebar when navigating on mobile
+  function navigate(viewId, spaceTab) {
+    setView(viewId);
+    if (spaceTab) setMySpaceTab(spaceTab);
+    setSelectedProject(null);
+    if (isMobile) setSidebarOpen(false);
+  }
+
   if (loading) return <LoadingScreen text="Connecting to Firebase..." />;
   if (!data) return null;
 
@@ -286,89 +307,157 @@ function Tracker({ user, userRecord }) {
 
   const sC = { connecting: { c: "#f59e0b", t: "Connecting...", s: true }, synced: { c: "#10b981", t: "Live", s: false }, saving: { c: "#6366f1", t: "Saving...", s: true }, reconnecting: { c: "#f59e0b", t: "Reconnecting...", s: true }, error: { c: "#ef4444", t: "Offline", s: false } }[syncStatus] || { c: "#10b981", t: "Live", s: false };
 
+  const navItems = [
+    { id: "dashboard", icon: Home, label: "Dashboard" },
+    { id: "board", icon: LayoutGrid, label: "Project Board" },
+    { id: "schedule", icon: CalendarDays, label: "Team Schedule" },
+    { id: "contacts", icon: BookUser, label: "Contacts" },
+    { id: "warranties", icon: ShieldCheck, label: "Warranties" },
+    { id: "team", icon: Users, label: "Team" },
+    { id: "settings", icon: Settings, label: "Phases" },
+    ...(isAdmin ? [{ id: "admin", icon: Shield, label: "User Admin" }] : []),
+  ];
+
+  const mySpaceItems = [
+    { id: "daily", label: "Daily Task Board", icon: "📋" },
+    { id: "opportunities", label: "Opportunities", icon: "🎯" },
+    { id: "timesheets", label: "My Timesheets", icon: "⏱️" },
+  ];
+
+  const currentPageTitle = selectedProject ? selectedProject.name
+    : view === "myspace" ? (mySpaceTab === "daily" ? "Daily Task Board" : mySpaceTab === "opportunities" ? "Opportunities" : "My Timesheets")
+    : view === "team" ? "Team Roster" : view === "schedule" ? "Team Schedule" : view === "admin" ? "User Admin"
+    : view === "contacts" ? "Contacts" : view === "warranties" ? "Warranties" : view === "dashboard" ? "Dashboard"
+    : view === "board" ? "Project Board" : "Phase Settings";
+
+  const SidebarContent = (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      {/* Logo */}
+      <div style={{ padding: "16px 16px 14px", borderBottom: "1px solid #1e293b", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <img src="/FWT_LOGO_FULL.png" alt="FWT" style={{ width: 36, height: 36, objectFit: "contain", borderRadius: 4 }} onError={e => { e.target.style.display = "none"; }} />
+          <div>
+            <div style={{ fontFamily: "'Outfit',sans-serif", fontSize: 16, fontWeight: 800, color: "#fff" }}>FWT Workspaces</div>
+            <div style={{ fontSize: 10, color: "#64748b" }}>Project Management</div>
+          </div>
+        </div>
+        {isMobile && (
+          <button onClick={() => setSidebarOpen(false)} style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer", padding: 4 }}>
+            <X size={20} />
+          </button>
+        )}
+      </div>
+
+      {/* Nav */}
+      <nav style={{ padding: "12px 8px", flex: 1, overflowY: "auto" }}>
+        {navItems.map(item => (
+          <button key={item.id} onClick={() => navigate(item.id)}
+            style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: isMobile ? "13px 12px" : "10px 12px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 500, background: view === item.id && !selectedProject ? "#1e293b" : "transparent", color: view === item.id && !selectedProject ? "#fff" : "#94a3b8", marginBottom: 2, fontFamily: "inherit" }}>
+            <item.icon size={16} />{item.label}
+          </button>
+        ))}
+
+        <div style={{ padding: "16px 12px 6px", fontSize: 10, fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.08em" }}>My Space</div>
+        {mySpaceItems.map(item => (
+          <button key={item.id} onClick={() => navigate("myspace", item.id)}
+            style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: isMobile ? "12px 12px" : "8px 12px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 500, background: view === "myspace" && mySpaceTab === item.id ? "#1e293b" : "transparent", color: view === "myspace" && mySpaceTab === item.id ? "#fff" : "#64748b", marginBottom: 1, fontFamily: "inherit" }}>
+            <span style={{ fontSize: 16 }}>{item.icon}</span>{item.label}
+          </button>
+        ))}
+      </nav>
+
+      {/* Footer */}
+      <div style={{ padding: "12px 16px", borderTop: "1px solid #1e293b" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+          <div style={{ width: 8, height: 8, borderRadius: "50%", background: sC.c }} />
+          <RefreshCw size={12} style={{ color: sC.c, animation: sC.s ? "spin 1s linear infinite" : "none" }} />
+          <span style={{ fontSize: 11, color: sC.c, fontWeight: 600 }}>{sC.t}</span>
+          <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0" }}>
+          <div style={{ width: 32, height: 32, borderRadius: "50%", background: "#6366f1", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "#fff", flexShrink: 0 }}>{myName.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()}</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{myName}</div>
+            {isAdmin && <div style={{ fontSize: 9, color: "#6366f1", fontWeight: 700, textTransform: "uppercase" }}>Admin</div>}
+          </div>
+          <button onClick={() => signOut(auth)} title="Sign out" style={{ background: "none", border: "none", color: "#475569", cursor: "pointer", padding: 4 }}><LogOut size={14} /></button>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div style={{ display: "flex", height: "100vh", fontFamily: "'DM Sans',sans-serif", background: "#0f1729", color: "#e2e8f0", overflow: "hidden" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet" />
 
-      {/* Sidebar */}
-      <div style={{ width: 220, background: "#0b1120", borderRight: "1px solid #1e293b", display: "flex", flexDirection: "column", flexShrink: 0 }}>
-        <div style={{ padding: "16px 16px 14px", borderBottom: "1px solid #1e293b" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <img src="/FWT_LOGO_FULL.png" alt="FWT" style={{ width: 36, height: 36, objectFit: "contain", borderRadius: 4 }} onError={e => { e.target.style.display = "none"; }} />
-            <div><div style={{ fontFamily: "'Outfit',sans-serif", fontSize: 16, fontWeight: 800, color: "#fff" }}>FWT Workspaces</div><div style={{ fontSize: 10, color: "#64748b" }}>Project Management</div></div>
-          </div>
+      {/* Mobile overlay */}
+      {isMobile && sidebarOpen && (
+        <div onClick={() => setSidebarOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 40 }} />
+      )}
+
+      {/* Sidebar — desktop: always visible, mobile: slide-in drawer */}
+      {isMobile ? (
+        <div style={{
+          position: "fixed", top: 0, left: 0, bottom: 0, width: 260,
+          background: "#0b1120", borderRight: "1px solid #1e293b",
+          transform: sidebarOpen ? "translateX(0)" : "translateX(-100%)",
+          transition: "transform 0.25s ease", zIndex: 50, display: "flex", flexDirection: "column"
+        }}>
+          {SidebarContent}
         </div>
-        <nav style={{ padding: "12px 8px", flex: 1, overflowY: "auto" }}>
-          {[
-            { id: "dashboard", icon: Home, label: "Dashboard" },
-            { id: "board", icon: LayoutGrid, label: "Project Board" },
-            { id: "schedule", icon: CalendarDays, label: "Team Schedule" },
-            { id: "contacts", icon: BookUser, label: "Contacts" },
-            { id: "warranties", icon: ShieldCheck, label: "Warranties" },
-            { id: "team", icon: Users, label: "Team" },
-            { id: "settings", icon: Settings, label: "Phases" },
-            ...(isAdmin ? [{ id: "admin", icon: Shield, label: "User Admin" }] : []),
-          ].map(item => (
-            <button key={item.id} onClick={() => { setView(item.id); setSelectedProject(null); }}
-              style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 12px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 500, background: view === item.id && !selectedProject ? "#1e293b" : "transparent", color: view === item.id && !selectedProject ? "#fff" : "#94a3b8", marginBottom: 2, fontFamily: "inherit" }}>
-              <item.icon size={16} />{item.label}
-            </button>
-          ))}
-
-          <div style={{ padding: "16px 12px 6px", fontSize: 10, fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.08em" }}>My Space</div>
-          {[
-            { id: "daily", label: "Daily Task Board", icon: "📋" },
-            { id: "opportunities", label: "Opportunities", icon: "🎯" },
-            { id: "timesheets", label: "My Timesheets", icon: "⏱️" },
-          ].map(item => (
-            <button key={item.id} onClick={() => { setView("myspace"); setMySpaceTab(item.id); setSelectedProject(null); }}
-              style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "8px 12px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 500, background: view === "myspace" && mySpaceTab === item.id ? "#1e293b" : "transparent", color: view === "myspace" && mySpaceTab === item.id ? "#fff" : "#64748b", marginBottom: 1, fontFamily: "inherit" }}>
-              <span style={{ fontSize: 14 }}>{item.icon}</span>{item.label}
-            </button>
-          ))}
-        </nav>
-
-        <div style={{ padding: "12px 16px", borderTop: "1px solid #1e293b" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <div style={{ width: 8, height: 8, borderRadius: "50%", background: sC.c }} />
-            <RefreshCw size={12} style={{ color: sC.c, animation: sC.s ? "spin 1s linear infinite" : "none" }} />
-            <span style={{ fontSize: 11, color: sC.c, fontWeight: 600 }}>{sC.t}</span>
-            <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, padding: "8px 0" }}>
-            <div style={{ width: 24, height: 24, borderRadius: "50%", background: "#6366f1", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 700, color: "#fff", flexShrink: 0 }}>{myName.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()}</div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{myName}</div>
-              {isAdmin && <div style={{ fontSize: 9, color: "#6366f1", fontWeight: 700, textTransform: "uppercase" }}>Admin</div>}
-            </div>
-            <button onClick={() => signOut(auth)} title="Sign out" style={{ background: "none", border: "none", color: "#475569", cursor: "pointer", padding: 2 }}><LogOut size={14} /></button>
-          </div>
+      ) : (
+        <div style={{ width: 220, background: "#0b1120", borderRight: "1px solid #1e293b", display: "flex", flexDirection: "column", flexShrink: 0 }}>
+          {SidebarContent}
         </div>
-      </div>
+      )}
 
-      {/* Main */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        <div style={{ padding: "12px 24px", borderBottom: "1px solid #1e293b", display: "flex", alignItems: "center", gap: 12, background: "#0f1729", flexShrink: 0 }}>
+      {/* Main content */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
+        {/* Top bar */}
+        <div style={{ padding: isMobile ? "10px 16px" : "12px 24px", borderBottom: "1px solid #1e293b", display: "flex", alignItems: "center", gap: 10, background: "#0f1729", flexShrink: 0 }}>
+          {/* Hamburger on mobile */}
+          {isMobile && (
+            <button onClick={() => setSidebarOpen(true)} style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", padding: 4, flexShrink: 0 }}>
+              <Menu size={22} />
+            </button>
+          )}
+
           {selectedProject ? (
-            <button onClick={() => setSelectedProject(null)} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 13, fontFamily: "inherit" }}><ArrowLeft size={16} /> Back to Board</button>
-          ) : view === "board" ? (
+            <button onClick={() => setSelectedProject(null)} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 13, fontFamily: "inherit" }}>
+              <ArrowLeft size={16} />{!isMobile && "Back to Board"}
+            </button>
+          ) : null}
+
+          {!selectedProject && view === "board" && !isMobile ? (
             <>
-              <div style={{ position: "relative", flex: 1, maxWidth: 320 }}><Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#475569" }} /><input value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search projects..." style={{ width: "100%", padding: "8px 12px 8px 32px", borderRadius: 8, border: "1px solid #1e293b", background: "#1e293b", color: "#e2e8f0", fontSize: 13, fontFamily: "inherit", outline: "none" }} /></div>
+              <div style={{ position: "relative", flex: 1, maxWidth: 320 }}>
+                <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#475569" }} />
+                <input value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search projects..." style={{ width: "100%", padding: "8px 12px 8px 32px", borderRadius: 8, border: "1px solid #1e293b", background: "#1e293b", color: "#e2e8f0", fontSize: 13, fontFamily: "inherit", outline: "none" }} />
+              </div>
               <button onClick={() => setShowNewProject(true)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, border: "none", background: "#6366f1", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}><Plus size={15} /> New Project</button>
             </>
           ) : (
-            <div style={{ fontSize: 15, fontWeight: 600, color: "#fff" }}>
-              {view === "myspace" ? (mySpaceTab === "daily" ? "My Daily Task Board" : mySpaceTab === "opportunities" ? "My Opportunities" : "My Timesheets") : view === "team" ? "Team Roster" : view === "schedule" ? "Team Schedule" : view === "admin" ? "User Administration" : view === "contacts" ? "Contacts & Customers" : view === "warranties" ? "Warranty Tracker" : view === "dashboard" ? "Dashboard" : "Phase Management"}
+            <div style={{ fontSize: isMobile ? 15 : 15, fontWeight: 600, color: "#fff", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {currentPageTitle}
             </div>
           )}
+
+          {/* Mobile board actions */}
+          {isMobile && view === "board" && !selectedProject && (
+            <button onClick={() => setShowNewProject(true)} style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 36, height: 36, borderRadius: 8, border: "none", background: "#6366f1", color: "#fff", cursor: "pointer", flexShrink: 0 }}>
+              <Plus size={18} />
+            </button>
+          )}
         </div>
+
+        {/* Page content */}
         <div style={{ flex: 1, overflow: "auto" }}>
           {selectedProject ? (
             <ProjectDetail project={selectedProject} phases={data.phases} phaseMap={phaseMap} teamRoster={data.teamRoster} onUpdate={u => updateProject(selectedProject.id, u)} onDelete={() => deleteProject(selectedProject.id)} detailTab={detailTab} setDetailTab={setDetailTab} assignTaskToMember={assignTaskToMember} />
           ) : view === "dashboard" ? (
             <Dashboard data={data} myName={myName} onSelectProject={p => { setSelectedProject(p); setDetailTab("overview"); }} onNavigate={(v, tab) => { setView(v); if (tab) setMySpaceTab(tab); }} />
           ) : view === "board" ? (
-            <KanbanBoard projects={filteredProjects} phases={data.phases} onSelectProject={p => { setSelectedProject(p); setDetailTab("overview"); }} onDragStart={setDragItem} onDrop={handleDrop} dragItem={dragItem} />
+            <KanbanBoard projects={filteredProjects} phases={data.phases} onSelectProject={p => { setSelectedProject(p); setDetailTab("overview"); }} onDragStart={setDragItem} onDrop={handleDrop} dragItem={dragItem} isMobile={isMobile} />
           ) : view === "contacts" ? (
             <Contacts contacts={data.contacts || []} projects={data.projects} onSave={c => saveData({ ...data, contacts: c })} />
           ) : view === "warranties" ? (
@@ -398,44 +487,48 @@ function Tracker({ user, userRecord }) {
           )}
         </div>
       </div>
-      {showNewProject && <NewProjectModal phases={data.phases} onSave={addProject} onClose={() => setShowNewProject(false)} templates={PROJECT_TEMPLATES} />}
 
-      {/* Quick Add Button */}
-      <QuickAddButton projects={data.projects} onAddTask={(pid, task) => updateProject(pid, { tasks: [...((data.projects.find(p => p.id === pid)?.tasks) || []), { ...task, id: genId(), done: false }] })} onAddNote={(pid, note) => updateProject(pid, { notes: [{ text: note, date: new Date().toISOString() }, ...((data.projects.find(p => p.id === pid)?.notes) || [])] })} onAddMaterial={(pid, item) => updateProject(pid, { materials: [...((data.projects.find(p => p.id === pid)?.materials) || []), { id: genId(), item, manufacturer: "", vendor: "", qtyNeeded: "1", qtyOnHand: "", poNumber: "", status: "Pending Quote", deliveryDate: "", cost: "", notes: "" }] })} />
+      {showNewProject && <NewProjectModal phases={data.phases} onSave={addProject} onClose={() => setShowNewProject(false)} templates={PROJECT_TEMPLATES} />}
+      <QuickAddButton projects={data.projects} isMobile={isMobile}
+        onAddTask={(pid, task) => updateProject(pid, { tasks: [...((data.projects.find(p => p.id === pid)?.tasks) || []), { ...task, id: genId(), done: false }] })}
+        onAddNote={(pid, note) => updateProject(pid, { notes: [{ text: note, date: new Date().toISOString() }, ...((data.projects.find(p => p.id === pid)?.notes) || [])] })}
+        onAddMaterial={(pid, item) => updateProject(pid, { materials: [...((data.projects.find(p => p.id === pid)?.materials) || []), { id: genId(), item, manufacturer: "", vendor: "", qtyNeeded: "1", qtyOnHand: "", poNumber: "", status: "Pending Quote", deliveryDate: "", cost: "", notes: "" }] })} />
     </div>
   );
 }
 
 /* ═══ KANBAN BOARD ═══ */
-function KanbanBoard({ projects, phases, onSelectProject, onDragStart, onDrop, dragItem }) {
+function KanbanBoard({ projects, phases, onSelectProject, onDragStart, onDrop, dragItem, isMobile }) {
   const orphaned = projects.filter(p => !phases.some(ph => ph.id === p.phaseId));
-  return (<div style={{ display: "flex", gap: 12, padding: "16px 20px", height: "100%", overflowX: "auto", alignItems: "flex-start" }}>
-    {orphaned.length > 0 && (
-      <div style={{ minWidth: 280, maxWidth: 280, background: "#1a2332", borderRadius: 12, border: "2px dashed #f59e0b", display: "flex", flexDirection: "column", maxHeight: "100%", flexShrink: 0 }}>
-        <div style={{ padding: "14px 14px 10px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid #1e293b" }}><div style={{ width: 10, height: 10, borderRadius: "50%", background: "#f59e0b" }} /><span style={{ fontSize: 13, fontWeight: 600, color: "#f59e0b", flex: 1 }}>Needs Reassignment</span><span style={{ fontSize: 11, color: "#64748b", background: "#0f1729", borderRadius: 10, padding: "2px 8px" }}>{orphaned.length}</span></div>
-        <div style={{ padding: 8, overflowY: "auto", flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
-          {orphaned.map(p => (<div key={p.id} onClick={() => onSelectProject(p)} style={{ padding: 12, borderRadius: 8, background: "#0f1729", border: "1px solid #f59e0b33", cursor: "pointer" }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: "#fff", marginBottom: 4 }}>{p.name}</div>
-            <div style={{ fontSize: 11, color: "#f59e0b", marginBottom: 4 }}>Phase "{p.phaseId}" no longer exists</div>
-            <div style={{ fontSize: 11, color: "#64748b" }}>{p.customer}</div>
-          </div>))}
+  return (
+    <div style={{ display: "flex", gap: 12, padding: isMobile ? "12px" : "16px 20px", height: "100%", overflowX: "auto", alignItems: "flex-start" }}>
+      {orphaned.length > 0 && (
+        <div style={{ minWidth: isMobile ? 260 : 280, maxWidth: isMobile ? 260 : 280, background: "#1a2332", borderRadius: 12, border: "2px dashed #f59e0b", display: "flex", flexDirection: "column", maxHeight: "100%", flexShrink: 0 }}>
+          <div style={{ padding: "14px 14px 10px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid #1e293b" }}><div style={{ width: 10, height: 10, borderRadius: "50%", background: "#f59e0b" }} /><span style={{ fontSize: 13, fontWeight: 600, color: "#f59e0b", flex: 1 }}>Needs Reassignment</span><span style={{ fontSize: 11, color: "#64748b", background: "#0f1729", borderRadius: 10, padding: "2px 8px" }}>{orphaned.length}</span></div>
+          <div style={{ padding: 8, overflowY: "auto", flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+            {orphaned.map(p => (<div key={p.id} onClick={() => onSelectProject(p)} style={{ padding: 12, borderRadius: 8, background: "#0f1729", border: "1px solid #f59e0b33", cursor: "pointer" }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#fff", marginBottom: 4 }}>{p.name}</div>
+              <div style={{ fontSize: 11, color: "#f59e0b", marginBottom: 4 }}>Phase "{p.phaseId}" no longer exists</div>
+              <div style={{ fontSize: 11, color: "#64748b" }}>{p.customer}</div>
+            </div>))}
+          </div>
         </div>
-      </div>
-    )}
-    {phases.map(phase => { const pp = projects.filter(p => p.phaseId === phase.id); const isOver = dragItem && dragItem.phaseId !== phase.id; return (
-      <div key={phase.id} onDragOver={e => e.preventDefault()} onDrop={() => onDrop(phase.id)} style={{ minWidth: 280, maxWidth: 280, background: "#1a2332", borderRadius: 12, border: isOver ? `2px dashed ${phase.color}` : "1px solid #1e293b", display: "flex", flexDirection: "column", maxHeight: "100%", flexShrink: 0 }}>
-        <div style={{ padding: "14px 14px 10px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid #1e293b" }}><div style={{ width: 10, height: 10, borderRadius: "50%", background: phase.color }} /><span style={{ fontSize: 13, fontWeight: 600, color: "#fff", flex: 1 }}>{phase.name}</span><span style={{ fontSize: 11, color: "#64748b", background: "#0f1729", borderRadius: 10, padding: "2px 8px" }}>{pp.length}</span></div>
-        <div style={{ padding: 8, overflowY: "auto", flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
-          {pp.map(p => (<div key={p.id} draggable onDragStart={() => onDragStart(p)} onClick={() => onSelectProject(p)} style={{ padding: 12, borderRadius: 8, background: "#0f1729", border: "1px solid #1e293b", cursor: "pointer" }} onMouseEnter={e => e.currentTarget.style.borderColor = phase.color} onMouseLeave={e => e.currentTarget.style.borderColor = "#1e293b"}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: "#fff", marginBottom: 4 }}>{p.name}</div>
-            <div style={{ fontSize: 11, color: "#64748b", marginBottom: 6 }}>{p.customer}</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>{p.projectTypes?.map(t => <span key={t} style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: "#1e293b", color: "#94a3b8" }}>{t}</span>)}</div>
-            {p.tasks?.length > 0 && <div style={{ marginTop: 6, fontSize: 11, color: "#64748b" }}>✓ {p.tasks.filter(t => t.done).length}/{p.tasks.length} tasks</div>}
-          </div>))}
-          {pp.length === 0 && <div style={{ padding: 16, textAlign: "center", fontSize: 12, color: "#334155" }}>Drag projects here</div>}
-        </div>
-      </div>); })}
-  </div>);
+      )}
+      {phases.map(phase => { const pp = projects.filter(p => p.phaseId === phase.id); const isOver = dragItem && dragItem.phaseId !== phase.id; return (
+        <div key={phase.id} onDragOver={e => e.preventDefault()} onDrop={() => onDrop(phase.id)} style={{ minWidth: isMobile ? 260 : 280, maxWidth: isMobile ? 260 : 280, background: "#1a2332", borderRadius: 12, border: isOver ? `2px dashed ${phase.color}` : "1px solid #1e293b", display: "flex", flexDirection: "column", maxHeight: "100%", flexShrink: 0 }}>
+          <div style={{ padding: "14px 14px 10px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid #1e293b" }}><div style={{ width: 10, height: 10, borderRadius: "50%", background: phase.color }} /><span style={{ fontSize: 13, fontWeight: 600, color: "#fff", flex: 1 }}>{phase.name}</span><span style={{ fontSize: 11, color: "#64748b", background: "#0f1729", borderRadius: 10, padding: "2px 8px" }}>{pp.length}</span></div>
+          <div style={{ padding: 8, overflowY: "auto", flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+            {pp.map(p => (<div key={p.id} draggable onDragStart={() => onDragStart(p)} onClick={() => onSelectProject(p)} style={{ padding: 12, borderRadius: 8, background: "#0f1729", border: "1px solid #1e293b", cursor: "pointer" }} onMouseEnter={e => e.currentTarget.style.borderColor = phase.color} onMouseLeave={e => e.currentTarget.style.borderColor = "#1e293b"}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#fff", marginBottom: 4 }}>{p.name}</div>
+              <div style={{ fontSize: 11, color: "#64748b", marginBottom: 6 }}>{p.customer}</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>{p.projectTypes?.map(t => <span key={t} style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: "#1e293b", color: "#94a3b8" }}>{t}</span>)}</div>
+              {p.tasks?.length > 0 && <div style={{ marginTop: 6, fontSize: 11, color: "#64748b" }}>✓ {p.tasks.filter(t => t.done).length}/{p.tasks.length} tasks</div>}
+            </div>))}
+            {pp.length === 0 && <div style={{ padding: 16, textAlign: "center", fontSize: 12, color: "#334155" }}>Drag projects here</div>}
+          </div>
+        </div>); })}
+    </div>
+  );
 }
 
 /* ═══ SCHEDULE VIEW ═══ */
@@ -529,14 +622,11 @@ function UserAdminView() {
   if (loading) return <div style={{ padding: 40, textAlign: "center", color: "#64748b" }}>Loading...</div>;
   return (<div style={{ maxWidth: 700, margin: "0 auto", padding: 24 }}>
     <p style={{ fontSize: 13, color: "#64748b", marginBottom: 20 }}>Manage who can access FWT Workspaces.</p>
-
-    {/* Predefined Email Setting */}
     <div style={{ background: "#1a2332", borderRadius: 12, border: "1px solid #1e293b", padding: 20, marginBottom: 24 }}>
       <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", marginBottom: 10, textTransform: "uppercase" }}>Email Notifications</div>
       <p style={{ fontSize: 12, color: "#64748b", marginBottom: 10 }}>Daily logs, timesheets, and task notifications are automatically emailed to all admins. Add an additional recipient below (e.g., office manager, payroll).</p>
       <PredefinedEmailSetting />
     </div>
-
     {pending.length > 0 && <><div style={{ fontSize: 12, fontWeight: 700, color: "#f59e0b", marginBottom: 10, textTransform: "uppercase" }}>Pending ({pending.length})</div>
       {pending.map(([uid, u]) => (<div key={uid} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", background: "#1a2332", borderRadius: 10, border: "1px solid #f59e0b33", marginBottom: 6 }}><div style={{ flex: 1 }}><div style={{ fontSize: 14, fontWeight: 600, color: "#fff" }}>{u.displayName}</div><div style={{ fontSize: 12, color: "#64748b" }}>{u.email}</div></div><button onClick={() => approve(uid)} style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: "#10b981", color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Approve</button><button onClick={() => remove(uid)} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #7f1d1d", background: "transparent", color: "#ef4444", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Deny</button></div>))}</>}
     <div style={{ fontSize: 12, fontWeight: 700, color: "#10b981", marginBottom: 10, marginTop: pending.length > 0 ? 20 : 0, textTransform: "uppercase" }}>Approved ({approved.length})</div>
@@ -545,7 +635,7 @@ function UserAdminView() {
 }
 
 /* ═══ QUICK ADD BUTTON ═══ */
-function QuickAddButton({ projects, onAddTask, onAddNote, onAddMaterial }) {
+function QuickAddButton({ projects, onAddTask, onAddNote, onAddMaterial, isMobile }) {
   const [open, setOpen] = useState(false);
   const [type, setType] = useState("task");
   const [pid, setPid] = useState("");
@@ -558,13 +648,15 @@ function QuickAddButton({ projects, onAddTask, onAddNote, onAddMaterial }) {
     else if (type === "material") onAddMaterial(pid, text.trim());
     setText(""); setOpen(false);
   }
+  const panelWidth = isMobile ? "calc(100vw - 32px)" : 340;
+  const panelRight = isMobile ? 16 : 24;
   return (<>
     <button onClick={() => setOpen(!open)} style={{ position: "fixed", bottom: 24, right: 24, width: 52, height: 52, borderRadius: "50%", border: "none", background: "linear-gradient(135deg, #6366f1, #8b5cf6)", color: "#fff", fontSize: 24, cursor: "pointer", boxShadow: "0 4px 20px rgba(99,102,241,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 90, transition: "transform 0.2s", transform: open ? "rotate(45deg)" : "none" }}><Plus size={24} /></button>
     {open && (
-      <div style={{ position: "fixed", bottom: 88, right: 24, width: 340, background: "#1a2332", borderRadius: 16, border: "1px solid #1e293b", padding: 20, zIndex: 90, boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
+      <div style={{ position: "fixed", bottom: 88, right: panelRight, width: panelWidth, background: "#1a2332", borderRadius: 16, border: "1px solid #1e293b", padding: 20, zIndex: 90, boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}>⚡ Quick Add</div>
         <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
-          {["task", "note", "material"].map(t => (<button key={t} onClick={() => setType(t)} style={{ flex: 1, padding: "6px", borderRadius: 8, border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", background: type === t ? "#6366f1" : "transparent", color: type === t ? "#fff" : "#64748b", textTransform: "capitalize" }}>{t}</button>))}
+          {["task", "note", "material"].map(t => (<button key={t} onClick={() => setType(t)} style={{ flex: 1, padding: "8px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", background: type === t ? "#6366f1" : "transparent", color: type === t ? "#fff" : "#64748b", textTransform: "capitalize" }}>{t}</button>))}
         </div>
         <select style={{ ...qS, marginBottom: 8 }} value={pid} onChange={e => setPid(e.target.value)}>
           <option value="">Select project...</option>
@@ -572,7 +664,7 @@ function QuickAddButton({ projects, onAddTask, onAddNote, onAddMaterial }) {
         </select>
         <input style={qS} value={text} onChange={e => setText(e.target.value)} placeholder={type === "task" ? "Task description..." : type === "note" ? "Note..." : "Material item..."} onKeyDown={e => { if (e.key === "Enter") submit(); }} />
         <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
-          <button onClick={submit} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: "#6366f1", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", opacity: text.trim() && pid ? 1 : 0.4 }}>Add</button>
+          <button onClick={submit} style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: "#6366f1", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", opacity: text.trim() && pid ? 1 : 0.4 }}>Add</button>
         </div>
       </div>
     )}
@@ -585,8 +677,8 @@ function NewProjectModal({ phases, onSave, onClose, templates }) {
   const iS = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1e293b", background: "#0f1729", color: "#e2e8f0", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none" };
   const lS = { fontSize: 11, fontWeight: 600, color: "#64748b", marginBottom: 4, display: "block", textTransform: "uppercase", letterSpacing: "0.05em" };
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
-      <div style={{ background: "#1a2332", borderRadius: 16, border: "1px solid #1e293b", padding: 24, width: 520, maxHeight: "85vh", overflowY: "auto" }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 16 }}>
+      <div style={{ background: "#1a2332", borderRadius: 16, border: "1px solid #1e293b", padding: 24, width: "100%", maxWidth: 520, maxHeight: "90vh", overflowY: "auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 20 }}><h2 style={{ fontSize: 18, fontWeight: 700, color: "#fff", fontFamily: "'Outfit',sans-serif", margin: 0 }}>New Project</h2><button onClick={onClose} style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer" }}><X size={18} /></button></div>
         {templates && templates.length > 0 && (
           <div style={{ marginBottom: 16 }}>
