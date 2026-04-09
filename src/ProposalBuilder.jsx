@@ -41,12 +41,12 @@ const DEFAULT_TERMS = [
 ];
 
 const DEFAULT_LABOR_ROWS = [
-  { id: "lr", manf: "FWT", partNum: "FWT", desc: "LABOR - ROUGH IN", qty: 0, unit: "HR", costPU: 0, markupPct: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isLabor: true },
-  { id: "lt", manf: "FWT", partNum: "FWT", desc: "LABOR - TRIM", qty: 0, unit: "HR", costPU: 0, markupPct: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isLabor: true },
-  { id: "lh", manf: "FWT", partNum: "FWT", desc: "LABOR - HEAD END", qty: 0, unit: "HR", costPU: 0, markupPct: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isLabor: true },
-  { id: "lp", manf: "FWT", partNum: "FWT", desc: "LABOR - PROGRAMMING", qty: 0, unit: "HR", costPU: 0, markupPct: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isLabor: true },
-  { id: "lm", manf: "FWT", partNum: "FWT", desc: "LABOR - PROJECT MGT", qty: 0, unit: "HR", costPU: 0, markupPct: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isLabor: true },
-  { id: "lv", manf: "FWT", partNum: "FWT", desc: "LABOR - TRAVEL", qty: 0, unit: "HR", costPU: 0, markupPct: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isLabor: true },
+  { id: "lr", desc: "LABOR - ROUGH IN", hours: 0, costPerHr: 0, ratePerHr: 0, isLabor: true },
+  { id: "lt", desc: "LABOR - TRIM", hours: 0, costPerHr: 0, ratePerHr: 0, isLabor: true },
+  { id: "lh", desc: "LABOR - HEAD END", hours: 0, costPerHr: 0, ratePerHr: 0, isLabor: true },
+  { id: "lp", desc: "LABOR - PROGRAMMING", hours: 0, costPerHr: 0, ratePerHr: 0, isLabor: true },
+  { id: "lm", desc: "LABOR - PROJECT MGT", hours: 0, costPerHr: 0, ratePerHr: 0, isLabor: true },
+  { id: "lv", desc: "LABOR - TRAVEL", hours: 0, costPerHr: 0, ratePerHr: 0, isLabor: true },
 ];
 
 const DEFAULT_COST_ROWS = [
@@ -84,7 +84,6 @@ export function TakeoffBuilder({ takeoff, onSave }) {
     const n = arr.map((r, i) => {
       if (i !== idx) return r;
       const updated = { ...r, [field]: field === "desc" || field === "manf" || field === "partNum" || field === "unit" ? val : parseFloat(val) || 0 };
-      // Auto-calculate price from cost + markup
       if (field === "costPU" || field === "markupPct") {
         const cost = field === "costPU" ? (parseFloat(val) || 0) : updated.costPU;
         const markup = field === "markupPct" ? (parseFloat(val) || 0) : updated.markupPct;
@@ -94,9 +93,26 @@ export function TakeoffBuilder({ takeoff, onSave }) {
     });
     setArr(n);
     if (section === "materials") save(n, null, null, null);
-    else if (section === "labor") save(null, n, null, null);
     else if (section === "costs") save(null, null, n, null);
     else if (section === "rmr") save(null, null, null, n);
+  }
+
+  function updLaborRow(idx, field, val) {
+    const n = labor.map((r, i) => i === idx ? { ...r, [field]: field === "desc" ? val : parseFloat(val) || 0 } : r);
+    setLabor(n);
+    save(null, n, null, null);
+  }
+
+  function addLaborRow() {
+    const n = [...labor, { id: genId(), desc: "", hours: 0, costPerHr: 0, ratePerHr: 0, isLabor: true }];
+    setLabor(n);
+    save(null, n, null, null);
+  }
+
+  function removeLaborRow(idx) {
+    const n = labor.filter((_, i) => i !== idx);
+    setLabor(n);
+    save(null, n, null, null);
   }
 
   function addRow(arr, setArr, template, section) {
@@ -119,17 +135,18 @@ export function TakeoffBuilder({ takeoff, onSave }) {
 
   // Calculations
   const matTotal = materials.reduce((s, r) => s + (r.qty * r.pricePU) + (r.laborHrs * r.laborRate), 0);
-  const laborTotal = labor.reduce((s, r) => s + (r.qty * r.pricePU) + (r.laborHrs * r.laborRate), 0);
+  const laborPrice = labor.reduce((s, r) => s + (r.hours * r.ratePerHr), 0);
+  const laborCostTotal = labor.reduce((s, r) => s + (r.hours * r.costPerHr), 0);
+  const totalLaborHrs = labor.reduce((s, r) => s + (r.hours || 0), 0);
   const costTotal = costs.reduce((s, r) => s + (r.qty * r.pricePU), 0);
   const rmrTotal = rmr.reduce((s, r) => s + (r.qty * r.pricePU), 0);
-  const subtotal = matTotal + laborTotal + costTotal + rmrTotal;
+  const subtotal = matTotal + laborPrice + costTotal + rmrTotal;
   const overhead = subtotal * (overheadPct / 100);
   const grandTotal = subtotal + overhead;
 
   const matCost = materials.reduce((s, r) => s + (r.qty * r.costPU), 0);
-  const laborCost = labor.reduce((s, r) => s + (r.qty * r.costPU), 0);
   const costsCost = costs.reduce((s, r) => s + (r.qty * r.costPU), 0);
-  const totalCost = matCost + laborCost + costsCost;
+  const totalCost = matCost + laborCostTotal + costsCost;
   const margin = grandTotal > 0 ? Math.round(((grandTotal - totalCost) / grandTotal) * 100) : 0;
 
   function renderSection(title, color, rows, setRows, section, addFn, hideMarkup) {
@@ -166,7 +183,7 @@ export function TakeoffBuilder({ takeoff, onSave }) {
     <div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr 1fr", gap: 10, marginBottom: 20 }}>
         <div style={{ background: "#0f1729", borderRadius: 10, padding: "12px 14px", borderLeft: "3px solid #6366f1" }}><div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", marginBottom: 2 }}>Material Price</div><div style={{ fontSize: 18, fontWeight: 700, color: "#6366f1", fontFamily: "'Outfit',sans-serif" }}>${matTotal.toLocaleString()}</div></div>
-        <div style={{ background: "#0f1729", borderRadius: 10, padding: "12px 14px", borderLeft: "3px solid #f59e0b" }}><div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", marginBottom: 2 }}>Labor</div><div style={{ fontSize: 18, fontWeight: 700, color: "#f59e0b", fontFamily: "'Outfit',sans-serif" }}>${laborTotal.toLocaleString()}</div></div>
+        <div style={{ background: "#0f1729", borderRadius: 10, padding: "12px 14px", borderLeft: "3px solid #f59e0b" }}><div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", marginBottom: 2 }}>Labor ({totalLaborHrs}h)</div><div style={{ fontSize: 18, fontWeight: 700, color: "#f59e0b", fontFamily: "'Outfit',sans-serif" }}>${laborPrice.toLocaleString()}</div></div>
         <div style={{ background: "#0f1729", borderRadius: 10, padding: "12px 14px", borderLeft: "3px solid #10b981" }}><div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", marginBottom: 2 }}>Total Cost</div><div style={{ fontSize: 18, fontWeight: 700, color: "#10b981", fontFamily: "'Outfit',sans-serif" }}>${totalCost.toLocaleString()}</div></div>
         <div style={{ background: "#0f1729", borderRadius: 10, padding: "12px 14px", borderLeft: "3px solid #3b82f6" }}><div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", marginBottom: 2 }}>Quoted Price</div><div style={{ fontSize: 18, fontWeight: 700, color: "#3b82f6", fontFamily: "'Outfit',sans-serif" }}>${grandTotal.toLocaleString()}</div></div>
         <div style={{ background: "#0f1729", borderRadius: 10, padding: "12px 14px", borderLeft: `3px solid ${margin >= 20 ? "#10b981" : margin >= 10 ? "#f59e0b" : "#ef4444"}` }}><div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", marginBottom: 2 }}>Margin</div><div style={{ fontSize: 18, fontWeight: 700, color: margin >= 20 ? "#10b981" : margin >= 10 ? "#f59e0b" : "#ef4444", fontFamily: "'Outfit',sans-serif" }}>{margin}%</div></div>
@@ -183,7 +200,36 @@ export function TakeoffBuilder({ takeoff, onSave }) {
       {renderSection("Materials", "#6366f1", materials, setMaterials, "materials", () => addRow(materials, setMaterials, emptyMaterialRow, "materials"))}
 
       {/* Labor */}
-      {renderSection("FWT Labor", "#f59e0b", labor, setLabor, "labor", () => addRow(labor, setLabor, () => ({ id: genId(), manf: "FWT", partNum: "FWT", desc: "", qty: 0, unit: "HR", costPU: 0, markupPct: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isLabor: true }), "labor"), true)}
+      {/* FWT Labor */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#f59e0b", textTransform: "uppercase", marginBottom: 8 }}>FWT Labor</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 70px 80px 90px 80px 90px 24px", gap: 4, marginBottom: 6, padding: "0 0 6px", borderBottom: "1px solid #1e293b" }}>
+          {["Description", "Hours", "Cost/Hr", "Labor Cost", "Rate/Hr", "Labor Price", ""].map(h => (
+            <div key={h} style={{ fontSize: 10, fontWeight: 700, color: "#475569", textTransform: "uppercase" }}>{h}</div>
+          ))}
+        </div>
+        {labor.map((row, idx) => (
+          <div key={row.id} style={{ display: "grid", gridTemplateColumns: "1fr 70px 80px 90px 80px 90px 24px", gap: 4, marginBottom: 3, alignItems: "center" }}>
+            <input style={iS} value={row.desc} onChange={e => updLaborRow(idx, "desc", e.target.value)} placeholder="Labor description" />
+            <input type="number" step="0.5" style={nS} value={row.hours || ""} onChange={e => updLaborRow(idx, "hours", e.target.value)} placeholder="0" />
+            <input type="number" step="0.01" style={nS} value={row.costPerHr || ""} onChange={e => updLaborRow(idx, "costPerHr", e.target.value)} placeholder="$/hr" />
+            <div style={{ fontSize: 12, color: "#ef4444", textAlign: "right", fontWeight: 600 }}>${((row.hours || 0) * (row.costPerHr || 0)).toFixed(2)}</div>
+            <input type="number" step="0.01" style={nS} value={row.ratePerHr || ""} onChange={e => updLaborRow(idx, "ratePerHr", e.target.value)} placeholder="$/hr" />
+            <div style={{ fontSize: 12, color: "#10b981", textAlign: "right", fontWeight: 600 }}>${((row.hours || 0) * (row.ratePerHr || 0)).toFixed(2)}</div>
+            <button onClick={() => removeLaborRow(idx)} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer" }}><X size={12} /></button>
+          </div>
+        ))}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 70px 80px 90px 80px 90px 24px", gap: 4, marginTop: 6, padding: "8px 0 0", borderTop: "1px solid #1e293b" }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#f59e0b" }}>LABOR TOTALS</div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", textAlign: "right" }}>{totalLaborHrs}h</div>
+          <div></div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#ef4444", textAlign: "right" }}>${laborCostTotal.toLocaleString()}</div>
+          <div></div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#10b981", textAlign: "right" }}>${laborPrice.toLocaleString()}</div>
+          <div></div>
+        </div>
+        <button onClick={addLaborRow} style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 8, background: "none", border: "none", color: "#f59e0b", fontSize: 11, cursor: "pointer", fontFamily: "inherit", fontWeight: 600, padding: "4px 0" }}><Plus size={12} /> Add Labor Row</button>
+      </div>
 
       {/* Project Costs */}
       {renderSection("Project Costs", "#ef4444", costs, setCosts, "costs", () => addRow(costs, setCosts, () => ({ id: genId(), manf: "FWT", partNum: "FWT", desc: "", qty: 1, unit: "EA", costPU: 0, markupPct: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isCost: true }), "costs"))}
@@ -245,7 +291,7 @@ export function ProposalBuilder({ opportunity, proposal, onSave, takeoff }) {
   function pullFromTakeoff() {
     if (!takeoff) return;
     const matTotal = (takeoff.materials || []).reduce((s, r) => s + (r.qty * r.pricePU) + (r.laborHrs * r.laborRate), 0);
-    const laborTotal = (takeoff.labor || []).reduce((s, r) => s + (r.qty * r.pricePU) + (r.laborHrs * r.laborRate), 0);
+    const laborTotal = (takeoff.labor || []).reduce((s, r) => s + ((r.hours || 0) * (r.ratePerHr || 0)), 0);
     const costTotal = (takeoff.costs || []).reduce((s, r) => s + (r.qty * r.pricePU), 0);
     const rmrTotal = (takeoff.rmr || []).reduce((s, r) => s + (r.qty * r.pricePU), 0);
     const sub = matTotal + laborTotal + costTotal + rmrTotal;
