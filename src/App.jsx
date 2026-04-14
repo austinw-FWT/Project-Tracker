@@ -467,7 +467,15 @@ function Tracker({ user, userRecord }) {
           ) : view === "myspace" && mySpaceTab === "daily" ? (
             <DailyTracker data={getMyPrivate().dailyTracker} archivedDays={getMyPrivate().archivedDays || []} onSave={dt => saveMyPrivate({ dailyTracker: dt })} onArchive={archive => saveMyPrivate({ archivedDays: archive })} />
           ) : view === "myspace" && mySpaceTab === "dailylog" ? (
-            <MyDailyLog dailyLogs={getMyPrivate().dailyLogs || []} projects={data.projects} teamRoster={data.teamRoster} myName={myName} onSave={logs => saveMyPrivate({ dailyLogs: logs })} onUpdateProject={(pid, u) => updateProject(pid, u)} />
+            <MyDailyLog dailyLogs={getMyPrivate().dailyLogs || []} projects={data.projects} teamRoster={data.teamRoster} myName={myName}
+              onSubmit={(logs, projectUpdates) => {
+                let nd = { ...data, memberPrivate: { ...(data.memberPrivate || {}), [myName]: { ...getMyPrivate(), dailyLogs: logs } } };
+                (projectUpdates || []).forEach(({ pid, updates }) => {
+                  nd = { ...nd, projects: nd.projects.map(p => p.id === pid ? { ...p, ...updates, updatedAt: new Date().toISOString() } : p) };
+                });
+                saveData(nd);
+              }}
+              onDeleteLog={logs => saveMyPrivate({ dailyLogs: logs })} />
           ) : view === "myspace" && mySpaceTab === "opportunities" ? (
             <Opportunities opportunities={getMyPrivate().opportunities || []} onSave={opps => saveMyPrivate({ opportunities: opps })} onConvert={opp => { addProject({ ...opp, phaseId: "awarded" }); const opps = (getMyPrivate().opportunities || []).filter(o => o.id !== opp.id); saveMyPrivate({ opportunities: opps }); }} />
           ) : view === "myspace" && mySpaceTab === "timesheets" ? (
