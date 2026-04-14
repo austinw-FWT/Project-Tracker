@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react";
-import { Plus, X, Edit2, Trash2, ClipboardList, Clock, Cable, CheckCircle2, Circle, FileText, Camera, MapPin, Phone, Mail, DollarSign, Building2, User, Layers, Package, Receipt, BookOpen, AlertTriangle, Image, FileSearch, TrendingUp, ClipboardCheck } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { Plus, X, Edit2, Trash2, ClipboardList, Clock, Cable, CheckCircle2, Circle, FileText, Camera, MapPin, Phone, Mail, DollarSign, Building2, User, Layers, Package, Receipt, BookOpen, AlertTriangle, Image, FileSearch, TrendingUp, ClipboardCheck, Upload, Download, ExternalLink } from "lucide-react";
 import { PROJECT_TYPES, LABOR_PHASES, MATERIAL_STATUSES, TASK_CATEGORIES, genId } from "./App.jsx";
+import { storage, storageRef, uploadBytes, getDownloadURL } from "./firebase.js";
 
 const iS = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1e293b", background: "#1a2332", color: "#e2e8f0", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none" };
 const lS = { fontSize: 11, fontWeight: 600, color: "#64748b", marginBottom: 4, display: "block", textTransform: "uppercase", letterSpacing: "0.05em" };
@@ -344,69 +345,107 @@ function TasksTab({ project, onUpdate, teamRoster, assignTaskToMember }) {
 
 /* ── DAILY LOG ── */
 function DailyLogTab({ project, onUpdate }) {
-  const [date, setDate] = useState(new Date().toISOString().split("T")[0]); const [member, setMember] = useState(""); const [hours, setHours] = useState(""); const [act, setAct] = useState("");
-  const [sending, setSending] = useState(false); const [sent, setSent] = useState(false);
   const logs = project.dailyLogs || [];
-  function add() {
-    if (!act.trim()) return;
-    const log = { id: genId(), date, member, hours: parseFloat(hours) || 0, activities: act.trim(), createdAt: new Date().toISOString() };
-    onUpdate({ dailyLogs: [log, ...logs] });
-    setSending(true);
-    callFunction("emailDailyLog", { projectName: project.name, log }).then(r => {
-      if (r?.result?.success) { setSent(true); setTimeout(() => setSent(false), 3000); }
-      setSending(false);
-    });
-    setAct(""); setHours("");
-  }
   return (<div>
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
-      <div><label style={sS}>Date</label><input type="date" style={iS} value={date} onChange={e => setDate(e.target.value)} /></div>
-      <div><label style={sS}>Member</label><input style={iS} value={member} onChange={e => setMember(e.target.value)} /></div>
-      <div><label style={sS}>Hours</label><input type="number" step="0.25" style={iS} value={hours} onChange={e => setHours(e.target.value)} /></div>
+    <div style={{ padding: "12px 14px", background: "#0f172966", borderRadius: 10, border: "1px solid #1e293b", marginBottom: 16 }}>
+      <div style={{ fontSize: 13, color: "#94a3b8" }}>Daily logs are now submitted from <strong style={{ color: "#818cf8" }}>My Space → Daily Log</strong>. Entries that include this project will appear here automatically.</div>
     </div>
-    <div><label style={sS}>Activities</label><textarea style={{ ...iS, minHeight: 50, resize: "vertical" }} value={act} onChange={e => setAct(e.target.value)} placeholder="Work performed..." /></div>
-    <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8, marginBottom: 16, gap: 8, alignItems: "center" }}>
-      {sent && <span style={{ fontSize: 12, color: "#10b981", fontWeight: 600 }}>✓ Email sent to admins</span>}
-      {sending && <span style={{ fontSize: 12, color: "#6366f1" }}>Sending email...</span>}
-      <button onClick={add} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: "#6366f1", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", opacity: act.trim() ? 1 : 0.4 }}><Plus size={14} /> Post & Email Log</button>
-    </div>
-    {logs.map((l, i) => (<div key={l.id} style={{ padding: "12px 14px", background: "#0f1729", borderRadius: 10, border: "1px solid #1e293b", marginBottom: 6 }}>
+    {logs.map((l, i) => (<div key={l.id || i} style={{ padding: "12px 14px", background: "#0f1729", borderRadius: 10, border: "1px solid #1e293b", marginBottom: 6 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}><span style={{ fontSize: 12, fontWeight: 600, color: "#fff" }}>{l.date}</span>{l.member && <span style={{ fontSize: 11, color: "#64748b" }}>· {l.member}</span>}{l.hours > 0 && <span style={{ fontSize: 11, color: "#f59e0b", fontWeight: 600 }}>{l.hours}h</span>}<button onClick={() => onUpdate({ dailyLogs: logs.filter((_, idx) => idx !== i) })} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer", marginLeft: "auto" }}><X size={12} /></button></div>
       <div style={{ fontSize: 13, color: "#e2e8f0", whiteSpace: "pre-wrap" }}>{l.activities}</div>
     </div>))}
-    {logs.length === 0 && <div style={{ textAlign: "center", padding: 20, color: "#334155", fontSize: 13 }}>No daily logs yet.</div>}
+    {logs.length === 0 && <div style={{ textAlign: "center", padding: 20, color: "#334155", fontSize: 13 }}>No daily logs yet. Submit a log from My Space → Daily Log.</div>}
   </div>);
 }
 
 /* ── PHOTO LOG ── */
 function PhotoLogTab({ project, onUpdate }) {
-  const [caption, setCaption] = useState(""); const [phase, setPhase] = useState("pre-existing"); const [location, setLocation] = useState("");
+  const [caption, setCaption] = useState(""); const [phase, setPhase] = useState("Pre-Existing Conditions"); const [location, setLocation] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef(null);
   const photos = project.photoLog || [];
   const phases = ["Pre-Existing Conditions", "Rough-In", "Trim Out", "Final Install", "Punch List", "Closeout", "Other"];
-  function add() { if (!caption.trim()) return; onUpdate({ photoLog: [...photos, { id: genId(), caption: caption.trim(), phase, location: location.trim(), date: new Date().toISOString().split("T")[0], addedAt: new Date().toISOString() }] }); setCaption(""); setLocation(""); }
+
+  async function handleFileUpload(e) {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    setUploading(true);
+    const newPhotos = [];
+    for (const file of files) {
+      try {
+        const path = `projects/${project.id}/photos/${Date.now()}_${file.name}`;
+        const sRef = storageRef(storage, path);
+        await uploadBytes(sRef, file);
+        const url = await getDownloadURL(sRef);
+        newPhotos.push({
+          id: genId(),
+          caption: caption.trim() || file.name,
+          phase,
+          location: location.trim(),
+          date: new Date().toISOString().split("T")[0],
+          addedAt: new Date().toISOString(),
+          fileUrl: url,
+          fileName: file.name,
+        });
+      } catch (err) { console.error("Photo upload failed:", err); alert("Upload failed for " + file.name + ". Check Firebase Storage rules."); }
+    }
+    if (newPhotos.length > 0) onUpdate({ photoLog: [...photos, ...newPhotos] });
+    setUploading(false); setCaption(""); setLocation("");
+    if (fileRef.current) fileRef.current.value = "";
+  }
+
+  function addManual() {
+    if (!caption.trim()) return;
+    onUpdate({ photoLog: [...photos, { id: genId(), caption: caption.trim(), phase, location: location.trim(), date: new Date().toISOString().split("T")[0], addedAt: new Date().toISOString() }] });
+    setCaption(""); setLocation("");
+  }
+
   const grouped = {};
   photos.forEach(p => { const k = p.phase || "Other"; if (!grouped[k]) grouped[k] = []; grouped[k].push(p); });
+
   return (<div>
-    <p style={{ fontSize: 12, color: "#64748b", marginBottom: 16 }}>Log photos by phase for documentation and closeout packages.</p>
-    {Object.entries(grouped).map(([phase, items]) => (
-      <div key={phase} style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: "#f59e0b", textTransform: "uppercase", marginBottom: 8 }}>{phase} ({items.length})</div>
-        {items.map(p => (
-          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid #0f1729" }}>
-            <Camera size={14} style={{ color: "#f59e0b", flexShrink: 0 }} />
-            <div style={{ flex: 1 }}><span style={{ fontSize: 13, color: "#e2e8f0" }}>{p.caption}</span>{p.location && <span style={{ fontSize: 11, color: "#64748b", marginLeft: 8 }}>📍 {p.location}</span>}</div>
-            <span style={{ fontSize: 11, color: "#475569" }}>{p.date}</span>
-            <button onClick={() => onUpdate({ photoLog: photos.filter(x => x.id !== p.id) })} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer" }}><X size={12} /></button>
-          </div>
-        ))}
+    <p style={{ fontSize: 12, color: "#64748b", marginBottom: 16 }}>Upload photos or log references by phase for documentation and closeout packages.</p>
+    {Object.entries(grouped).map(([ph, items]) => (
+      <div key={ph} style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#f59e0b", textTransform: "uppercase", marginBottom: 8 }}>{ph} ({items.length})</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 8 }}>
+          {items.map(p => (
+            <div key={p.id} style={{ background: "#0f1729", borderRadius: 10, border: "1px solid #1e293b", overflow: "hidden" }}>
+              {p.fileUrl ? (
+                <a href={p.fileUrl} target="_blank" rel="noopener noreferrer" style={{ display: "block" }}>
+                  <img src={p.fileUrl} alt={p.caption} style={{ width: "100%", height: 140, objectFit: "cover", display: "block" }} onError={e => { e.target.style.display = "none"; }} />
+                </a>
+              ) : (
+                <div style={{ width: "100%", height: 60, display: "flex", alignItems: "center", justifyContent: "center", background: "#1e293b" }}><Camera size={20} style={{ color: "#f59e0b" }} /></div>
+              )}
+              <div style={{ padding: "8px 10px" }}>
+                <div style={{ fontSize: 12, color: "#e2e8f0", fontWeight: 600, marginBottom: 2 }}>{p.caption}</div>
+                <div style={{ fontSize: 10, color: "#64748b" }}>{p.location && `📍 ${p.location} · `}{p.date}</div>
+                <div style={{ display: "flex", gap: 4, marginTop: 6 }}>
+                  {p.fileUrl && <a href={p.fileUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, color: "#818cf8", textDecoration: "none", display: "flex", alignItems: "center", gap: 2 }}><ExternalLink size={10} /> View</a>}
+                  <button onClick={() => onUpdate({ photoLog: photos.filter(x => x.id !== p.id) })} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer", marginLeft: "auto", fontSize: 10 }}><X size={12} /></button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     ))}
-    {photos.length === 0 && <div style={{ textAlign: "center", padding: 20, color: "#334155", fontSize: 13, marginBottom: 16 }}>No photos logged yet.</div>}
-    <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-      <input style={{ ...iS, flex: 2 }} placeholder="Photo description *" value={caption} onChange={e => setCaption(e.target.value)} />
-      <select style={{ ...iS, flex: 1 }} value={phase} onChange={e => setPhase(e.target.value)}>{phases.map(p => <option key={p} value={p}>{p}</option>)}</select>
-      <input style={{ ...iS, flex: 1 }} placeholder="Location" value={location} onChange={e => setLocation(e.target.value)} />
-      <button onClick={add} style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: "#6366f1", color: "#fff", cursor: "pointer", flexShrink: 0, opacity: caption.trim() ? 1 : 0.4 }}><Plus size={14} /></button>
+    {photos.length === 0 && <div style={{ textAlign: "center", padding: 20, color: "#334155", fontSize: 13, marginBottom: 16 }}>No photos yet.</div>}
+    <div style={{ background: "#0f1729", borderRadius: 10, border: "1px solid #1e293b", padding: 14, marginTop: 12 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", marginBottom: 10 }}>Add Photos</div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+        <input style={{ ...iS, flex: 2, minWidth: 160 }} placeholder="Caption / description" value={caption} onChange={e => setCaption(e.target.value)} />
+        <select style={{ ...iS, flex: 1 }} value={phase} onChange={e => setPhase(e.target.value)}>{phases.map(p => <option key={p} value={p}>{p}</option>)}</select>
+        <input style={{ ...iS, flex: 1 }} placeholder="Location" value={location} onChange={e => setLocation(e.target.value)} />
+      </div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, border: "1px solid #6366f1", background: "#6366f122", color: "#818cf8", fontSize: 12, fontWeight: 600, cursor: uploading ? "wait" : "pointer", fontFamily: "inherit", opacity: uploading ? 0.5 : 1 }}>
+          <Upload size={14} /> {uploading ? "Uploading..." : "Upload Photo(s)"}
+          <input ref={fileRef} type="file" accept="image/*" multiple onChange={handleFileUpload} style={{ display: "none" }} disabled={uploading} />
+        </label>
+        <button onClick={addManual} style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid #1e293b", background: "#1a2332", color: "#94a3b8", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", opacity: caption.trim() ? 1 : 0.4 }}>Add Text Only</button>
+      </div>
     </div>
   </div>);
 }
@@ -531,9 +570,81 @@ function PunchListTab({ project, onUpdate }) {
 /* ── DOCS ── */
 function DocsTab({ project, onUpdate }) {
   const [name, setName] = useState(""); const [type, setType] = useState("document");
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef(null);
+
+  async function handleFileUpload(e) {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    setUploading(true);
+    const newDocs = [];
+    for (const file of files) {
+      try {
+        const path = `projects/${project.id}/docs/${Date.now()}_${file.name}`;
+        const sRef = storageRef(storage, path);
+        await uploadBytes(sRef, file);
+        const url = await getDownloadURL(sRef);
+        newDocs.push({
+          name: name.trim() || file.name,
+          type,
+          addedAt: new Date().toISOString(),
+          fileUrl: url,
+          fileName: file.name,
+          fileSize: file.size,
+        });
+      } catch (err) { console.error("Doc upload failed:", err); alert("Upload failed for " + file.name + ". Check Firebase Storage rules."); }
+    }
+    if (newDocs.length > 0) onUpdate({ documents: [...(project.documents || []), ...newDocs] });
+    setUploading(false); setName("");
+    if (fileRef.current) fileRef.current.value = "";
+  }
+
+  function addManual() {
+    if (!name.trim()) return;
+    onUpdate({ documents: [...(project.documents || []), { name: name.trim(), type, addedAt: new Date().toISOString() }] });
+    setName("");
+  }
+
+  function formatSize(bytes) {
+    if (!bytes) return "";
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KB";
+    return (bytes / 1048576).toFixed(1) + " MB";
+  }
+
   return (<div>
-    {(project.documents || []).map((doc, i) => (<div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid #1e293b" }}>{doc.type === "photo" ? <Camera size={14} style={{ color: "#f59e0b" }} /> : <FileText size={14} style={{ color: "#3b82f6" }} />}<span style={{ flex: 1, fontSize: 13, color: "#e2e8f0" }}>{doc.name}</span><span style={{ fontSize: 11, color: "#64748b" }}>{doc.type}</span><span style={{ fontSize: 11, color: "#475569" }}>{new Date(doc.addedAt).toLocaleDateString()}</span><button onClick={() => onUpdate({ documents: project.documents.filter((_, idx) => idx !== i) })} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer" }}><X size={12} /></button></div>))}
-    <div style={{ display: "flex", gap: 6, marginTop: 12 }}><input style={{ ...iS, flex: 2 }} placeholder="Document name..." value={name} onChange={e => setName(e.target.value)} /><select style={{ ...iS, flex: 0.8 }} value={type} onChange={e => setType(e.target.value)}><option value="document">Document</option><option value="photo">Photo</option><option value="drawing">Drawing</option><option value="proposal">Proposal</option><option value="contract">Contract</option><option value="submittal">Submittal</option><option value="closeout">Closeout Pkg</option></select><button onClick={() => { if (!name.trim()) return; onUpdate({ documents: [...(project.documents || []), { name: name.trim(), type, addedAt: new Date().toISOString() }] }); setName(""); }} style={{ padding: "8px 12px", borderRadius: 8, border: "none", background: "#6366f1", color: "#fff", cursor: "pointer" }}><Plus size={14} /></button></div>
+    {(project.documents || []).map((doc, i) => (
+      <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid #1e293b" }}>
+        {doc.type === "photo" ? <Camera size={14} style={{ color: "#f59e0b" }} /> : <FileText size={14} style={{ color: "#3b82f6" }} />}
+        <div style={{ flex: 1 }}>
+          <span style={{ fontSize: 13, color: "#e2e8f0" }}>{doc.name}</span>
+          {doc.fileName && doc.fileName !== doc.name && <span style={{ fontSize: 11, color: "#475569", marginLeft: 6 }}>({doc.fileName})</span>}
+        </div>
+        <span style={{ fontSize: 11, color: "#64748b" }}>{doc.type}</span>
+        {doc.fileSize && <span style={{ fontSize: 10, color: "#475569" }}>{formatSize(doc.fileSize)}</span>}
+        <span style={{ fontSize: 11, color: "#475569" }}>{new Date(doc.addedAt).toLocaleDateString()}</span>
+        {doc.fileUrl && <a href={doc.fileUrl} target="_blank" rel="noopener noreferrer" style={{ color: "#818cf8", display: "flex", alignItems: "center" }} title="Download"><Download size={13} /></a>}
+        <button onClick={() => onUpdate({ documents: project.documents.filter((_, idx) => idx !== i) })} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer" }}><X size={12} /></button>
+      </div>
+    ))}
+    {(project.documents || []).length === 0 && <div style={{ textAlign: "center", padding: 20, color: "#334155", fontSize: 13, marginBottom: 12 }}>No documents yet.</div>}
+    <div style={{ background: "#0f1729", borderRadius: 10, border: "1px solid #1e293b", padding: 14, marginTop: 12 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", marginBottom: 10 }}>Add Document</div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+        <input style={{ ...iS, flex: 2 }} placeholder="Document name..." value={name} onChange={e => setName(e.target.value)} />
+        <select style={{ ...iS, flex: 0.8 }} value={type} onChange={e => setType(e.target.value)}>
+          <option value="document">Document</option><option value="photo">Photo</option><option value="drawing">Drawing</option>
+          <option value="proposal">Proposal</option><option value="contract">Contract</option><option value="submittal">Submittal</option><option value="closeout">Closeout Pkg</option>
+        </select>
+      </div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, border: "1px solid #6366f1", background: "#6366f122", color: "#818cf8", fontSize: 12, fontWeight: 600, cursor: uploading ? "wait" : "pointer", fontFamily: "inherit", opacity: uploading ? 0.5 : 1 }}>
+          <Upload size={14} /> {uploading ? "Uploading..." : "Upload File(s)"}
+          <input ref={fileRef} type="file" multiple onChange={handleFileUpload} style={{ display: "none" }} disabled={uploading} />
+        </label>
+        <button onClick={addManual} style={{ padding: "8px 14px", borderRadius: 8, border: "1px solid #1e293b", background: "#1a2332", color: "#94a3b8", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", opacity: name.trim() ? 1 : 0.4 }}>Add Text Only</button>
+      </div>
+    </div>
   </div>);
 }
 
