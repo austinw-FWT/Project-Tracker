@@ -295,6 +295,3 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, on
     </div>
   );
 }
-
-  );
-}
