@@ -116,7 +116,7 @@ async function generateProposalDocx(d, opp) {
   docXml = replaceSDTAll(docXml, "Project Name", opp.name || "");
   docXml = replaceSDTAll(docXml, "Client Name", opp.contactName || "");
 
-  // Scopes (template supports up to 2)
+  // Scopes - template has 2 detail slots; fill what we can
   if (d.scopes.length >= 1) {
     docXml = replaceSDT(docXml, "Type of Work", d.scopes[0].title || "");
     docXml = replaceSDT(docXml, "SoW Story", d.scopes[0].description || "");
@@ -126,11 +126,34 @@ async function generateProposalDocx(d, opp) {
     docXml = replaceSDT(docXml, "SoW Story", d.scopes[1].description || "");
   }
 
-  // Pricing table
+  // Pricing table - handle all scopes dynamically
+  // First fill the template's 2 named SDT slots for scope names
   if (d.scopes.length >= 1) docXml = replaceSDT(docXml, "Type of Work", d.scopes[0].title || "");
   if (d.scopes.length >= 2) docXml = replaceSDT(docXml, "Type of Work", d.scopes[1].title || "");
+
+  // Replace the 2 template price SDTs
   docXml = replaceSDT(docXml, "SoW #1 Price", d.scopes.length >= 1 ? fmt(d.scopes[0].price) : "$0.00");
   docXml = replaceSDT(docXml, "SoW #2 Price", d.scopes.length >= 2 ? fmt(d.scopes[1].price) : "$0.00");
+
+  // For scopes 3+, insert additional pricing rows before TOTAL PROJECT PRICE
+  if (d.scopes.length > 2) {
+    const extraRows = d.scopes.slice(2).map(s => {
+      const title = (s.title || "Scope").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const price = fmt(s.price).replace(/&/g, "&amp;");
+      return '<w:tr><w:tc><w:tcPr><w:tcW w:w="7560" w:type="dxa"/></w:tcPr><w:p><w:r><w:rPr><w:rFonts w:cstheme="minorHAnsi"/></w:rPr><w:t>' + title + ' Price:</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w="3240" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:jc w:val="right"/></w:pPr><w:r><w:rPr><w:rFonts w:cstheme="minorHAnsi"/></w:rPr><w:t>' + price + '</w:t></w:r></w:p></w:tc></w:tr>';
+    }).join("");
+    // Insert before the empty row that precedes TOTAL
+    const totalMarker = "TOTAL PROJECT PRICE";
+    const totalIdx = docXml.indexOf(totalMarker);
+    if (totalIdx > -1) {
+      // Find the <w:tr> that contains the empty spacer row before TOTAL
+      const beforeTotal = docXml.lastIndexOf("<w:tr>", totalIdx);
+      if (beforeTotal > -1) {
+        docXml = docXml.slice(0, beforeTotal) + extraRows + docXml.slice(beforeTotal);
+      }
+    }
+  }
+
   docXml = replaceSDT(docXml, "Total Price", fmt(totalPrice));
 
   zip.file("word/document.xml", docXml);
@@ -148,7 +171,7 @@ async function generateProposalDocx(d, opp) {
 /* ═══════════════════════════════════════
    PROPOSAL BUILDER COMPONENT
    ═══════════════════════════════════════ */
-export function ProposalBuilder({ opportunity, proposal, onSave, takeoff }) {
+export function ProposalBuilder({ opportunity, proposal, onSave }) {
   const SYSTEM_TYPES = ["Access Control", "Intrusion Alarm", "Security Cameras", "Sound Masking"];
   const data = proposal || { date: new Date().toISOString().split("T")[0], expiration: 30, pmName: "Austin Wright", pmTitle: "Project Manager", pmPhone: "239.565.9270", pmEmail: "austinw@farwesttechnologies.com", projectInfo: "", scopes: [{ id: genId(), title: "", description: "", fieldDevices: "", headendDevices: "", price: "" }], exclusions: DEFAULT_EXCLUSIONS.map((e, i) => ({ id: "ex" + i, text: e, included: true })), terms: DEFAULT_TERMS.map((t, i) => ({ id: "tm" + i, text: t, included: true })), systemTypes: { "Access Control": false, "Intrusion Alarm": false, "Security Cameras": false, "Sound Masking": false } };
   const [d, setD] = useState(data);
@@ -159,14 +182,41 @@ export function ProposalBuilder({ opportunity, proposal, onSave, takeoff }) {
   const pS = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1e293b", background: "#0f1729", color: "#e2e8f0", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none" };
   const lbS = { fontSize: 11, fontWeight: 600, color: "#64748b", marginBottom: 4, display: "block", textTransform: "uppercase", letterSpacing: "0.05em" };
 
-  function pullFromTakeoff() { if (!takeoff) return; const matT = (takeoff.materials || []).reduce((s, r) => s + (n(r.qty) * n(r.pricePU)) + (n(r.laborHrs) * n(r.laborRate)), 0); const labT = (takeoff.labor || []).reduce((s, r) => s + (n(r.hours) * n(r.ratePerHr)), 0); const cosT = (takeoff.costs || []).reduce((s, r) => s + (n(r.qty) * n(r.pricePU)), 0); const rmrT = (takeoff.rmr || []).reduce((s, r) => s + (n(r.qty) * n(r.pricePU)), 0); const sub = matT + labT + cosT + rmrT; const total = sub + sub * (n(takeoff.overheadPct) / 100); if (d.scopes.length > 0) upd({ scopes: d.scopes.map((s, i) => i === 0 ? { ...s, price: total.toFixed(2) } : s) }); }
+  function pullFromScopeBOM(scopeIdx) {
+    const scope = d.scopes[scopeIdx];
+    const tk = scope.takeoff;
+    if (!tk) return;
+    const matT = (tk.materials || []).reduce((s, r) => s + (n(r.qty) * n(r.pricePU)) + (n(r.laborHrs) * n(r.laborRate)), 0);
+    const labT = (tk.labor || []).reduce((s, r) => s + (n(r.hours) * n(r.ratePerHr)), 0);
+    const cosT = (tk.costs || []).reduce((s, r) => s + (n(r.qty) * n(r.pricePU)), 0);
+    const rmrT = (tk.rmr || []).reduce((s, r) => s + (n(r.qty) * n(r.pricePU)), 0);
+    const sub = matT + labT + cosT + rmrT;
+    const total = sub + sub * (n(tk.overheadPct) / 100);
+    upd({ scopes: d.scopes.map((s, i) => i === scopeIdx ? { ...s, price: total.toFixed(2) } : s) });
+  }
 
   async function handleGenerate() { setGenerating(true); try { await generateProposalDocx(d, opp); } catch (err) { console.error("Proposal generation error:", err); alert("Error generating proposal. Check console for details."); } setGenerating(false); }
 
   return (<div>
-    <div style={{ display: "flex", gap: 8, marginBottom: 20 }}><button onClick={handleGenerate} disabled={generating} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, border: "none", background: generating ? "#475569" : "#6366f1", color: "#fff", fontSize: 13, fontWeight: 600, cursor: generating ? "wait" : "pointer", fontFamily: "inherit" }}><Download size={14} /> {generating ? "Generating..." : "Generate Proposal (.docx)"}</button>{takeoff && <button onClick={pullFromTakeoff} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, border: "1px solid #1e293b", background: "#1a2332", color: "#94a3b8", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}><Calculator size={14} /> Pull Price from Takeoff</button>}</div>
+    <div style={{ display: "flex", gap: 8, marginBottom: 20 }}><button onClick={handleGenerate} disabled={generating} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, border: "none", background: generating ? "#475569" : "#6366f1", color: "#fff", fontSize: 13, fontWeight: 600, cursor: generating ? "wait" : "pointer", fontFamily: "inherit" }}><Download size={14} /> {generating ? "Generating..." : "Generate Proposal (.docx)"}</button></div>
     <div style={{ background: "#0f1729", borderRadius: 12, padding: 20, marginBottom: 16, border: "1px solid #1e293b" }}><div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 14 }}>Cover Page</div><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}><div><label style={lbS}>Date</label><input type="date" style={pS} value={d.date} onChange={e => upd({ date: e.target.value })} /></div><div><label style={lbS}>Expiration (days)</label><input type="number" style={pS} value={d.expiration} onChange={e => upd({ expiration: parseInt(e.target.value) || 30 })} /></div><div><label style={lbS}>Prepared By</label><input style={pS} value={d.pmName} onChange={e => upd({ pmName: e.target.value })} placeholder="PM Name" /></div><div><label style={lbS}>PM Title</label><input style={pS} value={d.pmTitle} onChange={e => upd({ pmTitle: e.target.value })} /></div><div><label style={lbS}>PM Phone</label><input style={pS} value={d.pmPhone} onChange={e => upd({ pmPhone: e.target.value })} /></div><div><label style={lbS}>PM Email</label><input style={pS} value={d.pmEmail} onChange={e => upd({ pmEmail: e.target.value })} /></div><div style={{ gridColumn: "span 3" }}><label style={lbS}>Project Info Source</label><input style={pS} value={d.projectInfo} onChange={e => upd({ projectInfo: e.target.value })} placeholder="specifications, drawings, site walk dated 01-01-2025, etc." /></div></div></div>
-    <div style={{ background: "#0f1729", borderRadius: 12, padding: 20, marginBottom: 16, border: "1px solid #1e293b" }}><div style={{ display: "flex", justifyContent: "space-between", marginBottom: 14 }}><span style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>Scope(s) of Work (max 2)</span>{d.scopes.length < 2 && <button onClick={() => upd({ scopes: [...d.scopes, { id: genId(), title: "", description: "", fieldDevices: "", headendDevices: "", price: "" }] })} style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", color: "#6366f1", fontSize: 12, cursor: "pointer", fontFamily: "inherit", fontWeight: 600 }}><Plus size={13} /> Add Scope</button>}</div>{d.scopes.map((scope, si) => (<div key={scope.id} style={{ background: "#1a2332", borderRadius: 10, padding: 16, marginBottom: 10, border: "1px solid #1e293b" }}><div style={{ display: "flex", gap: 8, marginBottom: 10 }}><input style={{ ...pS, flex: 2 }} value={scope.title} onChange={e => upd({ scopes: d.scopes.map((s, i) => i === si ? { ...s, title: e.target.value } : s) })} placeholder="Type of Work (e.g., Security Cameras)" /><input type="number" step="0.01" style={{ ...pS, flex: 0.8 }} value={scope.price} onChange={e => upd({ scopes: d.scopes.map((s, i) => i === si ? { ...s, price: e.target.value } : s) })} placeholder="Price" />{d.scopes.length > 1 && <button onClick={() => upd({ scopes: d.scopes.filter((_, i) => i !== si) })} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer" }}><X size={14} /></button>}</div><div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>Description (do NOT include &quot;FAR West Technologies will provide and install&quot; — already in template):</div><textarea style={{ ...pS, minHeight: 80, resize: "vertical", marginBottom: 10 }} value={scope.description} onChange={e => upd({ scopes: d.scopes.map((s, i) => i === si ? { ...s, description: e.target.value } : s) })} placeholder="a video surveillance system with 8 cameras, an NVR, and all related equipment..." /><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}><div><div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>Field Devices (one per line):</div><textarea style={{ ...pS, minHeight: 60, resize: "vertical" }} value={scope.fieldDevices || ""} onChange={e => upd({ scopes: d.scopes.map((s, i) => i === si ? { ...s, fieldDevices: e.target.value } : s) })} placeholder="Install (8) IP Dome cameras..." /></div><div><div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>Headend Devices (one per line):</div><textarea style={{ ...pS, minHeight: 60, resize: "vertical" }} value={scope.headendDevices || ""} onChange={e => upd({ scopes: d.scopes.map((s, i) => i === si ? { ...s, headendDevices: e.target.value } : s) })} placeholder="Install (1) 16 Port POE+ switch..." /></div></div></div>))}<div style={{ textAlign: "right", fontSize: 16, fontWeight: 700, color: "#fff", fontFamily: "'Outfit',sans-serif", marginTop: 8 }}>Total: ${totalPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div></div>
+    <div style={{ background: "#0f1729", borderRadius: 12, padding: 20, marginBottom: 16, border: "1px solid #1e293b" }}><div style={{ display: "flex", justifyContent: "space-between", marginBottom: 14 }}><span style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>Scope(s) of Work (max 10)</span>{d.scopes.length < 10 && <button onClick={() => upd({ scopes: [...d.scopes, { id: genId(), title: "", description: "", fieldDevices: "", headendDevices: "", price: "" }] })} style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", color: "#6366f1", fontSize: 12, cursor: "pointer", fontFamily: "inherit", fontWeight: 600 }}><Plus size={13} /> Add Scope</button>}</div>{d.scopes.map((scope, si) => (<div key={scope.id} style={{ background: "#1a2332", borderRadius: 10, padding: 16, marginBottom: 10, border: "1px solid #1e293b" }}><div style={{ display: "flex", gap: 8, marginBottom: 10 }}><input style={{ ...pS, flex: 2 }} value={scope.title} onChange={e => upd({ scopes: d.scopes.map((s, i) => i === si ? { ...s, title: e.target.value } : s) })} placeholder="Type of Work (e.g., Security Cameras)" /><input type="number" step="0.01" style={{ ...pS, flex: 0.8 }} value={scope.price} onChange={e => upd({ scopes: d.scopes.map((s, i) => i === si ? { ...s, price: e.target.value } : s) })} placeholder="Price" />{d.scopes.length > 1 && <button onClick={() => upd({ scopes: d.scopes.filter((_, i) => i !== si) })} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer" }}><X size={14} /></button>}</div><div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>Description (do NOT include &quot;FAR West Technologies will provide and install&quot; — already in template):</div><textarea style={{ ...pS, minHeight: 80, resize: "vertical", marginBottom: 10 }} value={scope.description} onChange={e => upd({ scopes: d.scopes.map((s, i) => i === si ? { ...s, description: e.target.value } : s) })} placeholder="a video surveillance system with 8 cameras, an NVR, and all related equipment..." /><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}><div><div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>Field Devices (one per line):</div><textarea style={{ ...pS, minHeight: 60, resize: "vertical" }} value={scope.fieldDevices || ""} onChange={e => upd({ scopes: d.scopes.map((s, i) => i === si ? { ...s, fieldDevices: e.target.value } : s) })} placeholder="Install (8) IP Dome cameras..." /></div><div><div style={{ fontSize: 11, color: "#64748b", marginBottom: 4 }}>Headend Devices (one per line):</div><textarea style={{ ...pS, minHeight: 60, resize: "vertical" }} value={scope.headendDevices || ""} onChange={e => upd({ scopes: d.scopes.map((s, i) => i === si ? { ...s, headendDevices: e.target.value } : s) })} placeholder="Install (1) 16 Port POE+ switch..." /></div></div>
+            {/* Per-Scope BOM */}
+            <div style={{ marginTop: 12, borderTop: "1px solid #1e293b", paddingTop: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                <button onClick={() => { const expanded = { ...(d._expandedBOMs || {}), [si]: !(d._expandedBOMs || {})[si] }; setD({ ...d, _expandedBOMs: expanded }); }} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "1px solid #1e293b", borderRadius: 8, padding: "6px 12px", color: "#94a3b8", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                  {(d._expandedBOMs || {})[si] ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                  📊 Scope BOM / Takeoff
+                </button>
+                {scope.takeoff && <button onClick={() => pullFromScopeBOM(si)} style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 8, border: "none", background: "#10b981", color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}><Calculator size={12} /> Calculate Price from BOM</button>}
+              </div>
+              {(d._expandedBOMs || {})[si] && (
+                <div style={{ background: "#0b1120", borderRadius: 10, border: "1px solid #1e293b", padding: 16 }}>
+                  <TakeoffBuilder takeoff={scope.takeoff} onSave={tk => upd({ scopes: d.scopes.map((s, i) => i === si ? { ...s, takeoff: tk } : s) })} />
+                </div>
+              )}
+            </div>
+          </div>))}<div style={{ textAlign: "right", fontSize: 16, fontWeight: 700, color: "#fff", fontFamily: "'Outfit',sans-serif", marginTop: 8 }}>Total: ${totalPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div></div>
     <div style={{ background: "#0f1729", borderRadius: 12, padding: 20, marginBottom: 16, border: "1px solid #1e293b" }}><div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 14 }}>Exclusions</div>{d.exclusions.map((ex, i) => (<div key={ex.id} style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "6px 0", borderBottom: "1px solid #1e293b0a" }}><button onClick={() => upd({ exclusions: d.exclusions.map((e, idx) => idx === i ? { ...e, included: !e.included } : e) })} style={{ background: "none", border: "none", cursor: "pointer", color: ex.included ? "#10b981" : "#334155", flexShrink: 0, marginTop: 2, fontSize: 14 }}>{ex.included ? "\u2611" : "\u2610"}</button><span style={{ fontSize: 12, color: ex.included ? "#e2e8f0" : "#475569", flex: 1 }}>{ex.text}</span></div>))}<div style={{ display: "flex", gap: 6, marginTop: 10 }}><input id="newExcl" style={{ ...pS, flex: 1 }} placeholder="Add custom exclusion..." onKeyDown={e => { if (e.key === "Enter" && e.target.value.trim()) { upd({ exclusions: [...d.exclusions, { id: genId(), text: e.target.value.trim(), included: true }] }); e.target.value = ""; } }} /></div></div>
     <div style={{ background: "#0f1729", borderRadius: 12, padding: 20, marginBottom: 16, border: "1px solid #1e293b" }}><div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 14 }}>Terms & Conditions</div>{d.terms.map((term, i) => (<div key={term.id} style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "6px 0", borderBottom: "1px solid #1e293b0a" }}><button onClick={() => upd({ terms: d.terms.map((t, idx) => idx === i ? { ...t, included: !t.included } : t) })} style={{ background: "none", border: "none", cursor: "pointer", color: term.included ? "#10b981" : "#334155", flexShrink: 0, marginTop: 2, fontSize: 14 }}>{term.included ? "\u2611" : "\u2610"}</button><span style={{ fontSize: 12, color: term.included ? "#e2e8f0" : "#475569", flex: 1 }}>{term.text === "NETWORK_TERM" ? (<span>Customer shall provide minimum (1) LAN & WAN network connection for each of the following systems:<div style={{ display: "flex", gap: 10, marginTop: 6, flexWrap: "wrap" }}>{SYSTEM_TYPES.map(st => (<button key={st} onClick={() => upd({ systemTypes: { ...d.systemTypes, [st]: !(d.systemTypes || {})[st] } })} style={{ padding: "3px 10px", borderRadius: 6, border: "1px solid #1e293b", fontSize: 11, cursor: "pointer", fontFamily: "inherit", background: (d.systemTypes || {})[st] ? "#6366f1" : "transparent", color: (d.systemTypes || {})[st] ? "#fff" : "#64748b" }}>{(d.systemTypes || {})[st] ? "\u2611" : "\u2610"} {st}</button>))}</div></span>) : term.text}</span></div>))}</div>
   </div>);
