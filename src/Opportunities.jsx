@@ -105,7 +105,7 @@ export default function Opportunities({ opportunities, onSave, onConvert }) {
             {isExpanded && (
               <div style={{ borderTop: "1px solid #1e293b" }}>
                 <div style={{ display: "flex", gap: 2, padding: "0 20px", background: "#0f1729" }}>
-                  {[{ id: "details", label: "Details", icon: "📋" }, { id: "takeoff", label: "Takeoff / BOM", icon: "📊" }, { id: "proposal", label: "Proposal", icon: "📄" }].map(tab => (
+                  {[{ id: "details", label: "Details", icon: "📋" }, { id: "takeoff", label: "Scope BOMs", icon: "📊" }, { id: "proposal", label: "Proposal", icon: "📄" }].map(tab => (
                     <button key={tab.id} onClick={() => setOppTab(tab.id)} style={{ padding: "10px 16px", border: "none", background: "none", cursor: "pointer", color: oppTab === tab.id ? "#fff" : "#64748b", borderBottom: oppTab === tab.id ? "2px solid #6366f1" : "2px solid transparent", fontSize: 12, fontWeight: 600, fontFamily: "inherit", display: "flex", alignItems: "center", gap: 5 }}>{tab.icon} {tab.label}</button>
                   ))}
                 </div>
@@ -124,11 +124,57 @@ export default function Opportunities({ opportunities, onSave, onConvert }) {
                       {opp.projectTypes?.length > 0 && <div style={{ display: "flex", gap: 4, marginTop: 10 }}>{opp.projectTypes.map(t => <span key={t} style={{ fontSize: 11, padding: "3px 8px", borderRadius: 4, background: "#6366f122", color: "#818cf8" }}>{t}</span>)}</div>}
                     </div>
                   )}
-                  {oppTab === "takeoff" && (
-                    <TakeoffBuilder takeoff={opp.takeoff} onSave={tk => onSave(opportunities.map(o => o.id === opp.id ? { ...o, takeoff: tk, updatedAt: new Date().toISOString() } : o))} />
-                  )}
+                  {oppTab === "takeoff" && (() => {
+                    const scopes = opp.proposal?.scopes || [];
+                    if (scopes.length === 0) return (
+                      <div style={{ textAlign: "center", padding: 32, color: "#64748b" }}>
+                        <div style={{ fontSize: 14, marginBottom: 8 }}>No scopes defined yet.</div>
+                        <div style={{ fontSize: 12 }}>Add scopes in the <strong style={{ color: "#818cf8" }}>Proposal</strong> tab first, then build a BOM for each scope here.</div>
+                      </div>
+                    );
+                    return (
+                      <div>
+                        <div style={{ display: "flex", gap: 4, marginBottom: 16, flexWrap: "wrap" }}>
+                          {scopes.map((sc, si) => {
+                            const tk = sc.takeoff;
+                            const scopeTotal = tk ? (() => {
+                              const mt = (tk.materials || []).reduce((s, r) => s + (parseFloat(r.qty) || 0) * (parseFloat(r.pricePU) || 0) + (parseFloat(r.laborHrs) || 0) * (parseFloat(r.laborRate) || 0), 0);
+                              const lt = (tk.labor || []).reduce((s, r) => s + (parseFloat(r.hours) || 0) * (parseFloat(r.ratePerHr) || 0), 0);
+                              const ct = (tk.costs || []).reduce((s, r) => s + (parseFloat(r.qty) || 0) * (parseFloat(r.pricePU) || 0), 0);
+                              const rt = (tk.rmr || []).reduce((s, r) => s + (parseFloat(r.qty) || 0) * (parseFloat(r.pricePU) || 0), 0);
+                              const sub = mt + lt + ct + rt;
+                              return sub + sub * ((parseFloat(tk.overheadPct) || 0) / 100);
+                            })() : 0;
+                            return (
+                              <button key={sc.id} onClick={() => {
+                                const expanded = { ...(opp._expandedScopeBOM || {}), [si]: !(opp._expandedScopeBOM || {})[si] };
+                                onSave(opportunities.map(o => o.id === opp.id ? { ...o, _expandedScopeBOM: expanded } : o));
+                              }} style={{ padding: "8px 14px", borderRadius: 8, border: (opp._expandedScopeBOM || {})[si] ? "2px solid #6366f1" : "1px solid #1e293b", background: (opp._expandedScopeBOM || {})[si] ? "#6366f122" : "#0f1729", color: (opp._expandedScopeBOM || {})[si] ? "#fff" : "#94a3b8", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                                {sc.title || `Scope ${si + 1}`}
+                                {scopeTotal > 0 && <span style={{ marginLeft: 8, color: "#10b981", fontSize: 11 }}>${scopeTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        {scopes.map((sc, si) => (
+                          (opp._expandedScopeBOM || {})[si] && (
+                            <div key={sc.id} style={{ marginBottom: 16 }}>
+                              <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
+                                <span style={{ fontSize: 15 }}>📊</span> BOM — {sc.title || `Scope ${si + 1}`}
+                              </div>
+                              <TakeoffBuilder takeoff={sc.takeoff} onSave={tk => {
+                                const updatedScopes = [...(opp.proposal?.scopes || [])];
+                                updatedScopes[si] = { ...updatedScopes[si], takeoff: tk };
+                                onSave(opportunities.map(o => o.id === opp.id ? { ...o, proposal: { ...(o.proposal || {}), scopes: updatedScopes }, updatedAt: new Date().toISOString() } : o));
+                              }} />
+                            </div>
+                          )
+                        ))}
+                      </div>
+                    );
+                  })()}
                   {oppTab === "proposal" && (
-                    <ProposalBuilder opportunity={opp} proposal={opp.proposal} takeoff={opp.takeoff} onSave={pr => onSave(opportunities.map(o => o.id === opp.id ? { ...o, proposal: pr, updatedAt: new Date().toISOString() } : o))} />
+                    <ProposalBuilder opportunity={opp} proposal={opp.proposal} onSave={pr => onSave(opportunities.map(o => o.id === opp.id ? { ...o, proposal: pr, updatedAt: new Date().toISOString() } : o))} />
                   )}
                 </div>
               </div>
