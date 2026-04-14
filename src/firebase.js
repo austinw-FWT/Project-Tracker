@@ -9,6 +9,7 @@ import {
   signOut,
   updateProfile,
 } from "firebase/auth";
+import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAAFCbuRe4lzdE4OUE_ulALZCN6EfcDNIQ",
@@ -23,6 +24,7 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const googleProvider = new GoogleAuthProvider();
+const storage = getStorage(app);
 
 export {
   auth,
@@ -33,4 +35,8 @@ export {
   onAuthStateChanged,
   signOut,
   updateProfile,
+  storage,
+  storageRef,
+  uploadBytes,
+  getDownloadURL,
 };
