@@ -20,12 +20,13 @@ async function callFunction(name, data) {
   } catch (e) { console.error(`Function ${name} failed:`, e); return null; }
 }
 
-export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, onSave, onUpdateProject }) {
+export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, onSubmit, onDeleteLog }) {
   const [tab, setTab] = useState("new");
   const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
   const [entries, setEntries] = useState([]);
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
+  const [emailError, setEmailError] = useState("");
   const [expandedArchive, setExpandedArchive] = useState(null);
 
   const logs = dailyLogs || [];
@@ -88,14 +89,11 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, on
       createdAt: new Date().toISOString(),
     };
 
-    // Save to user's archive
-    const updated = [log, ...logs];
-    onSave(updated);
-
-    // Push summary to each project's dailyLogs
+    // Build project updates
+    const projectUpdates = [];
     validEntries.forEach(entry => {
       const proj = projects.find(p => p.id === entry.projectId);
-      if (proj && onUpdateProject) {
+      if (proj) {
         const totalHours = entry.crewMembers.reduce((s, c) => s + c.hours, 0);
         const memberSummary = entry.crewMembers.filter(c => c.hours > 0).map(c => `${c.name}: ${c.hours}h`).join(", ");
         const projectLog = {
@@ -106,16 +104,22 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, on
           activities: entry.activities + (memberSummary ? `\nCrew: ${memberSummary}` : ""),
           createdAt: new Date().toISOString(),
         };
-        onUpdateProject(entry.projectId, {
-          dailyLogs: [projectLog, ...(proj.dailyLogs || [])],
+        projectUpdates.push({
+          pid: entry.projectId,
+          updates: { dailyLogs: [projectLog, ...(proj.dailyLogs || [])] },
         });
       }
     });
 
+    // Single atomic save — archive + all project updates at once
+    const updatedLogs = [log, ...logs];
+    onSubmit(updatedLogs, projectUpdates);
+
     // Email
     setSending(true);
+    setEmailError("");
     try {
-      await callFunction("emailDailyLog", {
+      const emailPayload = {
         projectName: validEntries.map(e => e.projectName).join(", "),
         log: {
           date,
@@ -126,17 +130,27 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, on
             return `${e.projectName}:\n${e.activities}${crew ? `\nCrew Hours:\n${crew}` : ""}`;
           }).join("\n\n"),
         },
-      });
-      setSent(true);
-      setTimeout(() => setSent(false), 3000);
-    } catch (e) { console.error("Email failed:", e); }
+      };
+      const result = await callFunction("emailDailyLog", emailPayload);
+      if (result?.result?.success) {
+        setSent(true);
+        setTimeout(() => setSent(false), 4000);
+      } else {
+        const errMsg = result?.result?.error || result?.error?.message || "Email function returned no success. Check Firebase Cloud Functions deployment.";
+        setEmailError(errMsg);
+        console.error("Email response:", result);
+      }
+    } catch (e) {
+      setEmailError("Email send failed: " + e.message);
+      console.error("Email failed:", e);
+    }
     setSending(false);
 
     // Reset form
     setEntries([]);
   }
 
-  function deleteLog(logId) { onSave(logs.filter(l => l.id !== logId)); }
+  function deleteLog(logId) { onDeleteLog(logs.filter(l => l.id !== logId)); }
 
   const totalHoursToday = entries.reduce((s, e) => s + e.crewMembers.reduce((s2, c) => s2 + c.hours, 0), 0);
   const usedProjectIds = entries.map(e => e.projectId);
@@ -229,8 +243,9 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, on
           {/* Submit */}
           {entries.length > 0 && (
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center", marginTop: 16 }}>
-              {sent && <span style={{ fontSize: 12, color: "#10b981", fontWeight: 600 }}>✓ Email sent to admins</span>}
-              {sending && <span style={{ fontSize: 12, color: "#6366f1" }}>Sending email...</span>}
+              {sent && <span style={{ fontSize: 12, color: "#10b981", fontWeight: 600 }}>✓ Log saved & email sent</span>}
+              {sending && <span style={{ fontSize: 12, color: "#6366f1" }}>Saving & sending email...</span>}
+              {emailError && <span style={{ fontSize: 11, color: "#ef4444", maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={emailError}>⚠ {emailError}</span>}
               <button onClick={submit} disabled={sending} style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 20px", borderRadius: 8, border: "none", background: sending ? "#475569" : "#6366f1", color: "#fff", fontSize: 14, fontWeight: 600, cursor: sending ? "wait" : "pointer", fontFamily: "inherit" }}>
                 <Send size={14} /> Submit & Email Daily Log
               </button>
@@ -278,5 +293,8 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, on
         </div>
       )}
     </div>
+  );
+}
+
   );
 }
