@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { Plus, X, Users, Settings, LayoutGrid, Search, ArrowLeft, Layers, CalendarDays, Wifi, WifiOff, RefreshCw, Zap, LogOut, Shield, UserCheck, UserX, User, Clock, ChevronDown, ChevronUp, Home, BookUser, ShieldCheck, Zap as ZapIcon, Copy, Menu } from "lucide-react";
 import { auth, googleProvider, signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithPopup, onAuthStateChanged, signOut, updateProfile } from "./firebase.js";
 import DailyTracker from "./DailyTracker.jsx";
+import MyDailyLog from "./MyDailyLog.jsx";
 import Opportunities from "./Opportunities.jsx";
 import ProjectDetail from "./ProjectDetail.jsx";
 import TimesheetView from "./TimesheetView.jsx";
@@ -320,12 +321,13 @@ function Tracker({ user, userRecord }) {
 
   const mySpaceItems = [
     { id: "daily", label: "Daily Task Board", icon: "📋" },
+    { id: "dailylog", label: "Daily Log", icon: "📝" },
     { id: "opportunities", label: "Opportunities", icon: "🎯" },
     { id: "timesheets", label: "My Timesheets", icon: "⏱️" },
   ];
 
   const currentPageTitle = selectedProject ? selectedProject.name
-    : view === "myspace" ? (mySpaceTab === "daily" ? "Daily Task Board" : mySpaceTab === "opportunities" ? "Opportunities" : "My Timesheets")
+    : view === "myspace" ? (mySpaceTab === "daily" ? "Daily Task Board" : mySpaceTab === "dailylog" ? "Daily Log" : mySpaceTab === "opportunities" ? "Opportunities" : "My Timesheets")
     : view === "team" ? "Team Roster" : view === "schedule" ? "Team Schedule" : view === "admin" ? "User Admin"
     : view === "contacts" ? "Contacts" : view === "warranties" ? "Warranties" : view === "dashboard" ? "Dashboard"
     : view === "board" ? "Project Board" : "Phase Settings";
@@ -464,6 +466,8 @@ function Tracker({ user, userRecord }) {
             <WarrantyTracker projects={data.projects} onUpdateProject={(pid, u) => updateProject(pid, u)} />
           ) : view === "myspace" && mySpaceTab === "daily" ? (
             <DailyTracker data={getMyPrivate().dailyTracker} archivedDays={getMyPrivate().archivedDays || []} onSave={dt => saveMyPrivate({ dailyTracker: dt })} onArchive={archive => saveMyPrivate({ archivedDays: archive })} />
+          ) : view === "myspace" && mySpaceTab === "dailylog" ? (
+            <MyDailyLog dailyLogs={getMyPrivate().dailyLogs || []} projects={data.projects} teamRoster={data.teamRoster} myName={myName} onSave={logs => saveMyPrivate({ dailyLogs: logs })} onUpdateProject={(pid, u) => updateProject(pid, u)} />
           ) : view === "myspace" && mySpaceTab === "opportunities" ? (
             <Opportunities opportunities={getMyPrivate().opportunities || []} onSave={opps => saveMyPrivate({ opportunities: opps })} onConvert={opp => { addProject({ ...opp, phaseId: "awarded" }); const opps = (getMyPrivate().opportunities || []).filter(o => o.id !== opp.id); saveMyPrivate({ opportunities: opps }); }} />
           ) : view === "myspace" && mySpaceTab === "timesheets" ? (
