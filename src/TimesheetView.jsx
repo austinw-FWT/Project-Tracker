@@ -6,6 +6,40 @@ const DEPARTMENTS = ["Low Voltage", "Networking", "Structured Cabling", "Securit
 
 const FB_URL = "https://fwt-lv-tracker-default-rtdb.firebaseio.com";
 
+// ── EmailJS config ──
+const EMAILJS_SERVICE_ID = "service_6tx50jm";
+const EMAILJS_TEMPLATE_ID = "template_ddiqn66";
+const EMAILJS_PUBLIC_KEY = "Xb33ru_cSgS_Ekb-4";
+
+async function getAdminEmails() {
+  try {
+    const { getAuth } = await import("firebase/auth");
+    const token = await getAuth().currentUser?.getIdToken();
+    const r = await fetch(`${FB_URL}/users.json${token ? `?auth=${token}` : ""}`);
+    const users = await r.json();
+    if (!users) return [];
+    return Object.values(users).filter(u => u.role === "admin" && u.status === "approved" && u.email).map(u => u.email);
+  } catch (e) { console.error("Failed to fetch admin emails:", e); return []; }
+}
+
+async function sendEmailJS(toEmails, templateParams) {
+  const r = await fetch("https://api.emailjs.com/api/v1.6/email/send", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      service_id: EMAILJS_SERVICE_ID,
+      template_id: EMAILJS_TEMPLATE_ID,
+      user_id: EMAILJS_PUBLIC_KEY,
+      template_params: { ...templateParams, to_email: toEmails.join(",") },
+    }),
+  });
+  if (!r.ok) {
+    const text = await r.text();
+    throw new Error(`EmailJS error (${r.status}): ${text}`);
+  }
+  return true;
+}
+
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768);
   useEffect(() => {
@@ -16,7 +50,7 @@ function useIsMobile() {
   return isMobile;
 }
 
-export default function TimesheetView({ timesheets, projects, myName, isAdmin, allMemberPrivate, teamRoster, onAdd, onRemove }) {
+export default function TimesheetView({ timesheets, projects, myName, myEmail, predefinedEmail, isAdmin, allMemberPrivate, teamRoster, onAdd, onRemove }) {
   const isMobile = useIsMobile();
 
   const [jobName, setJobName] = useState("");
@@ -38,23 +72,30 @@ export default function TimesheetView({ timesheets, projects, myName, isAdmin, a
     if (filterWeek === "all" || filtered.length === 0) return;
     setSending(true); setSendResult(null);
     try {
-      const { getAuth } = await import("firebase/auth");
-      const auth = getAuth();
-      const token = await auth.currentUser?.getIdToken();
-      const region = "us-central1";
-      const projectIdFb = "fwt-lv-tracker";
-      const fnUrl = `https://${region}-${projectIdFb}.cloudfunctions.net/emailTimesheet`;
-      const resp = await fetch(fnUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-        body: JSON.stringify({ data: { memberName: myName, weekOf: filterWeek, entries: filtered } }),
-      });
-      const result = await resp.json();
-      if (result.result?.success) {
-        setSendResult({ ok: true, msg: `Sent to ${result.result.sentTo} recipient(s)` });
-      } else {
-        setSendResult({ ok: false, msg: result.error?.message || "Failed to send" });
+      const adminEmails = await getAdminEmails();
+      const recipients = [...new Set([...adminEmails, ...(predefinedEmail ? [predefinedEmail] : [])])].filter(Boolean);
+
+      if (recipients.length === 0) {
+        setSendResult({ ok: false, msg: "No admin emails found. Add users with admin role in User Admin." });
+        setSending(false);
+        return;
       }
+
+      const body = filtered.map(e =>
+        `${e.date}  |  ${e.jobName || "—"}  |  ${e.hours}h ${e.hoursType === "overtime" ? "(OT)" : ""}  |  ${e.category}${e.notes ? "  |  " + e.notes : ""}`
+      ).join("\n");
+
+      const totalHrs = filtered.reduce((s, e) => s + (parseFloat(e.hours) || 0), 0);
+
+      await sendEmailJS(recipients, {
+        from_name: myName,
+        reply_to: myEmail || "",
+        date_range: "Week of " + filterWeek,
+        total_hours: totalHrs.toFixed(1) + "h",
+        timesheet_body: body,
+      });
+
+      setSendResult({ ok: true, msg: `Sent to ${recipients.length} recipient(s)` });
     } catch (err) {
       setSendResult({ ok: false, msg: err.message });
     }
