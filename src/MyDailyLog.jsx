@@ -6,21 +6,43 @@ function genId() { return Date.now().toString(36) + Math.random().toString(36).s
 const iS = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1e293b", background: "#1a2332", color: "#e2e8f0", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none" };
 const lS = { fontSize: 11, fontWeight: 600, color: "#64748b", marginBottom: 4, display: "block", textTransform: "uppercase", letterSpacing: "0.05em" };
 
-const FB_FUNCTIONS_URL = "https://us-central1-fwt-lv-tracker.cloudfunctions.net";
+// ── EmailJS config ──
+const EMAILJS_SERVICE_ID = "service_6tx50jm";
+const EMAILJS_TEMPLATE_ID = "template_bmg4q68";
+const EMAILJS_PUBLIC_KEY = "Xb33ru_cSgS_Ekb-4";
 
-async function callFunction(name, data) {
+const FB_URL = "https://fwt-lv-tracker-default-rtdb.firebaseio.com";
+
+async function getAdminEmails() {
   try {
     const { getAuth } = await import("firebase/auth");
     const token = await getAuth().currentUser?.getIdToken();
-    const r = await fetch(`${FB_FUNCTIONS_URL}/${name}`, {
-      method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-      body: JSON.stringify({ data }),
-    });
-    return await r.json();
-  } catch (e) { console.error(`Function ${name} failed:`, e); return null; }
+    const r = await fetch(`${FB_URL}/users.json${token ? `?auth=${token}` : ""}`);
+    const users = await r.json();
+    if (!users) return [];
+    return Object.values(users).filter(u => u.role === "admin" && u.status === "approved" && u.email).map(u => u.email);
+  } catch (e) { console.error("Failed to fetch admin emails:", e); return []; }
 }
 
-export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, onSubmit, onDeleteLog }) {
+async function sendEmailJS(toEmails, templateParams) {
+  const r = await fetch("https://api.emailjs.com/api/v1.6/email/send", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      service_id: EMAILJS_SERVICE_ID,
+      template_id: EMAILJS_TEMPLATE_ID,
+      user_id: EMAILJS_PUBLIC_KEY,
+      template_params: { ...templateParams, to_email: toEmails.join(",") },
+    }),
+  });
+  if (!r.ok) {
+    const text = await r.text();
+    throw new Error(`EmailJS error (${r.status}): ${text}`);
+  }
+  return true;
+}
+
+export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, myEmail, predefinedEmail, onSubmit, onDeleteLog }) {
   const [tab, setTab] = useState("new");
   const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
   const [entries, setEntries] = useState([]);
@@ -115,33 +137,37 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, on
     const updatedLogs = [log, ...logs];
     onSubmit(updatedLogs, projectUpdates);
 
-    // Email
+    // Email via EmailJS
     setSending(true);
     setEmailError("");
     try {
-      const emailPayload = {
-        projectName: validEntries.map(e => e.projectName).join(", "),
-        log: {
-          date,
-          member: myName,
-          hours: validEntries.reduce((s, e) => s + e.crewMembers.reduce((s2, c) => s2 + c.hours, 0), 0),
-          activities: validEntries.map(e => {
-            const crew = e.crewMembers.filter(c => c.hours > 0).map(c => `  ${c.name}: ${c.hours}h`).join("\n");
-            return `${e.projectName}:\n${e.activities}${crew ? `\nCrew Hours:\n${crew}` : ""}`;
-          }).join("\n\n"),
-        },
-      };
-      const result = await callFunction("emailDailyLog", emailPayload);
-      if (result?.result?.success) {
+      // Get admin emails
+      const adminEmails = await getAdminEmails();
+      const recipients = [...new Set([...adminEmails, ...(predefinedEmail ? [predefinedEmail] : [])])].filter(Boolean);
+
+      if (recipients.length === 0) {
+        setEmailError("No admin emails found. Add users with admin role in User Admin.");
+      } else {
+        const logBody = validEntries.map(e => {
+          const crew = e.crewMembers.filter(c => c.hours > 0).map(c => `  ${c.name}: ${c.hours}h`).join("\n");
+          return `${e.projectName}:\n${e.activities}${crew ? "\nCrew Hours:\n" + crew : ""}`;
+        }).join("\n\n");
+
+        const totalHrs = validEntries.reduce((s, e) => s + e.crewMembers.reduce((s2, c) => s2 + c.hours, 0), 0);
+
+        await sendEmailJS(recipients, {
+          from_name: myName,
+          reply_to: myEmail || "",
+          date: date,
+          total_hours: totalHrs + "h",
+          log_body: logBody,
+        });
+
         setSent(true);
         setTimeout(() => setSent(false), 4000);
-      } else {
-        const errMsg = result?.result?.error || result?.error?.message || "Email function returned no success. Check Firebase Cloud Functions deployment.";
-        setEmailError(errMsg);
-        console.error("Email response:", result);
       }
     } catch (e) {
-      setEmailError("Email send failed: " + e.message);
+      setEmailError(e.message || "Email send failed");
       console.error("Email failed:", e);
     }
     setSending(false);
