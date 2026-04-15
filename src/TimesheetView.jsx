@@ -1,8 +1,7 @@
 import { useState, useEffect } from "react";
 import { Plus, X, Clock, Users, Send, ChevronDown, ChevronUp } from "lucide-react";
 
-const CATEGORIES = ["Installation", "Programming", "Termination", "Cable Pull", "Site Walk", "Design", "Commissioning", "Punch List", "Training", "Travel", "Other"];
-const DEPARTMENTS = ["Low Voltage", "Networking", "Structured Cabling", "Security", "Fire Alarm", "Audio Visual", "General"];
+const DEPARTMENTS = ["Brandon", "Justin", "Service", "Steve", "Tim", "Todd", "Overhead", "Tech Staffing"];
 
 const FB_URL = "https://fwt-lv-tracker-default-rtdb.firebaseio.com";
 
@@ -58,8 +57,9 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
   const [department, setDepartment] = useState("Low Voltage");
   const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
   const [hours, setHours] = useState("");
-  const [category, setCategory] = useState("Installation");
+  const [category, setCategory] = useState("");
   const [hoursType, setHoursType] = useState("regular");
+  const [prevailingWage, setPrevailingWage] = useState(false);
   const [notes, setNotes] = useState("");
   const [filterWeek, setFilterWeek] = useState("all");
   const [viewMode, setViewMode] = useState("mine");
@@ -82,7 +82,7 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
       }
 
       const body = filtered.map(e =>
-        `${e.date}  |  ${e.jobName || "—"}  |  ${e.hours}h ${e.hoursType === "overtime" ? "(OT)" : ""}  |  ${e.category}${e.notes ? "  |  " + e.notes : ""}`
+        `${e.date}  |  ${e.jobName || "—"}  |  ${e.hours}h ${e.hoursType === "overtime" ? "(OT)" : ""}${e.prevailingWage ? "  |  PW" : ""}${e.notes ? "  |  " + e.notes : ""}`
       ).join("\n");
 
       const totalHrs = filtered.reduce((s, e) => s + (parseFloat(e.hours) || 0), 0);
@@ -127,8 +127,8 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
   function handleAdd() {
     if (!hours || !date) return;
     const pj = projects.find(p => p.name === jobName || p.id === jobName);
-    onAdd({ jobName: jobName || (pj?.name || ""), jobNumber, department, date, hours: parseFloat(hours), category, hoursType, notes: notes.trim(), projectId: pj?.id || "" });
-    setHours(""); setNotes(""); setJobNumber("");
+    onAdd({ jobName: jobName || (pj?.name || ""), jobNumber, department, date, hours: parseFloat(hours), hoursType, prevailingWage, notes: notes.trim(), projectId: pj?.id || "" });
+    setHours(""); setNotes(""); setJobNumber(""); setPrevailingWage(false);
     if (isMobile) setShowForm(false);
   }
 
@@ -186,20 +186,18 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
             </div>
           </div>
 
+          {/* Prevailing Wage toggle */}
+          <div style={{ marginBottom: 12 }}>
+            <label style={lS}>Prevailing Wage</label>
+            <button onClick={() => setPrevailingWage(!prevailingWage)} style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: prevailingWage ? "2px solid #8b5cf6" : "1px solid #1e293b", background: prevailingWage ? "#8b5cf622" : "transparent", color: prevailingWage ? "#8b5cf6" : "#64748b", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{prevailingWage ? "✓ Prevailing Wage" : "Not Prevailing Wage"}</button>
+          </div>
+
           {/* Job */}
           <div style={{ marginBottom: 12 }}>
             <label style={lS}>Job Name</label>
             <select style={iS} value={jobName} onChange={e => setJobName(e.target.value)}>
               <option value="">Select project...</option>
               {projects.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
-            </select>
-          </div>
-
-          {/* Category */}
-          <div style={{ marginBottom: 12 }}>
-            <label style={lS}>Category</label>
-            <select style={iS} value={category} onChange={e => setCategory(e.target.value)}>
-              {CATEGORIES.map(c => <option key={c}>{c}</option>)}
             </select>
           </div>
 
