@@ -467,7 +467,7 @@ function Tracker({ user, userRecord }) {
           ) : view === "myspace" && mySpaceTab === "daily" ? (
             <DailyTracker data={getMyPrivate().dailyTracker} archivedDays={getMyPrivate().archivedDays || []} onSave={dt => saveMyPrivate({ dailyTracker: dt })} onArchive={archive => saveMyPrivate({ archivedDays: archive })} />
           ) : view === "myspace" && mySpaceTab === "dailylog" ? (
-            <MyDailyLog dailyLogs={getMyPrivate().dailyLogs || []} projects={data.projects} teamRoster={data.teamRoster} myName={myName}
+            <MyDailyLog dailyLogs={getMyPrivate().dailyLogs || []} projects={data.projects} teamRoster={data.teamRoster} myName={myName} myEmail={user.email} predefinedEmail={data.adminSettings?.predefinedEmail || ""}
               onSubmit={(logs, projectUpdates) => {
                 let nd = { ...data, memberPrivate: { ...(data.memberPrivate || {}), [myName]: { ...getMyPrivate(), dailyLogs: logs } } };
                 (projectUpdates || []).forEach(({ pid, updates }) => {
@@ -479,7 +479,7 @@ function Tracker({ user, userRecord }) {
           ) : view === "myspace" && mySpaceTab === "opportunities" ? (
             <Opportunities opportunities={getMyPrivate().opportunities || []} onSave={opps => saveMyPrivate({ opportunities: opps })} onConvert={opp => { addProject({ ...opp, phaseId: "awarded" }); const opps = (getMyPrivate().opportunities || []).filter(o => o.id !== opp.id); saveMyPrivate({ opportunities: opps }); }} />
           ) : view === "myspace" && mySpaceTab === "timesheets" ? (
-            <TimesheetView timesheets={getMyPrivate().timesheets || []} projects={data.projects} myName={myName} isAdmin={isAdmin} allMemberPrivate={isAdmin ? (data.memberPrivate || {}) : null} teamRoster={data.teamRoster}
+            <TimesheetView timesheets={getMyPrivate().timesheets || []} projects={data.projects} myName={myName} myEmail={user.email} predefinedEmail={data.adminSettings?.predefinedEmail || ""} isAdmin={isAdmin} allMemberPrivate={isAdmin ? (data.memberPrivate || {}) : null} teamRoster={data.teamRoster}
               onAdd={entry => saveMyPrivate({ timesheets: [...(getMyPrivate().timesheets || []), { ...entry, id: genId(), member: myName, createdAt: new Date().toISOString() }] })}
               onRemove={id => saveMyPrivate({ timesheets: (getMyPrivate().timesheets || []).filter(t => t.id !== id) })} />
           ) : view === "schedule" ? (
