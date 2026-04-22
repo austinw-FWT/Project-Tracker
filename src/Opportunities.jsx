@@ -224,7 +224,7 @@ export default function Opportunities({ opportunities, onSave, onConvert }) {
                               <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
                                 <span style={{ fontSize: 15 }}>📊</span> BOM — {sc.title || `Scope ${si + 1}`}
                               </div>
-                              <TakeoffBuilder takeoff={sc.takeoff} onSave={tk => {
+                              <TakeoffBuilder takeoff={sc.takeoff} scopeTitle={`${opp.name || "Opportunity"} — ${sc.title || `Scope ${si + 1}`}`} onSave={tk => {
                                 const updatedScopes = [...(opp.proposal?.scopes || [])];
                                 updatedScopes[si] = { ...updatedScopes[si], takeoff: tk };
                                 onSave(opportunities.map(o => o.id === opp.id ? { ...o, proposal: { ...(o.proposal || {}), scopes: updatedScopes }, updatedAt: new Date().toISOString() } : o));
@@ -299,3 +299,4 @@ export default function Opportunities({ opportunities, onSave, onConvert }) {
     </div>
   );
 }
+
