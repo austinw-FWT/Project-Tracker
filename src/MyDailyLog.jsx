@@ -1,15 +1,11 @@
 import { useState } from "react";
 import { Plus, X, Send, ChevronDown, ChevronUp, Clock, Users, Briefcase, Archive, Trash2 } from "lucide-react";
+import { LABOR_PHASES } from "./App.jsx";
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 
 const iS = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1e293b", background: "#1a2332", color: "#e2e8f0", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none" };
 const lS = { fontSize: 11, fontWeight: 600, color: "#64748b", marginBottom: 4, display: "block", textTransform: "uppercase", letterSpacing: "0.05em" };
-
-// ── EmailJS config ──
-const EMAILJS_SERVICE_ID = "service_6tx50jm";
-const EMAILJS_TEMPLATE_ID = "template_bmg4q68";
-const EMAILJS_PUBLIC_KEY = "Xb33ru_cSgS_Ekb-4";
 
 const FB_URL = "https://fwt-lv-tracker-default-rtdb.firebaseio.com";
 
@@ -24,31 +20,22 @@ async function getAdminEmails() {
   } catch (e) { console.error("Failed to fetch admin emails:", e); return []; }
 }
 
-async function sendEmailJS(toEmails, templateParams) {
-  const r = await fetch("https://api.emailjs.com/api/v1.6/email/send", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      service_id: EMAILJS_SERVICE_ID,
-      template_id: EMAILJS_TEMPLATE_ID,
-      user_id: EMAILJS_PUBLIC_KEY,
-      template_params: { ...templateParams, to_email: toEmails.join(",") },
-    }),
-  });
-  if (!r.ok) {
-    const text = await r.text();
-    throw new Error(`EmailJS error (${r.status}): ${text}`);
-  }
-  return true;
+// Opens default mail client (Outlook on Windows) with pre-filled message.
+function openMailto({ to, cc, subject, body }) {
+  const params = [];
+  if (cc) params.push(`cc=${encodeURIComponent(cc)}`);
+  if (subject) params.push(`subject=${encodeURIComponent(subject)}`);
+  if (body) params.push(`body=${encodeURIComponent(body)}`);
+  const url = `mailto:${encodeURIComponent(to || "")}${params.length ? "?" + params.join("&") : ""}`;
+  window.location.href = url;
 }
+
+const getCategoryName = id => (LABOR_PHASES.find(l => l.id === id)?.name) || id || "—";
 
 export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, myEmail, predefinedEmail, onSubmit, onDeleteLog }) {
   const [tab, setTab] = useState("new");
   const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
   const [entries, setEntries] = useState([]);
-  const [sending, setSending] = useState(false);
-  const [sent, setSent] = useState(false);
-  const [emailError, setEmailError] = useState("");
   const [expandedArchive, setExpandedArchive] = useState(null);
 
   const logs = dailyLogs || [];
@@ -62,7 +49,7 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
       id: genId(),
       projectId,
       projectName: proj.name,
-      crewMembers: [{ id: genId(), name: myName, hours: 0 }],
+      crewMembers: [{ id: genId(), name: myName, hours: 0, category: LABOR_PHASES[0]?.id || "" }],
       activities: "",
     }]);
   }
@@ -79,7 +66,7 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
     setEntries(entries.map(e => {
       if (e.id !== entryId) return e;
       if (e.crewMembers.some(c => c.name === memberName)) return e;
-      return { ...e, crewMembers: [...e.crewMembers, { id: genId(), name: memberName, hours: 0 }] };
+      return { ...e, crewMembers: [...e.crewMembers, { id: genId(), name: memberName, hours: 0, category: LABOR_PHASES[0]?.id || "" }] };
     }));
   }
 
@@ -90,15 +77,15 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
     }));
   }
 
-  function updateCrewHours(entryId, crewId, hours) {
+  function updateCrewField(entryId, crewId, field, value) {
     setEntries(entries.map(e => {
       if (e.id !== entryId) return e;
-      return { ...e, crewMembers: e.crewMembers.map(c => c.id === crewId ? { ...c, hours: parseFloat(hours) || 0 } : c) };
+      return { ...e, crewMembers: e.crewMembers.map(c => c.id === crewId ? { ...c, [field]: field === "hours" ? (parseFloat(value) || 0) : value } : c) };
     }));
   }
 
   // ── Submit ──
-  async function submit() {
+  function submit() {
     if (entries.length === 0) return;
     const validEntries = entries.filter(e => e.activities.trim() || e.crewMembers.some(c => c.hours > 0));
     if (validEntries.length === 0) return;
@@ -111,66 +98,83 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
       createdAt: new Date().toISOString(),
     };
 
-    // Build project updates
+    // Build project updates — append daily log entry AND deduct from laborHours.remaining per category
     const projectUpdates = [];
     validEntries.forEach(entry => {
       const proj = projects.find(p => p.id === entry.projectId);
-      if (proj) {
-        const totalHours = entry.crewMembers.reduce((s, c) => s + c.hours, 0);
-        const memberSummary = entry.crewMembers.filter(c => c.hours > 0).map(c => `${c.name}: ${c.hours}h`).join(", ");
-        const projectLog = {
-          id: genId(),
-          date,
-          member: myName,
-          hours: totalHours,
-          activities: entry.activities + (memberSummary ? `\nCrew: ${memberSummary}` : ""),
-          createdAt: new Date().toISOString(),
+      if (!proj) return;
+
+      const totalHours = entry.crewMembers.reduce((s, c) => s + (c.hours || 0), 0);
+      const memberSummary = entry.crewMembers.filter(c => c.hours > 0)
+        .map(c => `${c.name}: ${c.hours}h [${getCategoryName(c.category)}]`).join(", ");
+
+      const projectLog = {
+        id: genId(),
+        date,
+        member: myName,
+        hours: totalHours,
+        activities: entry.activities + (memberSummary ? `\nCrew: ${memberSummary}` : ""),
+        crewBreakdown: entry.crewMembers.filter(c => c.hours > 0).map(c => ({ name: c.name, hours: c.hours, category: c.category })),
+        createdAt: new Date().toISOString(),
+      };
+
+      // Deduct hours from laborHours[category].remaining per crew member
+      const newLaborHours = { ...(proj.laborHours || {}) };
+      entry.crewMembers.forEach(c => {
+        if (!c.hours || c.hours <= 0 || !c.category) return;
+        const existing = newLaborHours[c.category] || { bid: 0, remaining: 0 };
+        newLaborHours[c.category] = {
+          ...existing,
+          remaining: (parseFloat(existing.remaining) || 0) - c.hours,
         };
-        projectUpdates.push({
-          pid: entry.projectId,
-          updates: { dailyLogs: [projectLog, ...(proj.dailyLogs || [])] },
-        });
-      }
+      });
+
+      projectUpdates.push({
+        pid: entry.projectId,
+        updates: {
+          dailyLogs: [projectLog, ...(proj.dailyLogs || [])],
+          laborHours: newLaborHours,
+        },
+      });
     });
 
-    // Single atomic save — archive + all project updates at once
     const updatedLogs = [log, ...logs];
     onSubmit(updatedLogs, projectUpdates);
 
-    // Email via EmailJS
-    setSending(true);
-    setEmailError("");
-    try {
-      // Get admin emails
-      const adminEmails = await getAdminEmails();
-      const recipients = [...new Set([...adminEmails, ...(predefinedEmail ? [predefinedEmail] : [])])].filter(Boolean);
+    // Open email in default client with pre-filled body
+    (async () => {
+      try {
+        const adminEmails = await getAdminEmails();
+        const recipients = [...new Set([...adminEmails, ...(predefinedEmail ? [predefinedEmail] : [])])].filter(Boolean);
 
-      if (recipients.length === 0) {
-        setEmailError("No admin emails found. Add users with admin role in User Admin.");
-      } else {
         const logBody = validEntries.map(e => {
-          const crew = e.crewMembers.filter(c => c.hours > 0).map(c => `  ${c.name}: ${c.hours}h`).join("\n");
+          const crew = e.crewMembers.filter(c => c.hours > 0)
+            .map(c => `  ${c.name}: ${c.hours}h  [${getCategoryName(c.category)}]`).join("\n");
           return `${e.projectName}:\n${e.activities}${crew ? "\nCrew Hours:\n" + crew : ""}`;
         }).join("\n\n");
 
         const totalHrs = validEntries.reduce((s, e) => s + e.crewMembers.reduce((s2, c) => s2 + c.hours, 0), 0);
 
-        await sendEmailJS(recipients, {
-          from_name: myName,
-          reply_to: myEmail || "",
-          date: date,
-          total_hours: totalHrs + "h",
-          log_body: logBody,
-        });
+        const body = [
+          `Daily Log submitted by ${myName}`,
+          `Date: ${date}`,
+          `Total Hours: ${totalHrs}h`,
+          "",
+          logBody,
+          "",
+          "— Sent from FWT Workspaces",
+        ].join("\n");
 
-        setSent(true);
-        setTimeout(() => setSent(false), 4000);
+        openMailto({
+          to: recipients.join(","),
+          cc: myEmail || "",
+          subject: `FWT Daily Log — ${myName} — ${date}`,
+          body,
+        });
+      } catch (err) {
+        console.error("Mailto failed:", err);
       }
-    } catch (e) {
-      setEmailError(e.message || "Email send failed");
-      console.error("Email failed:", e);
-    }
-    setSending(false);
+    })();
 
     // Reset form
     setEntries([]);
@@ -218,47 +222,80 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
           </div>
 
           {/* Project Entries */}
-          {entries.map(entry => (
-            <div key={entry.id} style={{ background: "#1a2332", borderRadius: 12, border: "1px solid #1e293b", padding: 20, marginBottom: 12 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <Briefcase size={16} style={{ color: "#6366f1" }} />
-                  <span style={{ fontSize: 15, fontWeight: 700, color: "#fff" }}>{entry.projectName}</span>
-                </div>
-                <button onClick={() => removeEntry(entry.id)} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer" }}><X size={16} /></button>
-              </div>
-
-              {/* Crew Members */}
-              <div style={{ marginBottom: 12 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
-                  <Users size={13} style={{ color: "#64748b" }} />
-                  <span style={lS}>Crew &amp; Hours</span>
-                </div>
-                {entry.crewMembers.map(crew => (
-                  <div key={crew.id} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                    <span style={{ fontSize: 13, color: "#e2e8f0", flex: 1, minWidth: 120 }}>{crew.name}</span>
-                    <input type="number" step="0.25" min="0" style={{ ...iS, width: 80, textAlign: "right" }} value={crew.hours || ""} onChange={e => updateCrewHours(entry.id, crew.id, e.target.value)} placeholder="0" />
-                    <span style={{ fontSize: 12, color: "#64748b" }}>hrs</span>
-                    {entry.crewMembers.length > 1 && (
-                      <button onClick={() => removeCrewMember(entry.id, crew.id)} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer" }}><X size={12} /></button>
-                    )}
+          {entries.map(entry => {
+            const proj = projects.find(p => p.id === entry.projectId);
+            const laborHours = proj?.laborHours || {};
+            return (
+              <div key={entry.id} style={{ background: "#1a2332", borderRadius: 12, border: "1px solid #1e293b", padding: 20, marginBottom: 12 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <Briefcase size={16} style={{ color: "#6366f1" }} />
+                    <span style={{ fontSize: 15, fontWeight: 700, color: "#fff" }}>{entry.projectName}</span>
                   </div>
-                ))}
-                <select style={{ ...iS, marginTop: 6, maxWidth: 220, fontSize: 12 }} value="" onChange={e => addCrewMember(entry.id, e.target.value)}>
-                  <option value="">+ Add crew member</option>
-                  {teamRoster.filter(t => !entry.crewMembers.some(c => c.name === t.name)).map(t => (
-                    <option key={t.id} value={t.name}>{t.name}</option>
-                  ))}
-                </select>
-              </div>
+                  <button onClick={() => removeEntry(entry.id)} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer" }}><X size={16} /></button>
+                </div>
 
-              {/* Activities */}
-              <div>
-                <label style={lS}>Activities / Work Performed</label>
-                <textarea style={{ ...iS, minHeight: 60, resize: "vertical" }} value={entry.activities} onChange={e => updateEntry(entry.id, { activities: e.target.value })} placeholder="Describe work performed on this project today..." />
+                {/* Crew Members */}
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                    <Users size={13} style={{ color: "#64748b" }} />
+                    <span style={lS}>Crew, Hours &amp; Category</span>
+                  </div>
+                  {entry.crewMembers.map(crew => {
+                    const remaining = parseFloat(laborHours[crew.category]?.remaining) || 0;
+                    const remainingAfter = remaining - (crew.hours || 0);
+                    const overrun = remainingAfter < 0 && (crew.hours || 0) > 0;
+                    return (
+                      <div key={crew.id} style={{ background: "#0f1729", borderRadius: 8, padding: "10px 12px", marginBottom: 6, border: overrun ? "1px solid #7f1d1d" : "1px solid #1e293b" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                          <span style={{ fontSize: 13, color: "#e2e8f0", fontWeight: 600, minWidth: 120, flex: "1 1 120px" }}>{crew.name}</span>
+                          <select
+                            style={{ ...iS, flex: "2 1 180px", minWidth: 160, background: "#1a2332", fontSize: 12 }}
+                            value={crew.category || ""}
+                            onChange={e => updateCrewField(entry.id, crew.id, "category", e.target.value)}
+                          >
+                            {LABOR_PHASES.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                          </select>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                            <input
+                              type="number" step="0.25" min="0"
+                              style={{ ...iS, width: 70, textAlign: "right", background: "#1a2332" }}
+                              value={crew.hours || ""}
+                              onChange={e => updateCrewField(entry.id, crew.id, "hours", e.target.value)}
+                              placeholder="0"
+                            />
+                            <span style={{ fontSize: 12, color: "#64748b" }}>hrs</span>
+                            {entry.crewMembers.length > 1 && (
+                              <button onClick={() => removeCrewMember(entry.id, crew.id)} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer" }}><X size={12} /></button>
+                            )}
+                          </div>
+                        </div>
+                        {crew.category && (
+                          <div style={{ fontSize: 11, marginTop: 6, color: overrun ? "#ef4444" : (remainingAfter < remaining * 0.2 ? "#f59e0b" : "#475569") }}>
+                            {overrun
+                              ? `⚠ Will overrun by ${Math.abs(remainingAfter).toFixed(1)}h (only ${remaining.toFixed(1)}h remaining on ${getCategoryName(crew.category)})`
+                              : `${remaining.toFixed(1)}h remaining on ${getCategoryName(crew.category)} → ${remainingAfter.toFixed(1)}h after this log`}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  <select style={{ ...iS, marginTop: 6, maxWidth: 220, fontSize: 12 }} value="" onChange={e => addCrewMember(entry.id, e.target.value)}>
+                    <option value="">+ Add crew member</option>
+                    {teamRoster.filter(t => !entry.crewMembers.some(c => c.name === t.name)).map(t => (
+                      <option key={t.id} value={t.name}>{t.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Activities */}
+                <div>
+                  <label style={lS}>Activities / Work Performed</label>
+                  <textarea style={{ ...iS, minHeight: 60, resize: "vertical" }} value={entry.activities} onChange={e => updateEntry(entry.id, { activities: e.target.value })} placeholder="Describe work performed on this project today..." />
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
 
           {entries.length === 0 && (
             <div style={{ textAlign: "center", padding: 40, color: "#334155", fontSize: 13 }}>
@@ -269,11 +306,9 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
           {/* Submit */}
           {entries.length > 0 && (
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center", marginTop: 16 }}>
-              {sent && <span style={{ fontSize: 12, color: "#10b981", fontWeight: 600 }}>✓ Log saved & email sent</span>}
-              {sending && <span style={{ fontSize: 12, color: "#6366f1" }}>Saving & sending email...</span>}
-              {emailError && <span style={{ fontSize: 11, color: "#ef4444", maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={emailError}>⚠ {emailError}</span>}
-              <button onClick={submit} disabled={sending} style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 20px", borderRadius: 8, border: "none", background: sending ? "#475569" : "#6366f1", color: "#fff", fontSize: 14, fontWeight: 600, cursor: sending ? "wait" : "pointer", fontFamily: "inherit" }}>
-                <Send size={14} /> Submit & Email Daily Log
+              <span style={{ fontSize: 11, color: "#64748b" }}>Opens in Outlook after saving</span>
+              <button onClick={submit} style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 20px", borderRadius: 8, border: "none", background: "#6366f1", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                <Send size={14} /> Submit &amp; Email
               </button>
             </div>
           )}
@@ -302,9 +337,10 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
                       <div key={entry.id} style={{ background: "#0f1729", borderRadius: 10, border: "1px solid #1e293b", padding: 14, marginBottom: 6 }}>
                         <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 8 }}>{entry.projectName}</div>
                         {entry.crewMembers.filter(c => c.hours > 0).map(c => (
-                          <div key={c.id} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: 12 }}>
+                          <div key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", fontSize: 12, gap: 8 }}>
                             <span style={{ color: "#94a3b8" }}>{c.name}</span>
-                            <span style={{ color: "#f59e0b", fontWeight: 600 }}>{c.hours}h</span>
+                            <span style={{ color: "#64748b", fontSize: 11, flex: 1, textAlign: "right" }}>{getCategoryName(c.category)}</span>
+                            <span style={{ color: "#f59e0b", fontWeight: 600, minWidth: 40, textAlign: "right" }}>{c.hours}h</span>
                           </div>
                         ))}
                         {entry.activities && <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 6, paddingTop: 6, borderTop: "1px solid #1e293b", whiteSpace: "pre-wrap" }}>{entry.activities}</div>}
