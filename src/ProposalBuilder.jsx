@@ -27,7 +27,141 @@ function emptyMaterialRow() { return { id: genId(), manf: "", partNum: "", desc:
 const iS = { width: "100%", padding: "5px 8px", borderRadius: 6, border: "1px solid #1e293b", background: "#0f1729", color: "#e2e8f0", fontSize: 12, fontFamily: "'DM Sans',sans-serif", outline: "none" };
 const nS = { ...iS, textAlign: "right" };
 
-export function TakeoffBuilder({ takeoff, onSave }) {
+// ── CSV export helper ──
+// RFC 4180 CSV escape: wrap in quotes if value contains comma, quote, or newline; escape quotes by doubling them.
+function csvCell(v) {
+  const s = v === null || v === undefined ? "" : String(v);
+  if (/[",\r\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+function csvRow(cells) { return cells.map(csvCell).join(","); }
+
+function downloadBOMCsv(takeoffData, label) {
+  const n = v => parseFloat(v) || 0;
+  const d = takeoffData || {};
+  const materials = d.materials || [];
+  const labor = d.labor || [];
+  const costs = d.costs || [];
+  const rmr = d.rmr || [];
+  const overheadPct = n(d.overheadPct);
+
+  // Compute totals
+  const matTotal = materials.reduce((s, r) => s + (n(r.qty) * n(r.pricePU)) + (n(r.laborHrs) * n(r.laborRate)), 0);
+  const matExtPrice = materials.reduce((s, r) => s + (n(r.qty) * n(r.pricePU)), 0);
+  const matExtLabor = materials.reduce((s, r) => s + (n(r.laborHrs) * n(r.laborRate)), 0);
+  const laborPrice = labor.reduce((s, r) => s + (n(r.hours) * n(r.ratePerHr)), 0);
+  const laborCostTotal = labor.reduce((s, r) => s + (n(r.hours) * n(r.costPerHr)), 0);
+  const totalLaborHrs = labor.reduce((s, r) => s + n(r.hours), 0);
+  const costTotal = costs.reduce((s, r) => s + (n(r.qty) * n(r.pricePU)), 0);
+  const rmrTotal = rmr.reduce((s, r) => s + (n(r.qty) * n(r.pricePU)), 0);
+  const subtotal = matTotal + laborPrice + costTotal + rmrTotal;
+  const overhead = subtotal * (overheadPct / 100);
+  const grandTotal = subtotal + overhead;
+  const matCost = materials.reduce((s, r) => s + (n(r.qty) * n(r.costPU)), 0);
+  const costsCost = costs.reduce((s, r) => s + (n(r.qty) * n(r.costPU)), 0);
+  const totalCost = matCost + laborCostTotal + costsCost;
+  const margin = grandTotal > 0 ? Math.round(((grandTotal - totalCost) / grandTotal) * 100) : 0;
+
+  const fmt$ = v => n(v).toFixed(2);
+  const lines = [];
+
+  // Header
+  lines.push(csvRow(["FWT Bill of Materials"]));
+  if (label) lines.push(csvRow(["Scope:", label]));
+  lines.push(csvRow(["Generated:", new Date().toLocaleString()]));
+  lines.push("");
+
+  // Summary
+  lines.push(csvRow(["SUMMARY"]));
+  lines.push(csvRow(["Material Price", fmt$(matTotal)]));
+  lines.push(csvRow(["Labor Price (" + totalLaborHrs + " hrs)", fmt$(laborPrice)]));
+  lines.push(csvRow(["Project Costs", fmt$(costTotal)]));
+  lines.push(csvRow(["RMR (First Month)", fmt$(rmrTotal)]));
+  lines.push(csvRow(["Subtotal", fmt$(subtotal)]));
+  lines.push(csvRow(["Overhead (" + overheadPct + "%)", fmt$(overhead)]));
+  lines.push(csvRow(["QUOTED PRICE", fmt$(grandTotal)]));
+  lines.push(csvRow(["Total Cost", fmt$(totalCost)]));
+  lines.push(csvRow(["Margin %", margin + "%"]));
+  lines.push("");
+
+  // Materials
+  lines.push(csvRow(["MATERIALS"]));
+  lines.push(csvRow(["Manufacturer", "Part #", "Description", "Qty", "Unit", "Cost/U", "Markup %", "Price/U", "Ext Price", "Labor Hrs", "Labor Rate", "Ext Labor"]));
+  materials.forEach(r => {
+    lines.push(csvRow([
+      r.manf, r.partNum, r.desc,
+      n(r.qty), r.unit || "EA",
+      fmt$(r.costPU), n(r.markupPct), fmt$(r.pricePU),
+      fmt$(n(r.qty) * n(r.pricePU)),
+      n(r.laborHrs), fmt$(r.laborRate),
+      fmt$(n(r.laborHrs) * n(r.laborRate)),
+    ]));
+  });
+  lines.push(csvRow(["", "", "MATERIALS TOTAL", "", "", "", "", "", fmt$(matExtPrice), "", "", fmt$(matExtLabor)]));
+  lines.push("");
+
+  // Labor
+  lines.push(csvRow(["FWT LABOR"]));
+  lines.push(csvRow(["Description", "Hours", "Cost/Hr", "Labor Cost", "Rate/Hr", "Labor Price"]));
+  labor.forEach(r => {
+    lines.push(csvRow([
+      r.desc, n(r.hours),
+      fmt$(r.costPerHr), fmt$(n(r.hours) * n(r.costPerHr)),
+      fmt$(r.ratePerHr), fmt$(n(r.hours) * n(r.ratePerHr)),
+    ]));
+  });
+  lines.push(csvRow(["LABOR TOTAL", totalLaborHrs, "", fmt$(laborCostTotal), "", fmt$(laborPrice)]));
+  lines.push("");
+
+  // Project Costs
+  lines.push(csvRow(["PROJECT COSTS"]));
+  lines.push(csvRow(["Manufacturer", "Part #", "Description", "Qty", "Unit", "Cost/U", "Markup %", "Price/U", "Ext Price"]));
+  costs.forEach(r => {
+    lines.push(csvRow([
+      r.manf, r.partNum, r.desc,
+      n(r.qty), r.unit || "EA",
+      fmt$(r.costPU), n(r.markupPct), fmt$(r.pricePU),
+      fmt$(n(r.qty) * n(r.pricePU)),
+    ]));
+  });
+  lines.push(csvRow(["", "", "COSTS TOTAL", "", "", "", "", "", fmt$(costTotal)]));
+  lines.push("");
+
+  // RMR
+  lines.push(csvRow(["RMR — FIRST MONTH INCLUDED"]));
+  lines.push(csvRow(["Manufacturer", "Part #", "Description", "Qty", "Unit", "Cost/U", "Markup %", "Price/U", "Ext Price"]));
+  rmr.forEach(r => {
+    lines.push(csvRow([
+      r.manf, r.partNum, r.desc,
+      n(r.qty), r.unit || "MO",
+      fmt$(r.costPU), n(r.markupPct), fmt$(r.pricePU),
+      fmt$(n(r.qty) * n(r.pricePU)),
+    ]));
+  });
+  lines.push(csvRow(["", "", "RMR TOTAL", "", "", "", "", "", fmt$(rmrTotal)]));
+  lines.push("");
+
+  // Notes
+  if (d.notes) {
+    lines.push(csvRow(["NOTES"]));
+    lines.push(csvRow([d.notes]));
+  }
+
+  // Combine and trigger download. BOM added so Excel opens it in UTF-8.
+  const csv = "\uFEFF" + lines.join("\r\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  const safe = (label || "BOM").replace(/[^a-zA-Z0-9]+/g, "_");
+  a.download = `FWT_BOM_${safe}_${new Date().toISOString().split("T")[0]}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+export function TakeoffBuilder({ takeoff, onSave, scopeTitle }) {
   const data = takeoff || { materials: Array(5).fill(null).map(() => emptyMaterialRow()), labor: DEFAULT_LABOR_ROWS.map(r => ({ ...r, id: genId() })), costs: DEFAULT_COST_ROWS.map(r => ({ ...r, id: genId() })), rmr: DEFAULT_RMR_ROWS.map(r => ({ ...r, id: genId() })), overheadPct: 0, notes: "" };
   const [materials, setMaterials] = useState(data.materials);
   const [labor, setLabor] = useState(data.labor);
@@ -63,7 +197,7 @@ export function TakeoffBuilder({ takeoff, onSave }) {
     <div style={{ marginBottom: 16 }}><div style={{ fontSize: 12, fontWeight: 700, color: "#f59e0b", textTransform: "uppercase", marginBottom: 8 }}>FWT Labor</div><div style={{ display: "grid", gridTemplateColumns: "1fr 70px 80px 90px 80px 90px 24px", gap: 4, marginBottom: 6, padding: "0 0 6px", borderBottom: "1px solid #1e293b" }}>{["Description", "Hours", "Cost/Hr", "Labor Cost", "Rate/Hr", "Labor Price", ""].map(h => (<div key={h} style={{ fontSize: 10, fontWeight: 700, color: "#475569", textTransform: "uppercase" }}>{h}</div>))}</div>{labor.map((row, idx) => (<div key={row.id} style={{ display: "grid", gridTemplateColumns: "1fr 70px 80px 90px 80px 90px 24px", gap: 4, marginBottom: 3, alignItems: "center" }}><input style={iS} value={row.desc} onChange={e => updLaborRow(idx, "desc", e.target.value)} placeholder="Labor description" /><input type="number" step="0.5" style={nS} value={row.hours || ""} onChange={e => updLaborRow(idx, "hours", e.target.value)} placeholder="0" /><input type="number" step="0.01" style={nS} value={row.costPerHr || ""} onChange={e => updLaborRow(idx, "costPerHr", e.target.value)} placeholder="$/hr" /><div style={{ fontSize: 12, color: "#ef4444", textAlign: "right", fontWeight: 600 }}>${(n(row.hours) * n(row.costPerHr)).toFixed(2)}</div><input type="number" step="0.01" style={nS} value={row.ratePerHr || ""} onChange={e => updLaborRow(idx, "ratePerHr", e.target.value)} placeholder="$/hr" /><div style={{ fontSize: 12, color: "#10b981", textAlign: "right", fontWeight: 600 }}>${(n(row.hours) * n(row.ratePerHr)).toFixed(2)}</div><button onClick={() => removeLaborRow(idx)} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer" }}><X size={12} /></button></div>))}<div style={{ display: "grid", gridTemplateColumns: "1fr 70px 80px 90px 80px 90px 24px", gap: 4, marginTop: 6, padding: "8px 0 0", borderTop: "1px solid #1e293b" }}><div style={{ fontSize: 12, fontWeight: 700, color: "#f59e0b" }}>LABOR TOTALS</div><div style={{ fontSize: 12, fontWeight: 700, color: "#fff", textAlign: "right" }}>{totalLaborHrs}h</div><div></div><div style={{ fontSize: 12, fontWeight: 700, color: "#ef4444", textAlign: "right" }}>${laborCostTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div><div></div><div style={{ fontSize: 12, fontWeight: 700, color: "#10b981", textAlign: "right" }}>${laborPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div><div></div></div><button onClick={addLaborRow} style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 8, background: "none", border: "none", color: "#f59e0b", fontSize: 11, cursor: "pointer", fontFamily: "inherit", fontWeight: 600, padding: "4px 0" }}><Plus size={12} /> Add Labor Row</button></div>
     {renderSection("Project Costs", "#ef4444", costs, setCosts, "costs", () => addRow(costs, setCosts, () => ({ id: genId(), manf: "FWT", partNum: "FWT", desc: "", qty: 1, unit: "EA", costPU: 0, markupPct: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isCost: true }), "costs"))}
     {renderSection("RMR \u2014 First Month Included", "#8b5cf6", rmr, setRmr, "rmr", () => addRow(rmr, setRmr, () => ({ id: genId(), manf: "FWT", partNum: "FWT-RMR", desc: "", qty: 1, unit: "MO", costPU: 0, markupPct: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isRmr: true }), "rmr"))}
-    <div style={{ display: "flex", gap: 16, alignItems: "center", padding: "16px 0", borderTop: "2px solid #1e293b", marginTop: 8 }}><div style={{ display: "flex", alignItems: "center", gap: 8 }}><span style={{ fontSize: 12, color: "#64748b" }}>Overhead %:</span><input type="number" step="0.5" style={{ ...nS, width: 70 }} value={overheadPct || ""} onChange={e => { const v = parseFloat(e.target.value) || 0; setOverheadPct(v); save(null, null, null, null, v); }} placeholder="0" /><span style={{ fontSize: 12, color: "#94a3b8" }}>(${overhead.toFixed(2)})</span></div><div style={{ marginLeft: "auto", fontSize: 18, fontWeight: 700, color: "#fff", fontFamily: "'Outfit',sans-serif" }}>TOTAL: ${grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div></div>
+    <div style={{ display: "flex", gap: 16, alignItems: "center", padding: "16px 0", borderTop: "2px solid #1e293b", marginTop: 8, flexWrap: "wrap" }}><div style={{ display: "flex", alignItems: "center", gap: 8 }}><span style={{ fontSize: 12, color: "#64748b" }}>Overhead %:</span><input type="number" step="0.5" style={{ ...nS, width: 70 }} value={overheadPct || ""} onChange={e => { const v = parseFloat(e.target.value) || 0; setOverheadPct(v); save(null, null, null, null, v); }} placeholder="0" /><span style={{ fontSize: 12, color: "#94a3b8" }}>(${overhead.toFixed(2)})</span></div><button onClick={() => downloadBOMCsv({ materials, labor, costs, rmr, overheadPct, notes }, scopeTitle)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, border: "1px solid #10b981", background: "#10b98122", color: "#10b981", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }} title="Export BOM as CSV — opens in Excel"><Download size={14} /> Export BOM</button><div style={{ marginLeft: "auto", fontSize: 18, fontWeight: 700, color: "#fff", fontFamily: "'Outfit',sans-serif" }}>TOTAL: ${grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div></div>
     <div style={{ marginTop: 12 }}><div style={{ fontSize: 11, fontWeight: 600, color: "#64748b", marginBottom: 4, textTransform: "uppercase" }}>Project Notes</div><textarea style={{ ...iS, minHeight: 60, resize: "vertical" }} value={notes} onChange={e => { setNotes(e.target.value); save(null, null, null, null, undefined, e.target.value); }} placeholder="Notes, assumptions, special conditions..." /></div>
   </div>);
 }
@@ -221,3 +355,4 @@ export function ProposalBuilder({ opportunity, proposal, onSave }) {
     <div style={{ background: "#0f1729", borderRadius: 12, padding: 20, marginBottom: 16, border: "1px solid #1e293b" }}><div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 14 }}>Terms & Conditions</div>{d.terms.map((term, i) => (<div key={term.id} style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "6px 0", borderBottom: "1px solid #1e293b0a" }}><button onClick={() => upd({ terms: d.terms.map((t, idx) => idx === i ? { ...t, included: !t.included } : t) })} style={{ background: "none", border: "none", cursor: "pointer", color: term.included ? "#10b981" : "#334155", flexShrink: 0, marginTop: 2, fontSize: 14 }}>{term.included ? "\u2611" : "\u2610"}</button><span style={{ fontSize: 12, color: term.included ? "#e2e8f0" : "#475569", flex: 1 }}>{term.text === "NETWORK_TERM" ? (<span>Customer shall provide minimum (1) LAN & WAN network connection for each of the following systems:<div style={{ display: "flex", gap: 10, marginTop: 6, flexWrap: "wrap" }}>{SYSTEM_TYPES.map(st => (<button key={st} onClick={() => upd({ systemTypes: { ...d.systemTypes, [st]: !(d.systemTypes || {})[st] } })} style={{ padding: "3px 10px", borderRadius: 6, border: "1px solid #1e293b", fontSize: 11, cursor: "pointer", fontFamily: "inherit", background: (d.systemTypes || {})[st] ? "#6366f1" : "transparent", color: (d.systemTypes || {})[st] ? "#fff" : "#64748b" }}>{(d.systemTypes || {})[st] ? "\u2611" : "\u2610"} {st}</button>))}</div></span>) : term.text}</span></div>))}</div>
   </div>);
 }
+
