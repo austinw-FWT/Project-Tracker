@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Plus, X, Edit2, ArrowRight, Calculator, FileText } from "lucide-react";
 import { TakeoffBuilder, ProposalBuilder } from "./ProposalBuilder.jsx";
+import SiteWalkCanvas from "./SiteWalkCanvas.jsx";
 
 const STAGES = [
   { id: "lead", name: "Lead", color: "#6366f1", icon: "📥" },
@@ -20,6 +21,7 @@ export default function Opportunities({ opportunities, onSave, onConvert }) {
   const [confirmConvert, setConfirmConvert] = useState(null);
   const [expandedOpp, setExpandedOpp] = useState(null);
   const [oppTab, setOppTab] = useState("details");
+  const [activeSiteWalk, setActiveSiteWalk] = useState(null); // { oppId, walkId }
 
   const iS = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1e293b", background: "#0f1729", color: "#e2e8f0", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none" };
   const lS = { fontSize: 11, fontWeight: 600, color: "#64748b", marginBottom: 4, display: "block", textTransform: "uppercase", letterSpacing: "0.05em" };
@@ -105,7 +107,7 @@ export default function Opportunities({ opportunities, onSave, onConvert }) {
             {isExpanded && (
               <div style={{ borderTop: "1px solid #1e293b" }}>
                 <div style={{ display: "flex", gap: 2, padding: "0 20px", background: "#0f1729" }}>
-                  {[{ id: "details", label: "Details", icon: "📋" }, { id: "takeoff", label: "Scope BOMs", icon: "📊" }, { id: "proposal", label: "Proposal", icon: "📄" }].map(tab => (
+                  {[{ id: "details", label: "Details", icon: "📋" }, { id: "sitewalks", label: "Site Walks", icon: "📝" }, { id: "takeoff", label: "Scope BOMs", icon: "📊" }, { id: "proposal", label: "Proposal", icon: "📄" }].map(tab => (
                     <button key={tab.id} onClick={() => setOppTab(tab.id)} style={{ padding: "10px 16px", border: "none", background: "none", cursor: "pointer", color: oppTab === tab.id ? "#fff" : "#64748b", borderBottom: oppTab === tab.id ? "2px solid #6366f1" : "2px solid transparent", fontSize: 12, fontWeight: 600, fontFamily: "inherit", display: "flex", alignItems: "center", gap: 5 }}>{tab.icon} {tab.label}</button>
                   ))}
                 </div>
@@ -124,6 +126,66 @@ export default function Opportunities({ opportunities, onSave, onConvert }) {
                       {opp.projectTypes?.length > 0 && <div style={{ display: "flex", gap: 4, marginTop: 10 }}>{opp.projectTypes.map(t => <span key={t} style={{ fontSize: 11, padding: "3px 8px", borderRadius: 4, background: "#6366f122", color: "#818cf8" }}>{t}</span>)}</div>}
                     </div>
                   )}
+                  {oppTab === "sitewalks" && (() => {
+                    const siteWalks = opp.siteWalks || [];
+                    function saveWalks(next) {
+                      onSave(opportunities.map(o => o.id === opp.id ? { ...o, siteWalks: next, updatedAt: new Date().toISOString() } : o));
+                    }
+                    function addWalk() {
+                      const id = genId();
+                      const newWalk = { id, title: `Site Walk ${siteWalks.length + 1}`, date: new Date().toISOString().split("T")[0], canvas: { width: 1400, height: 2000, strokes: [], images: [], textBoxes: [] }, createdAt: new Date().toISOString() };
+                      saveWalks([...siteWalks, newWalk]);
+                      setActiveSiteWalk({ oppId: opp.id, walkId: id });
+                    }
+                    function renameWalk(walkId, title) {
+                      saveWalks(siteWalks.map(w => w.id === walkId ? { ...w, title } : w));
+                    }
+                    function deleteWalk(walkId) {
+                      if (!confirm("Delete this site walk and all its notes/drawings?")) return;
+                      saveWalks(siteWalks.filter(w => w.id !== walkId));
+                    }
+                    return (
+                      <div>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+                          <p style={{ fontSize: 12, color: "#64748b", margin: 0 }}>Freehand notes + photos for each site visit. Uses stylus/pen input, auto-saves as you draw.</p>
+                          <button onClick={addWalk} style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 8, border: "none", background: "#6366f1", color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                            <Plus size={14} /> New Site Walk
+                          </button>
+                        </div>
+                        {siteWalks.length === 0 && (
+                          <div style={{ textAlign: "center", padding: 40, color: "#334155", fontSize: 13 }}>
+                            No site walks yet. Click <strong style={{ color: "#818cf8" }}>New Site Walk</strong> to start a blank page for notes, drawings, and photos.
+                          </div>
+                        )}
+                        {siteWalks.map(walk => {
+                          const strokeCount = walk.canvas?.strokes?.length || 0;
+                          const imageCount = walk.canvas?.images?.length || 0;
+                          const textCount = walk.canvas?.textBoxes?.length || 0;
+                          return (
+                            <div key={walk.id} style={{ background: "#0f1729", borderRadius: 10, border: "1px solid #1e293b", padding: "12px 14px", marginBottom: 8, display: "flex", alignItems: "center", gap: 10 }}>
+                              <div style={{ width: 38, height: 38, borderRadius: 8, background: "#8b5cf622", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                                <span style={{ fontSize: 18 }}>📝</span>
+                              </div>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <input
+                                  value={walk.title}
+                                  onChange={e => renameWalk(walk.id, e.target.value)}
+                                  style={{ width: "100%", background: "transparent", border: "none", color: "#fff", fontSize: 13, fontWeight: 600, outline: "none", fontFamily: "inherit" }}
+                                />
+                                <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
+                                  {walk.date} · {strokeCount} stroke{strokeCount !== 1 ? "s" : ""} · {imageCount} image{imageCount !== 1 ? "s" : ""} · {textCount} note{textCount !== 1 ? "s" : ""}
+                                </div>
+                              </div>
+                              <button onClick={() => setActiveSiteWalk({ oppId: opp.id, walkId: walk.id })} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #6366f1", background: "#6366f122", color: "#818cf8", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                                Open
+                              </button>
+                              <button onClick={() => deleteWalk(walk.id)} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer" }} title="Delete"><X size={14} /></button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
                   {oppTab === "takeoff" && (() => {
                     const scopes = opp.proposal?.scopes || [];
                     if (scopes.length === 0) return (
@@ -214,6 +276,26 @@ export default function Opportunities({ opportunities, onSave, onConvert }) {
           </div>
         </div>
       )}
+
+      {/* Site Walk fullscreen canvas overlay */}
+      {activeSiteWalk && (() => {
+        const opp = opportunities.find(o => o.id === activeSiteWalk.oppId);
+        if (!opp) { setActiveSiteWalk(null); return null; }
+        const walk = (opp.siteWalks || []).find(w => w.id === activeSiteWalk.walkId);
+        if (!walk) { setActiveSiteWalk(null); return null; }
+        return (
+          <SiteWalkCanvas
+            walkId={walk.id}
+            walkTitle={`${opp.name} — ${walk.title}`}
+            canvas={walk.canvas}
+            uploadPathPrefix={`opportunities/${opp.id}/sitewalks`}
+            onSave={canvas => {
+              onSave(opportunities.map(o => o.id === opp.id ? { ...o, siteWalks: (o.siteWalks || []).map(w => w.id === walk.id ? { ...w, canvas } : w), updatedAt: new Date().toISOString() } : o));
+            }}
+            onClose={() => setActiveSiteWalk(null)}
+          />
+        );
+      })()}
     </div>
   );
 }
