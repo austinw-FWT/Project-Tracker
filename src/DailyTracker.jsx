@@ -113,10 +113,13 @@ function rolloverDay(oldSections) {
   });
 }
 
-export default function DailyTracker({ data, onSave }) {
+export default function DailyTracker({ data, onSave, view = "daily" }) {
   const trackerData = data || {};
   const today = todayStr();
   const isMobile = useIsMobile();
+
+  const showDaily = view === "daily" || view === "both";
+  const showWeekly = view === "weekly" || view === "both";
 
   useEffect(() => {
     if (trackerData.currentDate && trackerData.currentDate !== today && trackerData.dailySections) {
@@ -279,22 +282,26 @@ export default function DailyTracker({ data, onSave }) {
       </div>
 
       {/* Progress */}
-      <div style={{ marginBottom: 20 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#6b6785", marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>
-          <span>Today's Progress</span><span style={{ fontWeight: 700, color: pct === 100 ? "#69db7c" : "#9a96b0" }}>{checked} / {total}</span>
-        </div>
-        <div style={{ height: isMobile ? 8 : 6, background: "#2d2d4a", borderRadius: 4, overflow: "hidden" }}>
-          <div style={{ height: "100%", width: `${pct}%`, background: "linear-gradient(90deg, #38d9a9, #69db7c)", borderRadius: 4, transition: "width 0.5s" }} />
-        </div>
-      </div>
-      {checked === total && total > 0 && (
-        <div style={{ textAlign: "center", padding: "14px 12px", fontSize: 15, fontWeight: 600, color: "#69db7c", marginBottom: 14, background: "rgba(105,219,124,0.08)", borderRadius: 10, border: "1px solid rgba(105,219,124,0.2)" }}>
-          🎉 Everything checked off. You crushed it today.
-        </div>
+      {showDaily && (
+        <>
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#6b6785", marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>
+              <span>Today's Progress</span><span style={{ fontWeight: 700, color: pct === 100 ? "#69db7c" : "#9a96b0" }}>{checked} / {total}</span>
+            </div>
+            <div style={{ height: isMobile ? 8 : 6, background: "#2d2d4a", borderRadius: 4, overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${pct}%`, background: "linear-gradient(90deg, #38d9a9, #69db7c)", borderRadius: 4, transition: "width 0.5s" }} />
+            </div>
+          </div>
+          {checked === total && total > 0 && (
+            <div style={{ textAlign: "center", padding: "14px 12px", fontSize: 15, fontWeight: 600, color: "#69db7c", marginBottom: 14, background: "rgba(105,219,124,0.08)", borderRadius: 10, border: "1px solid rgba(105,219,124,0.2)" }}>
+              🎉 Everything checked off. You crushed it today.
+            </div>
+          )}
+        </>
       )}
 
       {/* Daily Sections */}
-      {dailySections.map((sec, si) => {
+      {showDaily && dailySections.map((sec, si) => {
         const doneCount = sec.type === "tasks" ? sec.items.filter(i => i.done).length : 0;
         const totalCount = sec.type === "tasks" ? sec.items.length : 0;
         const isCollapsed = isMobile && collapsedSections[sec.id];
@@ -381,16 +388,20 @@ export default function DailyTracker({ data, onSave }) {
         );
       })}
 
-      {/* Divider */}
-      <div style={{ height: 2, background: "linear-gradient(90deg, transparent, #333355, transparent)", margin: "24px 0" }} />
+      {/* Divider — only when showing both */}
+      {showDaily && showWeekly && (
+        <div style={{ height: 2, background: "linear-gradient(90deg, transparent, #333355, transparent)", margin: "24px 0" }} />
+      )}
 
       {/* Weekly Header */}
-      <div style={{ textAlign: "center", padding: "8px 0 14px" }}>
-        <h2 style={{ fontSize: isMobile ? 17 : 18, fontWeight: 700, color: "#e8e6f0", fontFamily: "'Outfit',sans-serif" }}>Weekly Recurring Tasks</h2>
-      </div>
+      {showWeekly && (
+        <div style={{ textAlign: "center", padding: "8px 0 14px" }}>
+          <h2 style={{ fontSize: isMobile ? 17 : 18, fontWeight: 700, color: "#e8e6f0", fontFamily: "'Outfit',sans-serif" }}>Weekly Recurring Tasks</h2>
+        </div>
+      )}
 
       {/* Weekly Sections */}
-      {weeklySections.map((sec, si) => {
+      {showWeekly && weeklySections.map((sec, si) => {
         const isCollapsed = isMobile && collapsedWeekly[sec.id];
         const doneCount = sec.items.filter(i => i.done).length;
         return (
@@ -459,3 +470,4 @@ export default function DailyTracker({ data, onSave }) {
     </div>
   );
 }
+
