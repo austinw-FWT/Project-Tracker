@@ -274,7 +274,24 @@ function Tracker({ user, userRecord }) {
   function addProject(project) {
     const now = new Date().toISOString();
     const np = { ...EMPTY_PROJECT, ...project, id: genId(), phaseId: project.phaseId || data.phases[0]?.id || "awarded", createdAt: now, updatedAt: now };
-    saveData({ ...data, projects: [...data.projects, np] }); setShowNewProject(false);
+    // Auto-add customer to contacts archive if not already present (matched by company name, case-insensitive)
+    let contacts = data.contacts || [];
+    const customerName = (np.customer || "").trim();
+    if (customerName && !contacts.some(c => (c.company || "").trim().toLowerCase() === customerName.toLowerCase())) {
+      contacts = [...contacts, {
+        id: genId(),
+        company: customerName,
+        contactName: np.contactName || "",
+        phone: np.contactPhone || "",
+        email: np.contactEmail || "",
+        address: np.siteAddress || "",
+        notes: `Auto-added from project: ${np.name}`,
+        type: "customer",
+        createdAt: now,
+        updatedAt: now,
+      }];
+    }
+    saveData({ ...data, projects: [...data.projects, np], contacts }); setShowNewProject(false);
   }
   function deleteProject(pid) { saveData({ ...data, projects: data.projects.filter(p => p.id !== pid) }); setSelectedProject(null); }
   function handleDrop(phaseId) { if (dragItem && dragItem.phaseId !== phaseId) updateProject(dragItem.id, { phaseId }); setDragItem(null); }
@@ -303,7 +320,7 @@ function Tracker({ user, userRecord }) {
   if (loading) return <LoadingScreen text="Connecting to Firebase..." />;
   if (!data) return null;
 
-  const filteredProjects = data.projects.filter(p => !searchTerm || p.name.toLowerCase().includes(searchTerm.toLowerCase()) || p.customer.toLowerCase().includes(searchTerm.toLowerCase()));
+  const filteredProjects = data.projects.filter(p => !p.movedToWarranty && (!searchTerm || p.name.toLowerCase().includes(searchTerm.toLowerCase()) || p.customer.toLowerCase().includes(searchTerm.toLowerCase())));
   const phaseMap = {}; data.phases.forEach(ph => { phaseMap[ph.id] = ph; });
 
   const sC = { connecting: { c: "#f59e0b", t: "Connecting...", s: true }, synced: { c: "#10b981", t: "Live", s: false }, saving: { c: "#6366f1", t: "Saving...", s: true }, reconnecting: { c: "#f59e0b", t: "Reconnecting...", s: true }, error: { c: "#ef4444", t: "Offline", s: false } }[syncStatus] || { c: "#10b981", t: "Live", s: false };
@@ -321,13 +338,14 @@ function Tracker({ user, userRecord }) {
 
   const mySpaceItems = [
     { id: "daily", label: "Daily Task Board", icon: "📋" },
+    { id: "weekly", label: "Weekly Task Board", icon: "📅" },
     { id: "dailylog", label: "Daily Log", icon: "📝" },
     { id: "opportunities", label: "Opportunities", icon: "🎯" },
     { id: "timesheets", label: "My Timesheets", icon: "⏱️" },
   ];
 
   const currentPageTitle = selectedProject ? selectedProject.name
-    : view === "myspace" ? (mySpaceTab === "daily" ? "Daily Task Board" : mySpaceTab === "dailylog" ? "Daily Log" : mySpaceTab === "opportunities" ? "Opportunities" : "My Timesheets")
+    : view === "myspace" ? (mySpaceTab === "daily" ? "Daily Task Board" : mySpaceTab === "weekly" ? "Weekly Task Board" : mySpaceTab === "dailylog" ? "Daily Log" : mySpaceTab === "opportunities" ? "Opportunities" : "My Timesheets")
     : view === "team" ? "Team Roster" : view === "schedule" ? "Team Schedule" : view === "admin" ? "User Admin"
     : view === "contacts" ? "Contacts" : view === "warranties" ? "Warranties" : view === "dashboard" ? "Dashboard"
     : view === "board" ? "Project Board" : "Phase Settings";
@@ -463,9 +481,11 @@ function Tracker({ user, userRecord }) {
           ) : view === "contacts" ? (
             <Contacts contacts={data.contacts || []} projects={data.projects} onSave={c => saveData({ ...data, contacts: c })} />
           ) : view === "warranties" ? (
-            <WarrantyTracker projects={data.projects} onUpdateProject={(pid, u) => updateProject(pid, u)} />
+            <WarrantyTracker projects={data.projects} onUpdateProject={(pid, u) => updateProject(pid, u)} onSelectProject={p => { setSelectedProject(p); setDetailTab("overview"); }} />
           ) : view === "myspace" && mySpaceTab === "daily" ? (
-            <DailyTracker data={getMyPrivate().dailyTracker} archivedDays={getMyPrivate().archivedDays || []} onSave={dt => saveMyPrivate({ dailyTracker: dt })} onArchive={archive => saveMyPrivate({ archivedDays: archive })} />
+            <DailyTracker data={getMyPrivate().dailyTracker} view="daily" onSave={dt => saveMyPrivate({ dailyTracker: dt })} />
+          ) : view === "myspace" && mySpaceTab === "weekly" ? (
+            <DailyTracker data={getMyPrivate().dailyTracker} view="weekly" onSave={dt => saveMyPrivate({ dailyTracker: dt })} />
           ) : view === "myspace" && mySpaceTab === "dailylog" ? (
             <MyDailyLog dailyLogs={getMyPrivate().dailyLogs || []} projects={data.projects} teamRoster={data.teamRoster} myName={myName} myEmail={user.email} predefinedEmail={data.adminSettings?.predefinedEmail || ""}
               onSubmit={(logs, projectUpdates) => {
@@ -544,14 +564,94 @@ function KanbanBoard({ projects, phases, onSelectProject, onDragStart, onDrop, d
 }
 
 /* ═══ SCHEDULE VIEW ═══ */
+/*
+ * Schedule data model (backward-compatible migration happens on read):
+ *   Old: schedule[date][memberName] = "projectId"  (or "" for off)
+ *   New: schedule[date][memberName] = [{ type: 'project'|'training'|'office'|'pto'|'off', id?: string }]
+ *
+ * Day-type codes for non-project assignments are stored as string constants.
+ */
+const DAY_TYPES = [
+  { code: "training",  label: "Training",  color: "#8b5cf6", short: "📚 Training" },
+  { code: "office",    label: "Office",    color: "#0ea5e9", short: "🏢 Office" },
+  { code: "pto",       label: "PTO / Vacation", color: "#f59e0b", short: "🌴 PTO" },
+  { code: "off",       label: "Off / Unavailable", color: "#6b7280", short: "🚫 Off" },
+];
+
+// Normalize any legacy string entry into an array of entry objects
+function normalizeDayEntries(raw) {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw;
+  // Legacy: string projectId OR "" for off
+  if (typeof raw === "string") {
+    return raw ? [{ type: "project", id: raw }] : [];
+  }
+  return [];
+}
+
 function ScheduleView({ schedule, teamRoster, projects, onUpdate }) {
   const [wo, setWo] = useState(0);
   function getWeekDates(off) { const now = new Date(); const d = now.getDay(); const m = new Date(now); m.setDate(now.getDate() - (d === 0 ? 6 : d - 1) + off * 7); const ds = []; for (let i = 0; i < 7; i++) { const x = new Date(m); x.setDate(m.getDate() + i); ds.push(x.toISOString().split("T")[0]); } return ds; }
   const dates = getWeekDates(wo); const today = new Date().toISOString().split("T")[0];
   const fmt = ds => new Date(ds + "T00:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
-  const iS = { width: "100%", padding: "4px 6px", borderRadius: 6, border: "1px solid #1e293b", background: "#0f1729", color: "#e2e8f0", fontSize: 11, fontFamily: "'DM Sans',sans-serif", outline: "none" };
+
+  const iS = { width: "100%", padding: "4px 6px", borderRadius: 6, border: "1px solid #1e293b", background: "#0b1120", color: "#e2e8f0", fontSize: 11, fontFamily: "'DM Sans',sans-serif", outline: "none" };
+
+  // Build list of options: projects + day types + add-selector sentinel values
+  function getOptionValue(entry) {
+    if (!entry) return "";
+    return entry.type === "project" ? `project:${entry.id}` : `type:${entry.type}`;
+  }
+
+  function parseOptionValue(val) {
+    if (!val) return null;
+    if (val.startsWith("project:")) return { type: "project", id: val.slice(8) };
+    if (val.startsWith("type:")) return { type: val.slice(5) };
+    return null;
+  }
+
+  function setEntryAt(date, memberName, index, newVal) {
+    const dayMap = { ...(schedule[date] || {}) };
+    const entries = normalizeDayEntries(dayMap[memberName]);
+    const parsed = parseOptionValue(newVal);
+    if (!parsed) {
+      // Remove this entry
+      const next = entries.filter((_, i) => i !== index);
+      if (next.length === 0) delete dayMap[memberName];
+      else dayMap[memberName] = next;
+    } else {
+      const next = [...entries];
+      next[index] = parsed;
+      dayMap[memberName] = next;
+    }
+    onUpdate({ ...schedule, [date]: dayMap });
+  }
+
+  function addEntryAt(date, memberName, newVal) {
+    const parsed = parseOptionValue(newVal);
+    if (!parsed) return;
+    const dayMap = { ...(schedule[date] || {}) };
+    const entries = normalizeDayEntries(dayMap[memberName]);
+    dayMap[memberName] = [...entries, parsed];
+    onUpdate({ ...schedule, [date]: dayMap });
+  }
+
+  function getEntryLabel(entry) {
+    if (entry.type === "project") {
+      const p = projects.find(pr => pr.id === entry.id);
+      return p ? p.name : "(deleted project)";
+    }
+    const dt = DAY_TYPES.find(t => t.code === entry.type);
+    return dt ? dt.short : entry.type;
+  }
+
+  function getEntryColor(entry) {
+    if (entry.type === "project") return "#6366f1";
+    return DAY_TYPES.find(t => t.code === entry.type)?.color || "#64748b";
+  }
+
   return (<div style={{ padding: "20px 24px" }}>
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <button onClick={() => setWo(w => w - 1)} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #1e293b", background: "#1a2332", color: "#94a3b8", cursor: "pointer" }}>←</button>
         <span style={{ fontSize: 15, fontWeight: 700, color: "#fff", fontFamily: "'Outfit',sans-serif" }}>{fmt(dates[0])} — {fmt(dates[6])}</span>
@@ -559,16 +659,73 @@ function ScheduleView({ schedule, teamRoster, projects, onUpdate }) {
       </div>
       <button onClick={() => setWo(0)} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #1e293b", background: wo === 0 ? "#6366f1" : "#1a2332", color: wo === 0 ? "#fff" : "#94a3b8", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>This Week</button>
     </div>
+    <div style={{ fontSize: 11, color: "#64748b", marginBottom: 16 }}>Click a row to assign a project or day type. Add multiple entries per day for split shifts.</div>
+
     {teamRoster.length === 0 ? <div style={{ textAlign: "center", padding: 48, color: "#334155" }}>Add team members first.</div> : (
-      <div style={{ overflowX: "auto" }}><div style={{ display: "grid", gridTemplateColumns: "160px repeat(7, 1fr)", gap: 1, minWidth: 900 }}>
-        <div style={{ padding: "10px 12px", background: "#1a2332", fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>Team Member</div>
-        {dates.map(d => <div key={d} style={{ padding: "10px 8px", background: d === today ? "#6366f122" : "#1a2332", textAlign: "center", fontSize: 11, fontWeight: 600, color: d === today ? "#818cf8" : "#94a3b8" }}>{fmt(d)}</div>)}
-        {teamRoster.map(member => (<>
-          <div key={`n-${member.id}`} style={{ padding: "10px 12px", background: "#0b1120", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid #1e293b" }}><div style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0" }}>{member.name}</div></div>
-          {dates.map(d => <div key={`${member.id}-${d}`} style={{ padding: "6px 4px", background: d === today ? "#6366f108" : "#0f1729", borderBottom: "1px solid #1e293b" }}><select style={iS} value={schedule[d]?.[member.name] || ""} onChange={e => { const dd = { ...(schedule[d] || {}) }; if (e.target.value) dd[member.name] = e.target.value; else delete dd[member.name]; onUpdate({ ...schedule, [d]: dd }); }}><option value="">— Off —</option>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>)}
-        </>))}
-      </div></div>
+      <div style={{ overflowX: "auto" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "160px repeat(7, minmax(160px, 1fr))", gap: 1, minWidth: 1200 }}>
+          <div style={{ padding: "10px 12px", background: "#1a2332", fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>Team Member</div>
+          {dates.map(d => <div key={d} style={{ padding: "10px 8px", background: d === today ? "#6366f122" : "#1a2332", textAlign: "center", fontSize: 11, fontWeight: 600, color: d === today ? "#818cf8" : "#94a3b8" }}>{fmt(d)}</div>)}
+
+          {teamRoster.map(member => (
+            <div key={member.id} style={{ display: "contents" }}>
+              <div key={`n-${member.id}`} style={{ padding: "10px 12px", background: "#0b1120", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid #1e293b", minHeight: 80 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0" }}>{member.name}</div>
+              </div>
+              {dates.map(d => {
+                const entries = normalizeDayEntries(schedule[d]?.[member.name]);
+                return (
+                  <div key={`${member.id}-${d}`} style={{ padding: "6px 4px", background: d === today ? "#6366f108" : "#0f1729", borderBottom: "1px solid #1e293b", display: "flex", flexDirection: "column", gap: 3, minHeight: 80 }}>
+                    {entries.map((entry, i) => (
+                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                        <select
+                          style={{ ...iS, flex: 1, borderLeft: `3px solid ${getEntryColor(entry)}`, fontWeight: 500 }}
+                          value={getOptionValue(entry)}
+                          onChange={e => setEntryAt(d, member.name, i, e.target.value)}
+                          title={getEntryLabel(entry)}
+                        >
+                          <option value="">— Remove —</option>
+                          <optgroup label="Projects">
+                            {projects.map(p => <option key={p.id} value={`project:${p.id}`}>{p.name}</option>)}
+                          </optgroup>
+                          <optgroup label="Other">
+                            {DAY_TYPES.map(t => <option key={t.code} value={`type:${t.code}`}>{t.short}</option>)}
+                          </optgroup>
+                        </select>
+                      </div>
+                    ))}
+                    {/* Add entry selector */}
+                    <select
+                      style={{ ...iS, fontSize: 10, color: "#64748b", cursor: "pointer" }}
+                      value=""
+                      onChange={e => { if (e.target.value) addEntryAt(d, member.name, e.target.value); }}
+                    >
+                      <option value="">{entries.length === 0 ? "+ Assign..." : "+ Add another..."}</option>
+                      <optgroup label="Projects">
+                        {projects.map(p => <option key={p.id} value={`project:${p.id}`}>{p.name}</option>)}
+                      </optgroup>
+                      <optgroup label="Other">
+                        {DAY_TYPES.map(t => <option key={t.code} value={`type:${t.code}`}>{t.short}</option>)}
+                      </optgroup>
+                    </select>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
     )}
+
+    {/* Legend */}
+    <div style={{ display: "flex", gap: 16, marginTop: 16, flexWrap: "wrap", fontSize: 11, color: "#64748b" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 5 }}><div style={{ width: 10, height: 10, borderRadius: 2, background: "#6366f1" }} /> Project</div>
+      {DAY_TYPES.map(t => (
+        <div key={t.code} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+          <div style={{ width: 10, height: 10, borderRadius: 2, background: t.color }} /> {t.short}
+        </div>
+      ))}
+    </div>
   </div>);
 }
 
