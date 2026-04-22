@@ -1,14 +1,10 @@
 import { useState, useEffect } from "react";
 import { Plus, X, Clock, Users, Send, ChevronDown, ChevronUp } from "lucide-react";
+import { LABOR_PHASES } from "./App.jsx";
 
 const DEPARTMENTS = ["Brandon", "Justin", "Service", "Steve", "Tim", "Todd", "Overhead", "Tech Staffing"];
 
 const FB_URL = "https://fwt-lv-tracker-default-rtdb.firebaseio.com";
-
-// ── EmailJS config ──
-const EMAILJS_SERVICE_ID = "service_6tx50jm";
-const EMAILJS_TEMPLATE_ID = "template_ddiqn66";
-const EMAILJS_PUBLIC_KEY = "Xb33ru_cSgS_Ekb-4";
 
 async function getAdminEmails() {
   try {
@@ -21,22 +17,14 @@ async function getAdminEmails() {
   } catch (e) { console.error("Failed to fetch admin emails:", e); return []; }
 }
 
-async function sendEmailJS(toEmails, templateParams) {
-  const r = await fetch("https://api.emailjs.com/api/v1.6/email/send", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      service_id: EMAILJS_SERVICE_ID,
-      template_id: EMAILJS_TEMPLATE_ID,
-      user_id: EMAILJS_PUBLIC_KEY,
-      template_params: { ...templateParams, to_email: toEmails.join(",") },
-    }),
-  });
-  if (!r.ok) {
-    const text = await r.text();
-    throw new Error(`EmailJS error (${r.status}): ${text}`);
-  }
-  return true;
+// Open user's default mail client (Outlook on Windows) with pre-filled fields.
+function openMailto({ to, cc, subject, body }) {
+  const params = [];
+  if (cc) params.push(`cc=${encodeURIComponent(cc)}`);
+  if (subject) params.push(`subject=${encodeURIComponent(subject)}`);
+  if (body) params.push(`body=${encodeURIComponent(body)}`);
+  const url = `mailto:${encodeURIComponent(to || "")}${params.length ? "?" + params.join("&") : ""}`;
+  window.location.href = url;
 }
 
 function useIsMobile() {
@@ -57,50 +45,39 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
   const [department, setDepartment] = useState("Low Voltage");
   const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
   const [hours, setHours] = useState("");
-  const [category, setCategory] = useState("");
+  const [category, setCategory] = useState(LABOR_PHASES[0]?.id || "");
   const [hoursType, setHoursType] = useState("regular");
   const [prevailingWage, setPrevailingWage] = useState(false);
   const [notes, setNotes] = useState("");
   const [filterWeek, setFilterWeek] = useState("all");
   const [viewMode, setViewMode] = useState("mine");
   const [showAdminMember, setShowAdminMember] = useState(null);
-  const [sending, setSending] = useState(false);
-  const [sendResult, setSendResult] = useState(null);
-  const [showForm, setShowForm] = useState(!isMobile); // mobile: form collapsed by default
+  const [showForm, setShowForm] = useState(!isMobile);
 
   async function emailTimesheet() {
     if (filterWeek === "all" || filtered.length === 0) return;
-    setSending(true); setSendResult(null);
-    try {
-      const adminEmails = await getAdminEmails();
-      const recipients = [...new Set([...adminEmails, ...(predefinedEmail ? [predefinedEmail] : [])])].filter(Boolean);
+    const adminEmails = await getAdminEmails();
+    const recipients = [...new Set([...adminEmails, ...(predefinedEmail ? [predefinedEmail] : [])])].filter(Boolean);
 
-      if (recipients.length === 0) {
-        setSendResult({ ok: false, msg: "No admin emails found. Add users with admin role in User Admin." });
-        setSending(false);
-        return;
-      }
+    const getCatName = id => (LABOR_PHASES.find(l => l.id === id)?.name) || id || "—";
+    const body = [
+      `Timesheet submitted by ${myName}`,
+      `Week of ${filterWeek}`,
+      `Total: ${(totalReg + totalOT).toFixed(1)}h (Regular ${totalReg.toFixed(1)}h / OT ${totalOT.toFixed(1)}h)`,
+      "",
+      ...filtered.map(e =>
+        `${e.date}  |  ${e.jobName || "—"}  |  ${e.hours}h${e.hoursType === "overtime" ? " (OT)" : ""}  |  ${getCatName(e.category)}${e.prevailingWage ? "  |  PW" : ""}${e.notes ? "  |  " + e.notes : ""}`
+      ),
+      "",
+      "— Sent from FWT Workspaces",
+    ].join("\n");
 
-      const body = filtered.map(e =>
-        `${e.date}  |  ${e.jobName || "—"}  |  ${e.hours}h ${e.hoursType === "overtime" ? "(OT)" : ""}${e.prevailingWage ? "  |  PW" : ""}${e.notes ? "  |  " + e.notes : ""}`
-      ).join("\n");
-
-      const totalHrs = filtered.reduce((s, e) => s + (parseFloat(e.hours) || 0), 0);
-
-      await sendEmailJS(recipients, {
-        from_name: myName,
-        reply_to: myEmail || "",
-        date_range: "Week of " + filterWeek,
-        total_hours: totalHrs.toFixed(1) + "h",
-        timesheet_body: body,
-      });
-
-      setSendResult({ ok: true, msg: `Sent to ${recipients.length} recipient(s)` });
-    } catch (err) {
-      setSendResult({ ok: false, msg: err.message });
-    }
-    setSending(false);
-    setTimeout(() => setSendResult(null), 4000);
+    openMailto({
+      to: recipients.join(","),
+      cc: myEmail || "",
+      subject: `FWT Timesheet — ${myName} — Week of ${filterWeek}`,
+      body,
+    });
   }
 
   const iS = {
@@ -127,7 +104,7 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
   function handleAdd() {
     if (!hours || !date) return;
     const pj = projects.find(p => p.name === jobName || p.id === jobName);
-    onAdd({ jobName: jobName || (pj?.name || ""), jobNumber, department, date, hours: parseFloat(hours), hoursType, prevailingWage, notes: notes.trim(), projectId: pj?.id || "" });
+    onAdd({ jobName: jobName || (pj?.name || ""), jobNumber, department, date, hours: parseFloat(hours), category, hoursType, prevailingWage, notes: notes.trim(), projectId: pj?.id || "" });
     setHours(""); setNotes(""); setJobNumber(""); setPrevailingWage(false);
     if (isMobile) setShowForm(false);
   }
@@ -151,10 +128,11 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
   });
   const teamWeeks = [...new Set(allTimesheets.map(e => gWK(e.date)))].sort().reverse();
 
-  // Mobile entry form as bottom sheet style
+  const getCategoryName = id => (LABOR_PHASES.find(l => l.id === id)?.name) || id || "—";
+
+  // Mobile entry form
   const MobileEntryForm = (
     <div style={{ background: "#1a2332", borderRadius: 12, border: "1px solid #1e293b", marginBottom: 16, overflow: "hidden" }}>
-      {/* Collapsible header */}
       <button
         onClick={() => setShowForm(!showForm)}
         style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit" }}
@@ -170,13 +148,10 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
 
       {showForm && (
         <div style={{ padding: "0 16px 16px" }}>
-          {/* Date + Hours — most important fields first on mobile */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
             <div><label style={lS}>Date *</label><input type="date" style={iS} value={date} onChange={e => setDate(e.target.value)} /></div>
             <div><label style={lS}>Hours *</label><input type="number" step="0.25" min="0" max="24" style={iS} value={hours} onChange={e => setHours(e.target.value)} placeholder="0.0" /></div>
           </div>
-
-          {/* Hours type — big tap targets */}
           <div style={{ marginBottom: 12 }}>
             <label style={lS}>Hours Type</label>
             <div style={{ display: "flex", gap: 8 }}>
@@ -185,14 +160,10 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
               ))}
             </div>
           </div>
-
-          {/* Prevailing Wage toggle */}
           <div style={{ marginBottom: 12 }}>
             <label style={lS}>Prevailing Wage</label>
             <button onClick={() => setPrevailingWage(!prevailingWage)} style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: prevailingWage ? "2px solid #8b5cf6" : "1px solid #1e293b", background: prevailingWage ? "#8b5cf622" : "transparent", color: prevailingWage ? "#8b5cf6" : "#64748b", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{prevailingWage ? "✓ Prevailing Wage" : "Not Prevailing Wage"}</button>
           </div>
-
-          {/* Job */}
           <div style={{ marginBottom: 12 }}>
             <label style={lS}>Job Name</label>
             <select style={iS} value={jobName} onChange={e => setJobName(e.target.value)}>
@@ -200,14 +171,16 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
               {projects.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
             </select>
           </div>
-
-          {/* Notes */}
+          <div style={{ marginBottom: 12 }}>
+            <label style={lS}>Labor Category</label>
+            <select style={iS} value={category} onChange={e => setCategory(e.target.value)}>
+              {LABOR_PHASES.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
           <div style={{ marginBottom: 16 }}>
             <label style={lS}>Notes</label>
             <input style={iS} value={notes} onChange={e => setNotes(e.target.value)} placeholder="What was done?" />
           </div>
-
-          {/* Submit */}
           <button
             onClick={handleAdd}
             disabled={!hours || !date}
@@ -230,7 +203,7 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
         <div><label style={lS}>Department</label><select style={iS} value={department} onChange={e => setDepartment(e.target.value)}>{DEPARTMENTS.map(d => <option key={d}>{d}</option>)}</select></div>
         <div><label style={lS}>Date *</label><input type="date" style={iS} value={date} onChange={e => setDate(e.target.value)} /></div>
         <div><label style={lS}>Hours *</label><input type="number" step="0.25" min="0" max="24" style={iS} value={hours} onChange={e => setHours(e.target.value)} /></div>
-        <div><label style={lS}>Category</label><select style={iS} value={category} onChange={e => setCategory(e.target.value)}>{CATEGORIES.map(c => <option key={c}>{c}</option>)}</select></div>
+        <div><label style={lS}>Labor Category</label><select style={iS} value={category} onChange={e => setCategory(e.target.value)}>{LABOR_PHASES.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
         <div><label style={lS}>Hours Type</label>
           <div style={{ display: "flex", gap: 4 }}>
             {["regular", "overtime"].map(t => (
@@ -238,7 +211,10 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
             ))}
           </div>
         </div>
-        <div style={{ gridColumn: "span 2" }}><label style={lS}>Notes</label><input style={iS} value={notes} onChange={e => setNotes(e.target.value)} placeholder="What was done?" /></div>
+        <div><label style={lS}>Prevailing Wage</label>
+          <button onClick={() => setPrevailingWage(!prevailingWage)} style={{ width: "100%", padding: "8px", borderRadius: 8, border: prevailingWage ? "2px solid #8b5cf6" : "1px solid #1e293b", background: prevailingWage ? "#8b5cf622" : "transparent", color: prevailingWage ? "#8b5cf6" : "#64748b", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{prevailingWage ? "✓ PW" : "Not PW"}</button>
+        </div>
+        <div style={{ gridColumn: "span 3" }}><label style={lS}>Notes</label><input style={iS} value={notes} onChange={e => setNotes(e.target.value)} placeholder="What was done?" /></div>
       </div>
       <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
         <button onClick={handleAdd} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", borderRadius: 8, border: "none", background: "#6366f1", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", opacity: hours && date ? 1 : 0.4 }}><Plus size={14} /> Log Hours</button>
@@ -249,7 +225,6 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
   return (
     <div style={{ maxWidth: 900, margin: "0 auto", padding: isMobile ? "16px 12px 100px" : "24px" }}>
 
-      {/* Admin toggle */}
       {isAdmin && (
         <div style={{ display: "flex", gap: 4, marginBottom: 16 }}>
           {[{ id: "mine", label: "My Timesheets" }, { id: "team", label: "Team" }].map(v => (
@@ -260,10 +235,8 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
 
       {viewMode === "mine" && (
         <>
-          {/* Entry form */}
           {isMobile ? MobileEntryForm : DesktopEntryForm}
 
-          {/* Summary bar */}
           <div style={{ background: "#1a2332", borderRadius: 10, border: "1px solid #1e293b", padding: isMobile ? "14px 16px" : "12px 16px", marginBottom: 14, display: "flex", alignItems: "center", gap: isMobile ? 12 : 16, flexWrap: "wrap" }}>
             <select
               style={{ ...iS, width: "auto", flex: isMobile ? "1 1 auto" : "none", minWidth: 0, padding: isMobile ? "10px 12px" : "6px 10px" }}
@@ -289,17 +262,15 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
             </div>
           </div>
 
-          {/* Email export */}
           {filterWeek !== "all" && filtered.length > 0 && (
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-              <button onClick={emailTimesheet} disabled={sending} style={{ display: "flex", alignItems: "center", gap: 6, padding: isMobile ? "12px 20px" : "8px 16px", borderRadius: 8, border: "none", background: "#10b981", color: "#fff", fontSize: 13, fontWeight: 600, cursor: sending ? "wait" : "pointer", fontFamily: "inherit", opacity: sending ? 0.6 : 1 }}>
-                <Send size={14} /> {sending ? "Sending..." : "Email Timesheet"}
+              <button onClick={emailTimesheet} style={{ display: "flex", alignItems: "center", gap: 6, padding: isMobile ? "12px 20px" : "8px 16px", borderRadius: 8, border: "none", background: "#10b981", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                <Send size={14} /> Email Timesheet
               </button>
-              {sendResult && <span style={{ fontSize: 12, color: sendResult.ok ? "#10b981" : "#ef4444", fontWeight: 600 }}>{sendResult.msg}</span>}
+              <span style={{ fontSize: 11, color: "#64748b" }}>Opens in Outlook / your default mail client</span>
             </div>
           )}
 
-          {/* Entries */}
           {filtered.length === 0 && (
             <div style={{ textAlign: "center", padding: 48, color: "#334155", fontSize: 14 }}>
               <div style={{ fontSize: 32, marginBottom: 12 }}>⏱️</div>
@@ -309,26 +280,22 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
 
           {filtered.map(entry => (
             <div key={entry.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: isMobile ? "14px 16px" : "12px 16px", background: "#1a2332", borderRadius: 12, border: "1px solid #1e293b", marginBottom: 8 }}>
-              {/* Hours badge */}
               <div style={{ width: isMobile ? 52 : 44, height: isMobile ? 52 : 44, borderRadius: 10, background: entry.hoursType === "overtime" ? "#f59e0b22" : "#6366f122", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", flexShrink: 0 }}>
                 <span style={{ fontSize: isMobile ? 16 : 14, fontWeight: 700, color: entry.hoursType === "overtime" ? "#f59e0b" : "#818cf8", fontFamily: "'Outfit',sans-serif" }}>{entry.hours}h</span>
                 {entry.hoursType === "overtime" && <span style={{ fontSize: 8, color: "#f59e0b", fontWeight: 700, lineHeight: 1 }}>OT</span>}
               </div>
-
-              {/* Details */}
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: isMobile ? 14 : 13, fontWeight: 600, color: "#fff", marginBottom: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {entry.jobName || "—"}{entry.jobNumber ? ` · #${entry.jobNumber}` : ""}
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#64748b", flexWrap: "wrap" }}>
                   <span style={{ fontWeight: 600, color: "#94a3b8" }}>{entry.date}</span>
-                  <span style={{ padding: "1px 6px", borderRadius: 4, background: "#0f1729", color: "#94a3b8", fontSize: 11 }}>{entry.category}</span>
-                  {!isMobile && <span style={{ padding: "1px 6px", borderRadius: 4, background: "#0f1729", color: "#64748b", fontSize: 11 }}>{entry.department}</span>}
+                  <span style={{ padding: "1px 6px", borderRadius: 4, background: "#0f1729", color: "#94a3b8", fontSize: 11 }}>{getCategoryName(entry.category)}</span>
+                  {!isMobile && entry.department && <span style={{ padding: "1px 6px", borderRadius: 4, background: "#0f1729", color: "#64748b", fontSize: 11 }}>{entry.department}</span>}
+                  {entry.prevailingWage && <span style={{ padding: "1px 6px", borderRadius: 4, background: "#8b5cf622", color: "#8b5cf6", fontSize: 11, fontWeight: 600 }}>PW</span>}
                   {entry.notes && <span style={{ color: "#475569", fontSize: 12 }}>— {entry.notes}</span>}
                 </div>
               </div>
-
-              {/* Delete */}
               <button
                 onClick={() => onRemove(entry.id)}
                 style={{ background: "none", border: "none", color: "#334155", cursor: "pointer", flexShrink: 0, padding: 8, minWidth: isMobile ? 44 : "auto", minHeight: isMobile ? 44 : "auto", display: "flex", alignItems: "center", justifyContent: "center" }}
@@ -342,7 +309,6 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
 
       {viewMode === "team" && isAdmin && (
         <>
-          {/* Filters */}
           <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
             <select style={{ ...iS, flex: 1, minWidth: 140 }} value={showAdminMember || ""} onChange={e => setShowAdminMember(e.target.value || null)}>
               <option value="">All Members</option>
@@ -376,7 +342,7 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#64748b", flexWrap: "wrap" }}>
                   <span style={{ fontWeight: 600, color: "#94a3b8" }}>{entry.date}</span>
-                  <span style={{ padding: "1px 6px", borderRadius: 4, background: "#0f1729", color: "#94a3b8", fontSize: 11 }}>{entry.category}</span>
+                  <span style={{ padding: "1px 6px", borderRadius: 4, background: "#0f1729", color: "#94a3b8", fontSize: 11 }}>{getCategoryName(entry.category)}</span>
                   {entry.notes && <span style={{ color: "#475569" }}>— {entry.notes}</span>}
                 </div>
               </div>
