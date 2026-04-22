@@ -39,11 +39,9 @@ export default function ProjectDetail({ project, phases, phaseMap, teamRoster, o
     { id: "tasks", label: "Tasks", icon: CheckCircle2 },
     { id: "dailylog", label: "Daily Log", icon: BookOpen },
     { id: "photos", label: "Photos", icon: Image },
-    { id: "rfis", label: "RFIs", icon: FileSearch },
     { id: "profit", label: "Profit", icon: TrendingUp },
     { id: "punchlist", label: "Punch List", icon: ClipboardCheck },
     { id: "docs", label: "Docs", icon: FileText },
-    { id: "notes", label: "Activity", icon: Clock },
   ];
   const cp = phaseMap[project.phaseId];
 
@@ -64,8 +62,30 @@ export default function ProjectDetail({ project, phases, phaseMap, teamRoster, o
         </div>
       </div>
 
-      <div style={{ display: "flex", gap: 4, marginBottom: 20, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 4, marginBottom: 20, flexWrap: "wrap", alignItems: "center" }}>
         {phases.map(ph => (<button key={ph.id} onClick={() => onUpdate({ phaseId: ph.id })} style={{ padding: "5px 12px", borderRadius: 20, border: project.phaseId === ph.id ? `2px solid ${ph.color}` : "1px solid #1e293b", background: project.phaseId === ph.id ? ph.color + "22" : "transparent", color: project.phaseId === ph.id ? ph.color : "#64748b", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{ph.name}</button>))}
+        {project.phaseId === "closeout" && !project.movedToWarranty && (
+          <button
+            onClick={() => { if (confirm("Move this project to the Warranty Tracker? It will be hidden from the main project board but remain fully accessible under Warranties.")) onUpdate({ movedToWarranty: true, warrantyStartDate: new Date().toISOString().split("T")[0] }); }}
+            style={{ marginLeft: 8, padding: "5px 12px", borderRadius: 20, border: "1px solid #10b981", background: "#10b98122", color: "#10b981", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 4 }}
+            title="Move this project into warranty tracking"
+          >
+            🛡️ Move to Warranty
+          </button>
+        )}
+        {project.movedToWarranty && (
+          <div style={{ marginLeft: 8, display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ padding: "4px 10px", borderRadius: 20, background: "#10b98122", color: "#10b981", fontSize: 11, fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}>
+              🛡️ In Warranty{project.warrantyStartDate ? ` (since ${project.warrantyStartDate})` : ""}
+            </span>
+            <button
+              onClick={() => { if (confirm("Return this project to the active project board?")) onUpdate({ movedToWarranty: false }); }}
+              style={{ padding: "4px 10px", borderRadius: 20, border: "1px solid #1e293b", background: "transparent", color: "#64748b", fontSize: 10, cursor: "pointer", fontFamily: "inherit" }}
+            >
+              Return to Active
+            </button>
+          </div>
+        )}
       </div>
 
       <div style={{ display: "flex", gap: 2, marginBottom: 20, borderBottom: "1px solid #1e293b", overflowX: "auto", paddingBottom: 1 }}>
@@ -82,11 +102,9 @@ export default function ProjectDetail({ project, phases, phaseMap, teamRoster, o
         {detailTab === "tasks" && <TasksTab project={project} onUpdate={onUpdate} teamRoster={teamRoster} assignTaskToMember={assignTaskToMember} />}
         {detailTab === "dailylog" && <DailyLogTab project={project} onUpdate={onUpdate} />}
         {detailTab === "photos" && <PhotoLogTab project={project} onUpdate={onUpdate} />}
-        {detailTab === "rfis" && <RFITab project={project} onUpdate={onUpdate} />}
         {detailTab === "profit" && <ProfitTab project={project} />}
         {detailTab === "punchlist" && <PunchListTab project={project} onUpdate={onUpdate} />}
         {detailTab === "docs" && <DocsTab project={project} onUpdate={onUpdate} />}
-        {detailTab === "notes" && <NotesTab project={project} onUpdate={onUpdate} />}
       </div>
     </div>
   );
@@ -192,13 +210,15 @@ function MaterialsTab({ project, onUpdate }) {
 /* ── INVOICES ── */
 function InvoiceTab({ project, onUpdate }) {
   const [num, setNum] = useState(""); const [amt, setAmt] = useState(""); const [date, setDate] = useState(new Date().toISOString().split("T")[0]); const [desc, setDesc] = useState(""); const [st, setSt] = useState("requested");
+  const [pendingFile, setPendingFile] = useState(null);
+  const [uploadingId, setUploadingId] = useState(null);
+  const newFileRef = useRef(null);
   const inv = project.invoices || [];
   const contract = parseFloat(project.contractAmount) || 0;
   const totalInv = inv.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
   const pct = contract > 0 ? Math.round((totalInv / contract) * 100) : 0;
   const paid = inv.filter(i => i.status === "paid").reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
 
-  // Status config: value → { label, color }
   const STATUS_OPTIONS = [
     { value: "requested", label: "Invoice Requested", color: "#f59e0b" },
     { value: "sent",      label: "Invoice Approved/Sent", color: "#3b82f6" },
@@ -207,10 +227,53 @@ function InvoiceTab({ project, onUpdate }) {
   ];
   const statusMap = Object.fromEntries(STATUS_OPTIONS.map(s => [s.value, s]));
 
-  function add() {
+  async function uploadFileForInvoice(file, invoiceId) {
+    const path = `projects/${project.id}/invoices/${Date.now()}_${file.name}`;
+    const sRef = storageRef(storage, path);
+    await uploadBytes(sRef, file);
+    const url = await getDownloadURL(sRef);
+    return { fileUrl: url, fileName: file.name, fileSize: file.size };
+  }
+
+  async function add() {
     if (!num.trim() || !amt) return;
-    onUpdate({ invoices: [...inv, { id: genId(), invoiceNumber: num, amount: amt, date, description: desc, status: st, createdAt: new Date().toISOString() }] });
-    setNum(""); setAmt(""); setDesc("");
+    const id = genId();
+    let fileData = {};
+    if (pendingFile) {
+      try {
+        setUploadingId("new");
+        fileData = await uploadFileForInvoice(pendingFile, id);
+      } catch (err) {
+        console.error("Invoice file upload failed:", err);
+        alert("Upload failed: " + err.message + "\n\nInvoice will be saved without the file. Check Firebase Storage rules.");
+      }
+      setUploadingId(null);
+    }
+    onUpdate({ invoices: [...inv, { id, invoiceNumber: num, amount: amt, date, description: desc, status: st, createdAt: new Date().toISOString(), ...fileData }] });
+    setNum(""); setAmt(""); setDesc(""); setPendingFile(null);
+    if (newFileRef.current) newFileRef.current.value = "";
+  }
+
+  async function attachFileToExisting(e, invoiceId, idx) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      setUploadingId(invoiceId);
+      const fileData = await uploadFileForInvoice(file, invoiceId);
+      onUpdate({ invoices: inv.map((x, i) => i === idx ? { ...x, ...fileData } : x) });
+    } catch (err) {
+      console.error("Invoice file upload failed:", err);
+      alert("Upload failed: " + err.message + "\n\nCheck Firebase Storage rules.");
+    }
+    setUploadingId(null);
+    e.target.value = "";
+  }
+
+  function formatSize(bytes) {
+    if (!bytes) return "";
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KB";
+    return (bytes / 1048576).toFixed(1) + " MB";
   }
 
   return (<div>
@@ -224,36 +287,75 @@ function InvoiceTab({ project, onUpdate }) {
 
     {inv.sort((a, b) => (b.date || "").localeCompare(a.date || "")).map((v, idx) => {
       const s = statusMap[v.status] || statusMap["requested"];
+      const isUploading = uploadingId === v.id;
       return (
-        <div key={v.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "#0f1729", borderRadius: 10, border: "1px solid #1e293b", marginBottom: 6 }}>
-          <div style={{ width: 36, textAlign: "center", fontSize: 11, fontWeight: 700, color: "#818cf8" }}>#{v.invoiceNumber}</div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: "#fff" }}>${parseFloat(v.amount).toLocaleString()}</div>
-            <div style={{ fontSize: 11, color: "#64748b" }}>{v.date}{v.description ? ` — ${v.description}` : ""}</div>
+        <div key={v.id} style={{ background: "#0f1729", borderRadius: 10, border: "1px solid #1e293b", padding: "10px 14px", marginBottom: 6 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ width: 36, textAlign: "center", fontSize: 11, fontWeight: 700, color: "#818cf8" }}>#{v.invoiceNumber}</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#fff" }}>${parseFloat(v.amount).toLocaleString()}</div>
+              <div style={{ fontSize: 11, color: "#64748b" }}>{v.date}{v.description ? ` — ${v.description}` : ""}</div>
+            </div>
+            <select
+              value={v.status}
+              onChange={e => onUpdate({ invoices: inv.map((x, i) => i === idx ? { ...x, status: e.target.value } : x) })}
+              style={{ padding: "4px 8px", borderRadius: 8, border: "1px solid #1e293b", background: s.color + "22", color: s.color, fontSize: 11, fontWeight: 600, fontFamily: "inherit", outline: "none", cursor: "pointer" }}
+            >
+              {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+            <button onClick={() => onUpdate({ invoices: inv.filter((_, i) => i !== idx) })} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer" }}><X size={12} /></button>
           </div>
-          <select
-            value={v.status}
-            onChange={e => onUpdate({ invoices: inv.map((x, i) => i === idx ? { ...x, status: e.target.value } : x) })}
-            style={{ padding: "4px 8px", borderRadius: 8, border: "1px solid #1e293b", background: s.color + "22", color: s.color, fontSize: 11, fontWeight: 600, fontFamily: "inherit", outline: "none", cursor: "pointer" }}
-          >
-            {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
-          <button onClick={() => onUpdate({ invoices: inv.filter((_, i) => i !== idx) })} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer" }}><X size={12} /></button>
+          {/* File attachment row */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, paddingTop: 8, borderTop: "1px solid #1e293b" }}>
+            {v.fileUrl ? (
+              <>
+                <FileText size={13} style={{ color: "#10b981", flexShrink: 0 }} />
+                <a href={v.fileUrl} target="_blank" rel="noopener noreferrer" style={{ color: "#818cf8", fontSize: 12, fontWeight: 600, textDecoration: "none", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.fileName || "View Invoice"}</a>
+                {v.fileSize && <span style={{ fontSize: 10, color: "#475569" }}>{formatSize(v.fileSize)}</span>}
+                <a href={v.fileUrl} target="_blank" rel="noopener noreferrer" style={{ color: "#818cf8", display: "flex", alignItems: "center", padding: 2 }} title="Open"><ExternalLink size={12} /></a>
+                <label style={{ fontSize: 11, color: "#64748b", cursor: "pointer" }} title="Replace file">
+                  Replace
+                  <input type="file" style={{ display: "none" }} onChange={e => attachFileToExisting(e, v.id, idx)} disabled={isUploading} />
+                </label>
+                <button onClick={() => onUpdate({ invoices: inv.map((x, i) => i === idx ? { ...x, fileUrl: "", fileName: "", fileSize: 0 } : x) })} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer", fontSize: 11 }} title="Remove file"><X size={12} /></button>
+              </>
+            ) : (
+              <>
+                <span style={{ fontSize: 11, color: "#475569", flex: 1 }}>No file attached</span>
+                <label style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 10px", borderRadius: 6, border: "1px solid #6366f1", background: "#6366f122", color: "#818cf8", fontSize: 11, fontWeight: 600, cursor: isUploading ? "wait" : "pointer", fontFamily: "inherit", opacity: isUploading ? 0.5 : 1 }}>
+                  <Upload size={11} /> {isUploading ? "Uploading..." : "Attach File"}
+                  <input type="file" style={{ display: "none" }} onChange={e => attachFileToExisting(e, v.id, idx)} disabled={isUploading} />
+                </label>
+              </>
+            )}
+          </div>
         </div>
       );
     })}
 
     {inv.length === 0 && <div style={{ textAlign: "center", padding: 20, color: "#334155", fontSize: 13 }}>No invoices yet.</div>}
 
-    <div style={{ display: "flex", gap: 6, marginTop: 14 }}>
-      <input style={{ ...iS, flex: 0.5 }} placeholder="Inv #" value={num} onChange={e => setNum(e.target.value)} />
-      <input type="number" step="0.01" style={{ ...iS, flex: 0.8 }} placeholder="Amount" value={amt} onChange={e => setAmt(e.target.value)} />
-      <input type="date" style={{ ...iS, flex: 0.8 }} value={date} onChange={e => setDate(e.target.value)} />
-      <input style={{ ...iS, flex: 1.5 }} placeholder="Description" value={desc} onChange={e => setDesc(e.target.value)} />
-      <select style={{ ...iS, flex: 1 }} value={st} onChange={e => setSt(e.target.value)}>
-        {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-      </select>
-      <button onClick={add} style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: "#6366f1", color: "#fff", cursor: "pointer", flexShrink: 0, opacity: num.trim() && amt ? 1 : 0.4 }}><Plus size={14} /></button>
+    <div style={{ background: "#0f1729", borderRadius: 10, border: "1px solid #1e293b", padding: 14, marginTop: 14 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", marginBottom: 10 }}>Add Invoice</div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+        <input style={{ ...iS, flex: 0.5, minWidth: 80 }} placeholder="Inv #" value={num} onChange={e => setNum(e.target.value)} />
+        <input type="number" step="0.01" style={{ ...iS, flex: 0.8, minWidth: 100 }} placeholder="Amount" value={amt} onChange={e => setAmt(e.target.value)} />
+        <input type="date" style={{ ...iS, flex: 0.8, minWidth: 140 }} value={date} onChange={e => setDate(e.target.value)} />
+        <input style={{ ...iS, flex: 1.5, minWidth: 140 }} placeholder="Description" value={desc} onChange={e => setDesc(e.target.value)} />
+        <select style={{ ...iS, flex: 1, minWidth: 140 }} value={st} onChange={e => setSt(e.target.value)}>
+          {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      </div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, border: "1px solid #1e293b", background: "#1a2332", color: pendingFile ? "#10b981" : "#94a3b8", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+          <Upload size={13} /> {pendingFile ? `✓ ${pendingFile.name}` : "Attach File (optional)"}
+          <input ref={newFileRef} type="file" style={{ display: "none" }} onChange={e => setPendingFile(e.target.files?.[0] || null)} />
+        </label>
+        {pendingFile && <button onClick={() => { setPendingFile(null); if (newFileRef.current) newFileRef.current.value = ""; }} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer", fontSize: 11 }}>Clear</button>}
+        <button onClick={add} disabled={uploadingId === "new"} style={{ marginLeft: "auto", padding: "8px 16px", borderRadius: 8, border: "none", background: "#6366f1", color: "#fff", cursor: num.trim() && amt ? "pointer" : "default", flexShrink: 0, opacity: num.trim() && amt && uploadingId !== "new" ? 1 : 0.4, fontSize: 12, fontWeight: 600, fontFamily: "inherit", display: "flex", alignItems: "center", gap: 6 }}>
+          <Plus size={14} /> {uploadingId === "new" ? "Uploading..." : "Add Invoice"}
+        </button>
+      </div>
     </div>
   </div>);
 }
