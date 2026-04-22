@@ -1,16 +1,19 @@
 import { useState } from "react";
-import { Shield, AlertTriangle, CheckCircle2, Clock, Plus, X, Edit2 } from "lucide-react";
+import { Shield, AlertTriangle, CheckCircle2, Clock, Plus, X, Edit2, Briefcase, ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 
-export default function WarrantyTracker({ projects, onUpdateProject }) {
+export default function WarrantyTracker({ projects, onUpdateProject, onSelectProject }) {
   const [filter, setFilter] = useState("all");
-  const [expandedProject, setExpandedProject] = useState(null);
   const [addingTo, setAddingTo] = useState(null);
+  const [expandedProject, setExpandedProject] = useState(null);
   const [form, setForm] = useState({ item: "", manufacturer: "", warrantyYears: "", startDate: "", serialNumber: "", notes: "" });
 
   const iS = { width: "100%", padding: "7px 10px", borderRadius: 8, border: "1px solid #1e293b", background: "#0f1729", color: "#e2e8f0", fontSize: 12, fontFamily: "'DM Sans',sans-serif", outline: "none" };
   const lS = { fontSize: 10, fontWeight: 600, color: "#64748b", marginBottom: 3, display: "block", textTransform: "uppercase" };
+
+  // Projects that were moved into warranty from closeout
+  const warrantyProjects = projects.filter(p => p.movedToWarranty);
 
   const today = new Date();
   const allWarranties = [];
@@ -33,7 +36,6 @@ export default function WarrantyTracker({ projects, onUpdateProject }) {
   filtered.sort((a, b) => a.daysLeft - b.daysLeft);
 
   const stC = { "expiring-30": "#ef4444", "expiring-90": "#f59e0b", expired: "#6b7280", active: "#10b981" };
-  const stL = { "expiring-30": "Expires <30 days", "expiring-90": "Expires <90 days", expired: "Expired", active: "Active" };
 
   function addWarranty(projectId) {
     if (!form.item.trim()) return;
@@ -49,11 +51,106 @@ export default function WarrantyTracker({ projects, onUpdateProject }) {
     onUpdateProject(projectId, { warranties: (p.warranties || []).filter(w => w.id !== warId) });
   }
 
+  // For a warranty project: compute overall warranty health
+  function projectWarrantyStats(project) {
+    const ws = (project.warranties || []).map(w => {
+      const start = new Date(w.startDate);
+      const end = new Date(start); end.setFullYear(end.getFullYear() + (parseInt(w.warrantyYears) || 1));
+      const daysLeft = Math.ceil((end - today) / (1000 * 60 * 60 * 24));
+      return { daysLeft };
+    });
+    return {
+      total: ws.length,
+      active: ws.filter(w => w.daysLeft > 90).length,
+      expiring: ws.filter(w => w.daysLeft > 0 && w.daysLeft <= 90).length,
+      expired: ws.filter(w => w.daysLeft <= 0).length,
+    };
+  }
+
   return (
     <div style={{ maxWidth: 860, margin: "0 auto", padding: 24 }}>
       <p style={{ fontSize: 13, color: "#64748b", marginBottom: 20 }}>Track warranties across all projects. Get alerted before coverage expires.</p>
 
+      {/* Projects In Warranty Period */}
+      {warrantyProjects.length > 0 && (
+        <div style={{ marginBottom: 28 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#10b981", textTransform: "uppercase", marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
+            <Shield size={14} /> Projects In Warranty Period ({warrantyProjects.length})
+          </div>
+          {warrantyProjects.map(p => {
+            const stats = projectWarrantyStats(p);
+            const isExpanded = expandedProject === p.id;
+            return (
+              <div key={p.id} style={{ background: "#1a2332", borderRadius: 12, border: "1px solid #10b98144", marginBottom: 8, overflow: "hidden" }}>
+                <div style={{ padding: "14px 18px", display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }}
+                  onClick={() => setExpandedProject(isExpanded ? null : p.id)}>
+                  <div style={{ width: 40, height: 40, borderRadius: 10, background: "#10b98122", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <Briefcase size={18} style={{ color: "#10b981" }} />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>{p.name}</div>
+                    <div style={{ fontSize: 12, color: "#64748b" }}>
+                      {p.customer}
+                      {p.warrantyStartDate && ` · Warranty started ${p.warrantyStartDate}`}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                    {stats.total > 0 ? (
+                      <>
+                        {stats.active > 0 && <span style={{ fontSize: 11, padding: "3px 8px", borderRadius: 12, background: "#10b98122", color: "#10b981", fontWeight: 600 }}>{stats.active} active</span>}
+                        {stats.expiring > 0 && <span style={{ fontSize: 11, padding: "3px 8px", borderRadius: 12, background: "#f59e0b22", color: "#f59e0b", fontWeight: 600 }}>{stats.expiring} expiring</span>}
+                        {stats.expired > 0 && <span style={{ fontSize: 11, padding: "3px 8px", borderRadius: 12, background: "#6b728022", color: "#6b7280", fontWeight: 600 }}>{stats.expired} expired</span>}
+                      </>
+                    ) : (
+                      <span style={{ fontSize: 11, padding: "3px 8px", borderRadius: 12, background: "#f59e0b22", color: "#f59e0b", fontWeight: 600 }}>No warranties registered</span>
+                    )}
+                    {onSelectProject && (
+                      <button onClick={e => { e.stopPropagation(); onSelectProject(p); }}
+                        style={{ padding: "3px 10px", borderRadius: 12, border: "1px solid #1e293b", background: "transparent", color: "#94a3b8", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 3 }}>
+                        <ExternalLink size={11} /> Open
+                      </button>
+                    )}
+                    {isExpanded ? <ChevronUp size={16} style={{ color: "#64748b" }} /> : <ChevronDown size={16} style={{ color: "#64748b" }} />}
+                  </div>
+                </div>
+                {isExpanded && (
+                  <div style={{ padding: "0 18px 14px", borderTop: "1px solid #1e293b" }}>
+                    {(p.warranties || []).length === 0 ? (
+                      <div style={{ padding: "12px 0", fontSize: 12, color: "#64748b" }}>
+                        No individual warranties registered yet. Add equipment warranties below or click "Open" above to manage from within the project.
+                      </div>
+                    ) : (
+                      <div style={{ paddingTop: 10 }}>
+                        {(p.warranties || []).map(w => {
+                          const start = new Date(w.startDate);
+                          const end = new Date(start); end.setFullYear(end.getFullYear() + (parseInt(w.warrantyYears) || 1));
+                          const daysLeft = Math.ceil((end - today) / (1000 * 60 * 60 * 24));
+                          const status = daysLeft < 0 ? "expired" : daysLeft <= 30 ? "expiring-30" : daysLeft <= 90 ? "expiring-90" : "active";
+                          return (
+                            <div key={w.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", fontSize: 12, color: "#e2e8f0", borderBottom: "1px solid #1e293b" }}>
+                              <div style={{ width: 6, height: 6, borderRadius: "50%", background: stC[status] }} />
+                              <span style={{ flex: 1, fontWeight: 600 }}>{w.item}</span>
+                              {w.manufacturer && <span style={{ color: "#64748b", fontSize: 11 }}>{w.manufacturer}</span>}
+                              <span style={{ color: stC[status], fontWeight: 600, fontSize: 11 }}>{daysLeft > 0 ? `${daysLeft}d left` : `Expired ${Math.abs(daysLeft)}d ago`}</span>
+                              <button onClick={() => removeWarranty(p.id, w.id)} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer" }}><X size={12} /></button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                    <button onClick={() => setAddingTo(p.id)} style={{ marginTop: 10, padding: "6px 12px", borderRadius: 6, border: "1px dashed #1e293b", background: "transparent", color: "#64748b", fontSize: 11, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 4 }}>
+                      <Plus size={12} /> Register Equipment Warranty
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* Summary */}
+      <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", textTransform: "uppercase", marginBottom: 10 }}>All Equipment Warranties</div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, marginBottom: 20 }}>
         {[
           { label: "Active", value: active, color: "#10b981", f: "active" },
@@ -70,7 +167,7 @@ export default function WarrantyTracker({ projects, onUpdateProject }) {
 
       {/* Warranty List */}
       {filtered.map(w => (
-        <div key={w.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", background: "#1a2332", borderRadius: 10, border: "1px solid #1e293b", marginBottom: 6, borderLeft: `3px solid ${stC[w.status]}` }}>
+        <div key={w.id + w.projectId} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", background: "#1a2332", borderRadius: 10, border: "1px solid #1e293b", marginBottom: 6, borderLeft: `3px solid ${stC[w.status]}` }}>
           {w.status === "expired" ? <Shield size={18} style={{ color: "#6b7280", flexShrink: 0 }} /> : w.status === "expiring-30" ? <AlertTriangle size={18} style={{ color: "#ef4444", flexShrink: 0 }} /> : w.status === "expiring-90" ? <Clock size={18} style={{ color: "#f59e0b", flexShrink: 0 }} /> : <CheckCircle2 size={18} style={{ color: "#10b981", flexShrink: 0 }} />}
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: "#fff" }}>{w.item}</div>
@@ -90,7 +187,7 @@ export default function WarrantyTracker({ projects, onUpdateProject }) {
         <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", marginBottom: 10 }}>Register Warranty</div>
         <select style={{ ...iS, marginBottom: 10 }} value={addingTo || ""} onChange={e => setAddingTo(e.target.value || null)}>
           <option value="">Select a project...</option>
-          {projects.map(p => <option key={p.id} value={p.id}>{p.name} — {p.customer}</option>)}
+          {projects.map(p => <option key={p.id} value={p.id}>{p.name} — {p.customer}{p.movedToWarranty ? " 🛡️" : ""}</option>)}
         </select>
         {addingTo && (
           <div style={{ background: "#1a2332", borderRadius: 10, padding: 16, border: "1px solid #1e293b" }}>
