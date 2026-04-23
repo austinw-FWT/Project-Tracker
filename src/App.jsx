@@ -9,6 +9,7 @@ import TimesheetView from "./TimesheetView.jsx";
 import Dashboard from "./Dashboard.jsx";
 import Contacts from "./Contacts.jsx";
 import WarrantyTracker from "./WarrantyTracker.jsx";
+import MeetingNotes from "./MeetingNotes.jsx";
 
 const FB_URL = "https://fwt-lv-tracker-default-rtdb.firebaseio.com";
 const DB_PATH = "/tracker";
@@ -340,12 +341,13 @@ function Tracker({ user, userRecord }) {
     { id: "daily", label: "Daily Task Board", icon: "📋" },
     { id: "weekly", label: "Weekly Task Board", icon: "📅" },
     { id: "dailylog", label: "Daily Log", icon: "📝" },
+    { id: "meetings", label: "Meeting Notes", icon: "📓" },
     { id: "opportunities", label: "Opportunities", icon: "🎯" },
     { id: "timesheets", label: "My Timesheets", icon: "⏱️" },
   ];
 
   const currentPageTitle = selectedProject ? selectedProject.name
-    : view === "myspace" ? (mySpaceTab === "daily" ? "Daily Task Board" : mySpaceTab === "weekly" ? "Weekly Task Board" : mySpaceTab === "dailylog" ? "Daily Log" : mySpaceTab === "opportunities" ? "Opportunities" : "My Timesheets")
+    : view === "myspace" ? (mySpaceTab === "daily" ? "Daily Task Board" : mySpaceTab === "weekly" ? "Weekly Task Board" : mySpaceTab === "dailylog" ? "Daily Log" : mySpaceTab === "meetings" ? "Meeting Notes" : mySpaceTab === "opportunities" ? "Opportunities" : "My Timesheets")
     : view === "team" ? "Team Roster" : view === "schedule" ? "Team Schedule" : view === "admin" ? "User Admin"
     : view === "contacts" ? "Contacts" : view === "warranties" ? "Warranties" : view === "dashboard" ? "Dashboard"
     : view === "board" ? "Project Board" : "Phase Settings";
@@ -496,6 +498,10 @@ function Tracker({ user, userRecord }) {
                 saveData(nd);
               }}
               onDeleteLog={logs => saveMyPrivate({ dailyLogs: logs })} />
+          ) : view === "myspace" && mySpaceTab === "meetings" ? (
+            <MeetingNotes
+              meetings={getMyPrivate().meetings || []}
+              onSave={meetings => saveMyPrivate({ meetings })} />
           ) : view === "myspace" && mySpaceTab === "opportunities" ? (
             <Opportunities opportunities={getMyPrivate().opportunities || []} onSave={opps => saveMyPrivate({ opportunities: opps })} onConvert={opp => { addProject({ ...opp, phaseId: "awarded" }); const opps = (getMyPrivate().opportunities || []).filter(o => o.id !== opp.id); saveMyPrivate({ opportunities: opps }); }} />
           ) : view === "myspace" && mySpaceTab === "timesheets" ? (
@@ -870,3 +876,4 @@ function NewProjectModal({ phases, onSave, onClose, templates }) {
     </div>
   );
 }
+
