@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Plus, X, Printer, ChevronDown, ChevronUp, FileText, Calculator, Download } from "lucide-react";
 import JSZip from "jszip";
 import { PROPOSAL_TEMPLATE_B64 } from "./proposalTemplate";
+import { TAKEOFF_TEMPLATE_B64 } from "./takeoffTemplate";
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 const n = v => parseFloat(v) || 0;
@@ -161,6 +162,207 @@ function downloadBOMCsv(takeoffData, label) {
   URL.revokeObjectURL(url);
 }
 
+/* ═══════════════════════════════════════
+   TEMPLATE-BASED XLSX BOM EXPORT
+   ═══════════════════════════════════════
+   Fills the user's Takeoff_2026 template by overwriting specific cells in
+   xl/worksheets/sheet1.xml. The template was preprocessed to convert all
+   shared formulas to per-row plain formulas, so cell overwrites are safe
+   (no shared-formula chain to break).
+
+   Row ranges (1-indexed):
+     Materials:    8–29 (22 slots)
+     FWT Labor:    31–36 (6 slots)
+     Project Costs: 38–41 (4 slots)
+     RMR:          43–46 (4 slots)
+*/
+
+function escXml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+}
+
+// Build replacement XML for a single cell. Preserves the style index.
+function buildCellXml(coord, value, styleIdx) {
+  const sAttr = styleIdx ? ` s="${styleIdx}"` : "";
+  if (value === null || value === undefined || value === "") {
+    return `<c r="${coord}"${sAttr}/>`;
+  }
+  if (typeof value === "number" && isFinite(value)) {
+    // Strip trailing zeros; keep reasonable precision
+    const rounded = Math.round(value * 10000) / 10000;
+    return `<c r="${coord}"${sAttr}><v>${rounded}</v></c>`;
+  }
+  return `<c r="${coord}"${sAttr} t="inlineStr"><is><t>${escXml(value)}</t></is></c>`;
+}
+
+// Replace (or create if missing) a cell in the sheet XML. Preserves style attr.
+function replaceCellInXml(xml, coord, value) {
+  // Match either <c r="coord" .../> (self-closing) or <c r="coord" ...>...</c>
+  const re = new RegExp(`<c r="${coord}"[^>]*?(?:/>|>[\\s\\S]*?</c>)`);
+  const m = re.exec(xml);
+  if (m) {
+    // Extract style index s="N" from the matched cell
+    const styleMatch = /\s+s="(\d+)"/.exec(m[0]);
+    const styleIdx = styleMatch ? styleMatch[1] : null;
+    return xml.replace(re, buildCellXml(coord, value, styleIdx));
+  }
+  // Cell doesn't exist in the sheet XML — insert inside the relevant <row>.
+  // (Template has all cells in data rows, so this branch is a safety net.)
+  const rowNum = coord.match(/\d+$/)[0];
+  const rowRe = new RegExp(`(<row r="${rowNum}"[^>]*>)([\\s\\S]*?)(</row>)`);
+  const rm = rowRe.exec(xml);
+  if (rm) {
+    return xml.replace(rowRe, rm[1] + rm[2] + buildCellXml(coord, value, null) + rm[3]);
+  }
+  return xml;
+}
+
+async function downloadBOMToTemplate(takeoffData, label) {
+  const d = takeoffData || {};
+  const materials = d.materials || [];
+  const labor = d.labor || [];
+  const costs = d.costs || [];
+  const rmr = d.rmr || [];
+
+  // Template row ranges
+  const MAT_START = 8,   MAT_COUNT = 22;
+  const LABOR_START = 31, LABOR_COUNT = 6;
+  const COST_START = 38,  COST_COUNT = 4;
+  const RMR_START = 43,   RMR_COUNT = 4;
+
+  // Warn about overflow
+  const warnings = [];
+  if (materials.length > MAT_COUNT)
+    warnings.push(`${materials.length - MAT_COUNT} material row(s) exceed the template's ${MAT_COUNT}-row capacity and will be omitted.`);
+  if (labor.length > LABOR_COUNT)
+    warnings.push(`${labor.length - LABOR_COUNT} labor row(s) exceed the template's ${LABOR_COUNT}-row capacity and will be omitted.`);
+  if (costs.length > COST_COUNT)
+    warnings.push(`${costs.length - COST_COUNT} cost row(s) exceed the template's ${COST_COUNT}-row capacity and will be omitted.`);
+  if (rmr.length > RMR_COUNT)
+    warnings.push(`${rmr.length - RMR_COUNT} RMR row(s) exceed the template's ${RMR_COUNT}-row capacity and will be omitted.`);
+  if (warnings.length > 0) {
+    if (!confirm("⚠ Export warnings:\n\n" + warnings.join("\n") + "\n\nProceed anyway?")) return;
+  }
+
+  const zip = await JSZip.loadAsync(b64ToArrayBuffer(TAKEOFF_TEMPLATE_B64));
+  const sheetPath = "xl/worksheets/sheet1.xml";
+  const sheetFile = zip.file(sheetPath);
+  if (!sheetFile) { alert("Template is missing xl/worksheets/sheet1.xml — cannot export."); return; }
+  let xml = await sheetFile.async("string");
+
+  // Clear ALL data rows first (rows 8–46). Writes empty/zero to inputs.
+  // Leave formula cells (H, I, K, N, O, P, Q) intact — they recompute from our inputs.
+  for (let r = MAT_START; r <= RMR_START + RMR_COUNT - 1; r++) {
+    ["A","B","C","D","E"].forEach(c => { xml = replaceCellInXml(xml, `${c}${r}`, ""); });
+    ["F","J"].forEach(c => { xml = replaceCellInXml(xml, `${c}${r}`, 0); });
+    // G, L, M are formula cells; we'll overwrite them with values only when filling a row.
+    // R = user-input system totals (default 0).
+    xml = replaceCellInXml(xml, `R${r}`, 0);
+  }
+
+  // MATERIALS (rows 8–29)
+  // Fill with app data. Overwrite G (price/unit), L (labor cost/unit), M (labor rate/unit)
+  // with computed values so per-row markup + laborRate from the app are preserved.
+  materials.slice(0, MAT_COUNT).forEach((m, i) => {
+    const r = MAT_START + i;
+    xml = replaceCellInXml(xml, `A${r}`, m.manf || "");
+    xml = replaceCellInXml(xml, `B${r}`, m.partNum || "");
+    xml = replaceCellInXml(xml, `C${r}`, m.desc || "");
+    xml = replaceCellInXml(xml, `D${r}`, n(m.qty));
+    xml = replaceCellInXml(xml, `E${r}`, m.unit || "EA");
+    xml = replaceCellInXml(xml, `F${r}`, n(m.costPU));
+    xml = replaceCellInXml(xml, `G${r}`, n(m.pricePU));
+    xml = replaceCellInXml(xml, `J${r}`, n(m.laborHrs));
+    // L = labor cost per unit. Template default uses $39/hr; app stores only a bill rate.
+    // Keep $39/hr convention for material-install labor cost.
+    xml = replaceCellInXml(xml, `L${r}`, 39 * n(m.laborHrs));
+    // M = labor price per unit: app's laborRate × hours/unit
+    xml = replaceCellInXml(xml, `M${r}`, n(m.laborRate) * n(m.laborHrs));
+  });
+
+  // FWT LABOR (rows 31–36)
+  // Convention: D=1 (qty), J=total hours, L=costPerHr × hours, M=ratePerHr × hours
+  // (F/G left at 0 since labor doesn't have material cost/price)
+  labor.slice(0, LABOR_COUNT).forEach((lr, i) => {
+    const r = LABOR_START + i;
+    const hours = n(lr.hours);
+    xml = replaceCellInXml(xml, `A${r}`, "FWT");
+    xml = replaceCellInXml(xml, `B${r}`, "FWT");
+    xml = replaceCellInXml(xml, `C${r}`, lr.desc || "");
+    xml = replaceCellInXml(xml, `D${r}`, 1);
+    xml = replaceCellInXml(xml, `J${r}`, hours);
+    xml = replaceCellInXml(xml, `F${r}`, 0);
+    xml = replaceCellInXml(xml, `G${r}`, 0);
+    xml = replaceCellInXml(xml, `L${r}`, n(lr.costPerHr) * hours);
+    xml = replaceCellInXml(xml, `M${r}`, n(lr.ratePerHr) * hours);
+  });
+
+  // PROJECT COSTS (rows 38–41)
+  costs.slice(0, COST_COUNT).forEach((c, i) => {
+    const r = COST_START + i;
+    xml = replaceCellInXml(xml, `A${r}`, c.manf || "FWT");
+    xml = replaceCellInXml(xml, `B${r}`, c.partNum || "FWT");
+    xml = replaceCellInXml(xml, `C${r}`, c.desc || "");
+    xml = replaceCellInXml(xml, `D${r}`, n(c.qty));
+    xml = replaceCellInXml(xml, `E${r}`, c.unit || "EA");
+    xml = replaceCellInXml(xml, `F${r}`, n(c.costPU));
+    xml = replaceCellInXml(xml, `G${r}`, n(c.pricePU));
+    xml = replaceCellInXml(xml, `J${r}`, 0);
+    xml = replaceCellInXml(xml, `L${r}`, 0);
+    xml = replaceCellInXml(xml, `M${r}`, 0);
+  });
+
+  // RMR (rows 43–46)
+  rmr.slice(0, RMR_COUNT).forEach((rm, i) => {
+    const r = RMR_START + i;
+    xml = replaceCellInXml(xml, `A${r}`, rm.manf || "FWT");
+    xml = replaceCellInXml(xml, `B${r}`, rm.partNum || "FWT-RMR");
+    xml = replaceCellInXml(xml, `C${r}`, rm.desc || "");
+    xml = replaceCellInXml(xml, `D${r}`, n(rm.qty));
+    xml = replaceCellInXml(xml, `E${r}`, rm.unit || "MO");
+    xml = replaceCellInXml(xml, `F${r}`, n(rm.costPU));
+    xml = replaceCellInXml(xml, `G${r}`, n(rm.pricePU));
+    xml = replaceCellInXml(xml, `J${r}`, 0);
+    xml = replaceCellInXml(xml, `L${r}`, 0);
+    xml = replaceCellInXml(xml, `M${r}`, 0);
+  });
+
+  // Override the template's hardcoded overhead (P48 = 0.42) with the app's overheadPct
+  // so the template's margin formula (Q48) reflects the user's chosen overhead.
+  xml = replaceCellInXml(xml, "P48", n(d.overheadPct) / 100);
+
+  // Ensure Excel recalculates formulas when the file opens
+  let wbXml = await zip.file("xl/workbook.xml").async("string");
+  if (!/fullCalcOnLoad/.test(wbXml)) {
+    if (/<calcPr\b[^/>]*\/>/.test(wbXml)) {
+      wbXml = wbXml.replace(/<calcPr\b([^/>]*)\/>/, '<calcPr$1 fullCalcOnLoad="1"/>');
+    } else if (/<calcPr\b[^>]*>/.test(wbXml)) {
+      wbXml = wbXml.replace(/<calcPr\b([^>]*)>/, '<calcPr$1 fullCalcOnLoad="1">');
+    } else {
+      wbXml = wbXml.replace(/<\/workbook>/, '<calcPr fullCalcOnLoad="1"/></workbook>');
+    }
+    zip.file("xl/workbook.xml", wbXml);
+  }
+
+  zip.file(sheetPath, xml);
+  const blob = await zip.generateAsync({
+    type: "blob",
+    compression: "DEFLATE",
+    mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  const safe = (label || "BOM").replace(/[^a-zA-Z0-9]+/g, "_");
+  a.download = `FWT_Takeoff_${safe}_${new Date().toISOString().split("T")[0]}.xlsx`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 export function TakeoffBuilder({ takeoff, onSave, scopeTitle }) {
   const data = takeoff || { materials: Array(5).fill(null).map(() => emptyMaterialRow()), labor: DEFAULT_LABOR_ROWS.map(r => ({ ...r, id: genId() })), costs: DEFAULT_COST_ROWS.map(r => ({ ...r, id: genId() })), rmr: DEFAULT_RMR_ROWS.map(r => ({ ...r, id: genId() })), overheadPct: 0, notes: "" };
   const [materials, setMaterials] = useState(data.materials);
@@ -197,7 +399,7 @@ export function TakeoffBuilder({ takeoff, onSave, scopeTitle }) {
     <div style={{ marginBottom: 16 }}><div style={{ fontSize: 12, fontWeight: 700, color: "#f59e0b", textTransform: "uppercase", marginBottom: 8 }}>FWT Labor</div><div style={{ display: "grid", gridTemplateColumns: "1fr 70px 80px 90px 80px 90px 24px", gap: 4, marginBottom: 6, padding: "0 0 6px", borderBottom: "1px solid #1e293b" }}>{["Description", "Hours", "Cost/Hr", "Labor Cost", "Rate/Hr", "Labor Price", ""].map(h => (<div key={h} style={{ fontSize: 10, fontWeight: 700, color: "#475569", textTransform: "uppercase" }}>{h}</div>))}</div>{labor.map((row, idx) => (<div key={row.id} style={{ display: "grid", gridTemplateColumns: "1fr 70px 80px 90px 80px 90px 24px", gap: 4, marginBottom: 3, alignItems: "center" }}><input style={iS} value={row.desc} onChange={e => updLaborRow(idx, "desc", e.target.value)} placeholder="Labor description" /><input type="number" step="0.5" style={nS} value={row.hours || ""} onChange={e => updLaborRow(idx, "hours", e.target.value)} placeholder="0" /><input type="number" step="0.01" style={nS} value={row.costPerHr || ""} onChange={e => updLaborRow(idx, "costPerHr", e.target.value)} placeholder="$/hr" /><div style={{ fontSize: 12, color: "#ef4444", textAlign: "right", fontWeight: 600 }}>${(n(row.hours) * n(row.costPerHr)).toFixed(2)}</div><input type="number" step="0.01" style={nS} value={row.ratePerHr || ""} onChange={e => updLaborRow(idx, "ratePerHr", e.target.value)} placeholder="$/hr" /><div style={{ fontSize: 12, color: "#10b981", textAlign: "right", fontWeight: 600 }}>${(n(row.hours) * n(row.ratePerHr)).toFixed(2)}</div><button onClick={() => removeLaborRow(idx)} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer" }}><X size={12} /></button></div>))}<div style={{ display: "grid", gridTemplateColumns: "1fr 70px 80px 90px 80px 90px 24px", gap: 4, marginTop: 6, padding: "8px 0 0", borderTop: "1px solid #1e293b" }}><div style={{ fontSize: 12, fontWeight: 700, color: "#f59e0b" }}>LABOR TOTALS</div><div style={{ fontSize: 12, fontWeight: 700, color: "#fff", textAlign: "right" }}>{totalLaborHrs}h</div><div></div><div style={{ fontSize: 12, fontWeight: 700, color: "#ef4444", textAlign: "right" }}>${laborCostTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div><div></div><div style={{ fontSize: 12, fontWeight: 700, color: "#10b981", textAlign: "right" }}>${laborPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div><div></div></div><button onClick={addLaborRow} style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 8, background: "none", border: "none", color: "#f59e0b", fontSize: 11, cursor: "pointer", fontFamily: "inherit", fontWeight: 600, padding: "4px 0" }}><Plus size={12} /> Add Labor Row</button></div>
     {renderSection("Project Costs", "#ef4444", costs, setCosts, "costs", () => addRow(costs, setCosts, () => ({ id: genId(), manf: "FWT", partNum: "FWT", desc: "", qty: 1, unit: "EA", costPU: 0, markupPct: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isCost: true }), "costs"))}
     {renderSection("RMR \u2014 First Month Included", "#8b5cf6", rmr, setRmr, "rmr", () => addRow(rmr, setRmr, () => ({ id: genId(), manf: "FWT", partNum: "FWT-RMR", desc: "", qty: 1, unit: "MO", costPU: 0, markupPct: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isRmr: true }), "rmr"))}
-    <div style={{ display: "flex", gap: 16, alignItems: "center", padding: "16px 0", borderTop: "2px solid #1e293b", marginTop: 8, flexWrap: "wrap" }}><div style={{ display: "flex", alignItems: "center", gap: 8 }}><span style={{ fontSize: 12, color: "#64748b" }}>Overhead %:</span><input type="number" step="0.5" style={{ ...nS, width: 70 }} value={overheadPct || ""} onChange={e => { const v = parseFloat(e.target.value) || 0; setOverheadPct(v); save(null, null, null, null, v); }} placeholder="0" /><span style={{ fontSize: 12, color: "#94a3b8" }}>(${overhead.toFixed(2)})</span></div><button onClick={() => downloadBOMCsv({ materials, labor, costs, rmr, overheadPct, notes }, scopeTitle)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, border: "1px solid #10b981", background: "#10b98122", color: "#10b981", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }} title="Export BOM as CSV — opens in Excel"><Download size={14} /> Export BOM</button><div style={{ marginLeft: "auto", fontSize: 18, fontWeight: 700, color: "#fff", fontFamily: "'Outfit',sans-serif" }}>TOTAL: ${grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div></div>
+    <div style={{ display: "flex", gap: 16, alignItems: "center", padding: "16px 0", borderTop: "2px solid #1e293b", marginTop: 8, flexWrap: "wrap" }}><div style={{ display: "flex", alignItems: "center", gap: 8 }}><span style={{ fontSize: 12, color: "#64748b" }}>Overhead %:</span><input type="number" step="0.5" style={{ ...nS, width: 70 }} value={overheadPct || ""} onChange={e => { const v = parseFloat(e.target.value) || 0; setOverheadPct(v); save(null, null, null, null, v); }} placeholder="0" /><span style={{ fontSize: 12, color: "#94a3b8" }}>(${overhead.toFixed(2)})</span></div><button onClick={() => downloadBOMCsv({ materials, labor, costs, rmr, overheadPct, notes }, scopeTitle)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, border: "1px solid #10b981", background: "#10b98122", color: "#10b981", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }} title="Export BOM as CSV — opens in Excel"><Download size={14} /> Export CSV</button><button onClick={() => downloadBOMToTemplate({ materials, labor, costs, rmr, overheadPct, notes }, scopeTitle)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, border: "1px solid #3b82f6", background: "#3b82f622", color: "#3b82f6", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }} title="Fill your Takeoff_2026 template and download as .xlsx"><Download size={14} /> Export to Template</button><div style={{ marginLeft: "auto", fontSize: 18, fontWeight: 700, color: "#fff", fontFamily: "'Outfit',sans-serif" }}>TOTAL: ${grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div></div>
     <div style={{ marginTop: 12 }}><div style={{ fontSize: 11, fontWeight: 600, color: "#64748b", marginBottom: 4, textTransform: "uppercase" }}>Project Notes</div><textarea style={{ ...iS, minHeight: 60, resize: "vertical" }} value={notes} onChange={e => { setNotes(e.target.value); save(null, null, null, null, undefined, e.target.value); }} placeholder="Notes, assumptions, special conditions..." /></div>
   </div>);
 }
@@ -216,7 +418,7 @@ function replaceSDT(xml, alias, newText) {
       replaced = true;
       let result = sdtBlock.replace(/<w:showingPlcHdr\/>/, "");
       const esc = newText.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-      const nc = '<w:sdtContent><w:r><w:rPr><w:rFonts w:cstheme="minorHAnsi"/></w:rPr><w:t>' + esc + '</w:t></w:r></w:sdtContent>';
+      const nc = '<w:sdtContent><w:r><w:rPr><w:rFonts w:cstheme="minorHAnsi"/></w:rPr><w:t xml:space="preserve">' + esc + '</w:t></w:r></w:sdtContent>';
       result = result.replace(/<w:sdtContent>[\s\S]*?<\/w:sdtContent>/, nc);
       while (result.includes(searchStr)) { result = result.replace(searchStr, 'w:val="' + alias + '_DONE"'); }
       return result;
@@ -231,15 +433,86 @@ function replaceSDTAll(xml, alias, newText) {
   return r;
 }
 
+// Template has 10 body scope blocks and 10 pricing-table rows. If the user has
+// fewer than 10 scopes, delete the unused body blocks AND unused pricing rows
+// so the generated document doesn't show empty "Scope of Work –" headings.
+function removeUnusedBodyScopes(xml, scopeCount) {
+  if (scopeCount >= 10) return xml;
+  // Find the positions of the first 10 "Type of Work" SDTs (the body scope headings)
+  const towRegex = /<w:sdt>[\s\S]{0,400}?<w:alias w:val="Type of Work"/g;
+  const positions = [];
+  let m;
+  while ((m = towRegex.exec(xml)) !== null) {
+    positions.push(m.index);
+    if (positions.length >= 10) break;
+  }
+  if (positions.length < 10) return xml; // template doesn't match expectations; skip
+  // Find the <w:p> that each SDT lives in
+  const paraStarts = positions.map(pos => {
+    const p1 = xml.lastIndexOf("<w:p ", pos);
+    const p2 = xml.lastIndexOf("<w:p>", pos);
+    return Math.max(p1, p2);
+  });
+  // Find the Exclusions section AFTER scope block 10 (earlier "Exclusions" occurrences
+  // are in the intro bullet list)
+  const scope10Start = paraStarts[9];
+  const exclusionsIdx = xml.indexOf("Exclusions", scope10Start + 500);
+  if (exclusionsIdx < 0) return xml;
+  const p1 = xml.lastIndexOf("<w:p ", exclusionsIdx);
+  const p2 = xml.lastIndexOf("<w:p>", exclusionsIdx);
+  const exclusionsParaStart = Math.max(p1, p2);
+  if (exclusionsParaStart < 0) return xml;
+  // Cut from the start of the first unused scope block to the start of Exclusions
+  return xml.slice(0, paraStarts[scopeCount]) + xml.slice(exclusionsParaStart);
+}
+
+// Find the last <w:tr> or <w:tr ...> open tag strictly before endIdx.
+// (must not match <w:trPr> which also starts with "<w:tr")
+function findTableRowStartBefore(xml, endIdx) {
+  let idx = endIdx;
+  while (idx > 0) {
+    idx = xml.lastIndexOf("<w:tr", idx);
+    if (idx < 0) return -1;
+    const nxt = xml[idx + 5];
+    if (nxt === " " || nxt === ">") return idx;
+    idx -= 1;
+  }
+  return -1;
+}
+
+function removeUnusedPricingRows(xml, scopeCount) {
+  if (scopeCount >= 10) return xml;
+  // Delete pricing rows for SoW #(scopeCount+1) through SoW #10, in reverse order
+  // so positions of earlier rows stay stable as we splice
+  for (let n = 10; n > scopeCount; n--) {
+    const marker = `w:val="SoW #${n} Price"`;
+    const sdtIdx = xml.indexOf(marker);
+    if (sdtIdx < 0) continue;
+    const trStart = findTableRowStartBefore(xml, sdtIdx);
+    if (trStart < 0) continue;
+    const trEnd = xml.indexOf("</w:tr>", sdtIdx);
+    if (trEnd < 0) continue;
+    xml = xml.slice(0, trStart) + xml.slice(trEnd + "</w:tr>".length);
+  }
+  return xml;
+}
+
 async function generateProposalDocx(d, opp) {
   const fmt = v => "$" + parseFloat(v || 0).toLocaleString(undefined, { minimumFractionDigits: 2 });
   const totalPrice = d.scopes.reduce((s, sc) => s + (parseFloat(sc.price) || 0), 0);
+  const scopeCount = Math.min(d.scopes.length, 10);
 
   const templateData = b64ToArrayBuffer(PROPOSAL_TEMPLATE_B64);
   const zip = await JSZip.loadAsync(templateData);
   let docXml = await zip.file("word/document.xml").async("string");
 
-  // Header fields (apostrophe in Client's is charcode 39)
+  // Step 1: strip out the body scope blocks and pricing rows we won't use.
+  // Do this BEFORE any SDT fills so the sequential replaceSDT() calls only
+  // see the slots we actually want to populate.
+  docXml = removeUnusedBodyScopes(docXml, scopeCount);
+  docXml = removeUnusedPricingRows(docXml, scopeCount);
+
+  // Step 2: header / client fields (apostrophe in Client's is charcode 39)
   docXml = replaceSDT(docXml, "Client\u0027s Company", opp.customer || "");
   docXml = replaceSDT(docXml, "&lt;Date&gt;", d.date || "");
   docXml = replaceSDT(docXml, "Client Street Address", opp.siteAddress || "");
@@ -250,42 +523,17 @@ async function generateProposalDocx(d, opp) {
   docXml = replaceSDTAll(docXml, "Project Name", opp.name || "");
   docXml = replaceSDTAll(docXml, "Client Name", opp.contactName || "");
 
-  // Scopes - template has 2 detail slots; fill what we can
-  if (d.scopes.length >= 1) {
-    docXml = replaceSDT(docXml, "Type of Work", d.scopes[0].title || "");
-    docXml = replaceSDT(docXml, "SoW Story", d.scopes[0].description || "");
-  }
-  if (d.scopes.length >= 2) {
-    docXml = replaceSDT(docXml, "Type of Work", d.scopes[1].title || "");
-    docXml = replaceSDT(docXml, "SoW Story", d.scopes[1].description || "");
+  // Step 3: fill each remaining body scope block (Type of Work heading + SoW Story description)
+  for (let i = 0; i < scopeCount; i++) {
+    docXml = replaceSDT(docXml, "Type of Work", d.scopes[i].title || "");
+    docXml = replaceSDT(docXml, "SoW Story", d.scopes[i].description || "");
   }
 
-  // Pricing table - handle all scopes dynamically
-  // First fill the template's 2 named SDT slots for scope names
-  if (d.scopes.length >= 1) docXml = replaceSDT(docXml, "Type of Work", d.scopes[0].title || "");
-  if (d.scopes.length >= 2) docXml = replaceSDT(docXml, "Type of Work", d.scopes[1].title || "");
-
-  // Replace the 2 template price SDTs
-  docXml = replaceSDT(docXml, "SoW #1 Price", d.scopes.length >= 1 ? fmt(d.scopes[0].price) : "$0.00");
-  docXml = replaceSDT(docXml, "SoW #2 Price", d.scopes.length >= 2 ? fmt(d.scopes[1].price) : "$0.00");
-
-  // For scopes 3+, insert additional pricing rows before TOTAL PROJECT PRICE
-  if (d.scopes.length > 2) {
-    const extraRows = d.scopes.slice(2).map(s => {
-      const title = (s.title || "Scope").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-      const price = fmt(s.price).replace(/&/g, "&amp;");
-      return '<w:tr><w:tc><w:tcPr><w:tcW w:w="7560" w:type="dxa"/></w:tcPr><w:p><w:r><w:rPr><w:rFonts w:cstheme="minorHAnsi"/></w:rPr><w:t>' + title + ' Price:</w:t></w:r></w:p></w:tc><w:tc><w:tcPr><w:tcW w:w="3240" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:jc w:val="right"/></w:pPr><w:r><w:rPr><w:rFonts w:cstheme="minorHAnsi"/></w:rPr><w:t>' + price + '</w:t></w:r></w:p></w:tc></w:tr>';
-    }).join("");
-    // Insert before the empty row that precedes TOTAL
-    const totalMarker = "TOTAL PROJECT PRICE";
-    const totalIdx = docXml.indexOf(totalMarker);
-    if (totalIdx > -1) {
-      // Find the <w:tr> that contains the empty spacer row before TOTAL
-      const beforeTotal = docXml.lastIndexOf("<w:tr>", totalIdx);
-      if (beforeTotal > -1) {
-        docXml = docXml.slice(0, beforeTotal) + extraRows + docXml.slice(beforeTotal);
-      }
-    }
+  // Step 4: fill the pricing table — each remaining row has one Type of Work
+  // (the scope title label) and one uniquely-named SoW #N Price cell.
+  for (let i = 0; i < scopeCount; i++) {
+    docXml = replaceSDT(docXml, "Type of Work", d.scopes[i].title || "");
+    docXml = replaceSDT(docXml, `SoW #${i + 1} Price`, fmt(d.scopes[i].price));
   }
 
   docXml = replaceSDT(docXml, "Total Price", fmt(totalPrice));
