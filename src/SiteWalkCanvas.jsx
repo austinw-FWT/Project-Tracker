@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Pencil, Eraser, Type, Image as ImageIcon, Trash2, X, Save, MousePointer2, Undo2, Palette } from "lucide-react";
+import { Pencil, Eraser, Type, Image as ImageIcon, Trash2, X, Save, MousePointer2, Undo2, Palette, Bold, Italic, Underline, AlignLeft, AlignCenter, AlignRight } from "lucide-react";
 import { storage, storageRef, uploadBytes, getDownloadURL } from "./firebase.js";
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
@@ -17,7 +17,8 @@ function genId() { return Date.now().toString(36) + Math.random().toString(36).s
  *     { id, url, x, y, w, h }
  *   ],
  *   textBoxes: [             // positioned text
- *     { id, text, x, y, w, size, color }
+ *     { id, text, x, y, w, h?, size, color,
+ *       bold?, italic?, underline?, align?, fontFamily? }
  *   ]
  * }
  */
@@ -81,7 +82,7 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
     } else if (tool === "text") {
       // Drop a new text box at the click position
       const id = genId();
-      setTextBoxes([...textBoxes, { id, text: "", x: pt.x, y: pt.y, w: 260, size: 18, color }]);
+      setTextBoxes([...textBoxes, { id, text: "", x: pt.x, y: pt.y, w: 260, h: 80, size: 18, color, bold: false, italic: false, underline: false, align: "left", fontFamily: "'DM Sans',sans-serif" }]);
       setSelectedItem({ type: "text", id });
       setTool("select");
     }
@@ -167,7 +168,9 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
       setTextBoxes(prev => prev.map(t => t.id !== dragState.id ? t : (
         dragState.mode === "move"
           ? { ...t, x: dragState.orig.x + dx, y: dragState.orig.y + dy }
-          : { ...t, w: Math.max(80, dragState.orig.w + dx) }
+          : { ...t,
+              w: Math.max(80, dragState.orig.w + dx),
+              h: Math.max(40, (dragState.orig.h || 80) + dy) }
       )));
     }
   }
@@ -285,6 +288,84 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
 
         <div style={{ flex: 1 }} />
 
+        {/* Text formatting bar — visible when a text box is selected */}
+        {selectedItem?.type === "text" && (() => {
+          const tb = textBoxes.find(t => t.id === selectedItem.id);
+          if (!tb) return null;
+          const FONT_SIZES = [12, 14, 16, 18, 22, 28, 36, 48, 64];
+          const FONT_FAMILIES = [
+            { label: "Sans", value: "'DM Sans',sans-serif" },
+            { label: "Serif", value: "Georgia,serif" },
+            { label: "Mono", value: "'Courier New',monospace" },
+            { label: "Display", value: "'Outfit',sans-serif" },
+          ];
+          const TEXT_COLORS = ["#000000", "#ef4444", "#f59e0b", "#10b981", "#3b82f6", "#6366f1", "#ec4899", "#ffffff"];
+          const fmtBtn = (active, onClick, Icon, label) => (
+            <button onClick={onClick} title={label} style={{
+              display: "flex", alignItems: "center", justifyContent: "center",
+              width: 30, height: 30, borderRadius: 6,
+              border: active ? "1px solid #6366f1" : "1px solid #1e293b",
+              background: active ? "#6366f122" : "#0f1729",
+              color: active ? "#818cf8" : "#94a3b8",
+              cursor: "pointer", fontFamily: "inherit",
+            }}><Icon size={14} /></button>
+          );
+          return (
+            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", background: "#1a2332", borderRadius: 8, border: "1px solid #6366f133", flexWrap: "wrap" }}>
+              {/* Font family */}
+              <select
+                value={tb.fontFamily || "'DM Sans',sans-serif"}
+                onChange={e => updateText(tb.id, { fontFamily: e.target.value })}
+                title="Font family"
+                style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid #1e293b", background: "#0f1729", color: "#e2e8f0", fontSize: 11, fontFamily: "inherit", outline: "none" }}
+              >
+                {FONT_FAMILIES.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
+              </select>
+
+              {/* Font size */}
+              <select
+                value={tb.size}
+                onChange={e => updateText(tb.id, { size: parseInt(e.target.value, 10) })}
+                title="Font size"
+                style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid #1e293b", background: "#0f1729", color: "#e2e8f0", fontSize: 11, fontFamily: "inherit", outline: "none", width: 56 }}
+              >
+                {FONT_SIZES.map(s => <option key={s} value={s}>{s}px</option>)}
+              </select>
+
+              {/* Bold / Italic / Underline */}
+              {fmtBtn(tb.bold, () => updateText(tb.id, { bold: !tb.bold }), Bold, "Bold")}
+              {fmtBtn(tb.italic, () => updateText(tb.id, { italic: !tb.italic }), Italic, "Italic")}
+              {fmtBtn(tb.underline, () => updateText(tb.id, { underline: !tb.underline }), Underline, "Underline")}
+
+              <div style={{ width: 1, height: 18, background: "#1e293b" }} />
+
+              {/* Alignment */}
+              {fmtBtn((tb.align || "left") === "left",   () => updateText(tb.id, { align: "left" }),   AlignLeft,   "Align left")}
+              {fmtBtn(tb.align === "center",             () => updateText(tb.id, { align: "center" }), AlignCenter, "Align center")}
+              {fmtBtn(tb.align === "right",              () => updateText(tb.id, { align: "right" }),  AlignRight,  "Align right")}
+
+              <div style={{ width: 1, height: 18, background: "#1e293b" }} />
+
+              {/* Text color swatches */}
+              <div style={{ display: "flex", gap: 3 }}>
+                {TEXT_COLORS.map(c => (
+                  <button
+                    key={c}
+                    onClick={() => updateText(tb.id, { color: c })}
+                    title={c}
+                    style={{
+                      width: 18, height: 18, borderRadius: "50%",
+                      background: c,
+                      border: tb.color === c ? "2px solid #818cf8" : "1px solid #1e293b",
+                      cursor: "pointer", padding: 0,
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+
         {selectedItem && (
           <button onClick={deleteSelected} style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 10px", borderRadius: 8, border: "1px solid #7f1d1d", background: "transparent", color: "#ef4444", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
             <X size={13} /> Delete Selected
@@ -375,43 +456,60 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
             {/* Text boxes */}
             {textBoxes.map(tb => {
               const isSelected = selectedItem?.type === "text" && selectedItem.id === tb.id;
+              // Height defaults for legacy text boxes that don't have h yet
+              const tbH = tb.h || Math.max(40, tb.size * 3);
               return (
-                <foreignObject key={tb.id} x={tb.x} y={tb.y} width={tb.w} height={Math.max(40, tb.size * 3)}>
-                  <div
-                    onPointerDown={e => {
-                      // Only start move-drag from the handle (top edge), not from the text itself
-                      if (e.target.classList?.contains("tb-handle")) startDrag(e, "text", tb.id, "move");
-                    }}
-                    onClick={e => { e.stopPropagation(); setSelectedItem({ type: "text", id: tb.id }); }}
-                    style={{
-                      padding: isSelected ? "2px" : 0,
-                      border: isSelected ? "2px dashed #6366f1" : "2px dashed transparent",
-                      borderRadius: 4,
-                      background: "rgba(255,255,255,0.7)",
-                      position: "relative",
-                    }}
-                  >
-                    <div className="tb-handle" style={{ position: "absolute", top: -8, left: 0, right: 0, height: 10, cursor: "move", background: isSelected ? "#6366f1" : "transparent", borderRadius: "4px 4px 0 0" }} />
-                    <textarea
-                      value={tb.text}
-                      onChange={e => updateText(tb.id, { text: e.target.value })}
-                      placeholder="Type a note..."
-                      autoFocus={tb.text === "" && isSelected}
-                      style={{
-                        width: "100%",
-                        minHeight: tb.size * 1.5 + "px",
-                        border: "none",
-                        background: "transparent",
-                        color: tb.color,
-                        fontSize: tb.size,
-                        fontFamily: "'DM Sans',sans-serif",
-                        resize: "none",
-                        outline: "none",
-                        padding: 4,
+                <g key={tb.id}>
+                  <foreignObject x={tb.x} y={tb.y} width={tb.w} height={tbH}>
+                    <div
+                      onPointerDown={e => {
+                        // Only start move-drag from the handle (top edge), not from the text itself
+                        if (e.target.classList?.contains("tb-handle")) startDrag(e, "text", tb.id, "move");
                       }}
+                      onClick={e => { e.stopPropagation(); setSelectedItem({ type: "text", id: tb.id }); }}
+                      style={{
+                        height: "100%",
+                        padding: isSelected ? "2px" : 0,
+                        border: isSelected ? "2px dashed #6366f1" : "2px dashed transparent",
+                        borderRadius: 4,
+                        background: "rgba(255,255,255,0.7)",
+                        position: "relative",
+                        boxSizing: "border-box",
+                      }}
+                    >
+                      <div className="tb-handle" style={{ position: "absolute", top: -8, left: 0, right: 0, height: 10, cursor: "move", background: isSelected ? "#6366f1" : "transparent", borderRadius: "4px 4px 0 0" }} />
+                      <textarea
+                        value={tb.text}
+                        onChange={e => updateText(tb.id, { text: e.target.value })}
+                        placeholder="Type a note..."
+                        autoFocus={tb.text === "" && isSelected}
+                        style={{
+                          width: "100%",
+                          height: "100%",
+                          border: "none",
+                          background: "transparent",
+                          color: tb.color,
+                          fontSize: tb.size,
+                          fontFamily: tb.fontFamily || "'DM Sans',sans-serif",
+                          fontWeight: tb.bold ? 700 : 400,
+                          fontStyle: tb.italic ? "italic" : "normal",
+                          textDecoration: tb.underline ? "underline" : "none",
+                          textAlign: tb.align || "left",
+                          resize: "none",
+                          outline: "none",
+                          padding: 4,
+                          boxSizing: "border-box",
+                        }}
+                      />
+                    </div>
+                  </foreignObject>
+                  {isSelected && (
+                    <rect x={tb.x + tb.w - 8} y={tb.y + tbH - 8} width={16} height={16} fill="#6366f1" stroke="#fff" strokeWidth="1.5"
+                      onPointerDown={e => startDrag(e, "text", tb.id, "resize")}
+                      style={{ cursor: "nwse-resize" }}
                     />
-                  </div>
-                </foreignObject>
+                  )}
+                </g>
               );
             })}
           </svg>
@@ -420,3 +518,4 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
     </div>
   );
 }
+
