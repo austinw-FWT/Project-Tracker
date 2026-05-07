@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Plus, X, Edit2, Trash2, ClipboardList, Clock, Cable, CheckCircle2, Circle, FileText, Camera, MapPin, Phone, Mail, DollarSign, Building2, User, Layers, Package, Receipt, BookOpen, AlertTriangle, Image, FileSearch, TrendingUp, ClipboardCheck, Upload, Download, ExternalLink, ChevronDown } from "lucide-react";
+import { Plus, X, Edit2, Trash2, ClipboardList, Clock, Cable, CheckCircle2, Circle, FileText, Camera, MapPin, Phone, Mail, DollarSign, Building2, User, Layers, Package, Receipt, BookOpen, AlertTriangle, Image, FileSearch, TrendingUp, ClipboardCheck, Upload, Download, ExternalLink, ChevronDown, ShieldCheck } from "lucide-react";
 import { PROJECT_TYPES, LABOR_PHASES, MATERIAL_STATUSES, TASK_CATEGORIES, genId } from "./App.jsx";
 import { storage, storageRef, uploadBytes, getDownloadURL } from "./firebase.js";
 
@@ -96,6 +96,104 @@ export default function ProjectDetail({ project, phases, phaseMap, teamRoster, o
       ) : (
         <div style={{ display: "flex", gap: 4, marginBottom: 20, flexWrap: "wrap" }}>
           {phases.map(ph => (<button key={ph.id} onClick={() => onUpdate({ phaseId: ph.id })} style={{ padding: "5px 12px", borderRadius: 20, border: project.phaseId === ph.id ? `2px solid ${ph.color}` : "1px solid #1A3050", background: project.phaseId === ph.id ? ph.color + "22" : "transparent", color: project.phaseId === ph.id ? ph.color : "#64748b", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{ph.name}</button>))}
+        </div>
+      )}
+
+      {/* Move to Warranty — only shown when project is in Closeout phase and not yet handed off */}
+      {project.phaseId === "closeout" && !project.movedToWarranty && (
+        <div style={{
+          background: "#0F2444",
+          borderLeft: "4px solid #69BE28",
+          borderRadius: 10,
+          padding: isMobile ? "12px 14px" : "14px 18px",
+          marginBottom: 14,
+          display: "flex",
+          flexDirection: isMobile ? "column" : "row",
+          alignItems: isMobile ? "stretch" : "center",
+          gap: 12,
+        }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 2, display: "flex", alignItems: "center", gap: 8 }}>
+              <ShieldCheck size={16} style={{ color: "#69BE28" }} />
+              Ready to hand off to warranty?
+            </div>
+            <div style={{ fontSize: 12, color: "#94a3b8" }}>
+              Removes the project from the Kanban board and transfers tracking to the Warranties section.
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              if (confirm(`Move "${project.name}" to warranty tracking?\n\nThis will remove it from the project board. You can return it to the board from the Warranties section if needed.`)) {
+                onUpdate({ movedToWarranty: true, warrantyStartDate: new Date().toISOString() });
+              }
+            }}
+            style={{
+              padding: isMobile ? "12px 16px" : "10px 18px",
+              borderRadius: 8,
+              border: "none",
+              background: "#69BE28",
+              color: "#fff",
+              fontSize: 13,
+              fontWeight: 700,
+              cursor: "pointer",
+              fontFamily: "inherit",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
+              minHeight: isMobile ? 44 : "auto",
+              flexShrink: 0,
+            }}
+          >
+            <ShieldCheck size={15} /> Move to Warranty
+          </button>
+        </div>
+      )}
+
+      {/* Already in warranty — show banner with "return to active" option */}
+      {project.movedToWarranty && (
+        <div style={{
+          background: "#69BE2811",
+          borderLeft: "4px solid #69BE28",
+          borderRadius: 10,
+          padding: isMobile ? "12px 14px" : "14px 18px",
+          marginBottom: 14,
+          display: "flex",
+          flexDirection: isMobile ? "column" : "row",
+          alignItems: isMobile ? "stretch" : "center",
+          gap: 12,
+        }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#69BE28", marginBottom: 2, display: "flex", alignItems: "center", gap: 8 }}>
+              <ShieldCheck size={16} />
+              In Warranty Period
+            </div>
+            <div style={{ fontSize: 12, color: "#94a3b8" }}>
+              Started {project.warrantyStartDate ? new Date(project.warrantyStartDate).toLocaleDateString() : "—"}. This project is hidden from the Kanban board.
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              if (confirm("Return this project to the active board?")) {
+                onUpdate({ movedToWarranty: false });
+              }
+            }}
+            style={{
+              padding: isMobile ? "12px 16px" : "10px 18px",
+              borderRadius: 8,
+              border: "1px solid #1A3050",
+              background: "#0F2444",
+              color: "#cbd5e1",
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: "pointer",
+              fontFamily: "inherit",
+              minHeight: isMobile ? 44 : "auto",
+              flexShrink: 0,
+            }}
+          >
+            Return to Active
+          </button>
         </div>
       )}
 
@@ -780,3 +878,4 @@ function NotesTab({ project, onUpdate }) {
     {(project.notes || []).map((n, i) => (<div key={i} style={{ padding: "12px 0", borderBottom: "1px solid #1A3050", display: "flex", gap: 10 }}><Clock size={14} style={{ color: "#475569", marginTop: 2, flexShrink: 0 }} /><div style={{ flex: 1 }}><div style={{ fontSize: 13, color: "#e2e8f0" }}>{n.text}</div><div style={{ fontSize: 11, color: "#475569", marginTop: 4 }}>{new Date(n.date).toLocaleString()}</div></div><button onClick={() => onUpdate({ notes: project.notes.filter((_, idx) => idx !== i) })} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer" }}><X size={12} /></button></div>))}
   </div>);
 }
+
