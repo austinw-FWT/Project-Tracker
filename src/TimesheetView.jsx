@@ -1,7 +1,9 @@
 import { useState, useEffect } from "react";
-import { Plus, X, Clock, Users, Send, ChevronDown, ChevronUp } from "lucide-react";
+import { Plus, X, Clock, Users, Send, ChevronDown, ChevronUp, Download } from "lucide-react";
+import JSZip from "jszip";
 import { LABOR_PHASES } from "./App.jsx";
 import { openOutlookCompose } from "./emailHelper.js";
+import { TIMESHEET_TEMPLATE_B64 } from "./timesheetTemplate.js";
 
 const DEPARTMENTS = ["Brandon", "Justin", "Service", "Steve", "Tim", "Todd", "Overhead", "Tech Staffing"];
 
@@ -16,6 +18,218 @@ async function getAdminEmails() {
     if (!users) return [];
     return Object.values(users).filter(u => u.role === "admin" && u.status === "approved" && u.email).map(u => u.email);
   } catch (e) { console.error("Failed to fetch admin emails:", e); return []; }
+}
+
+// ── Timesheet template fill ─────────────────────────────────────────────
+// Loads the embedded GENERAL_TimeSheet_5_1_26.xlsm template, fills in the
+// employee's hours for the chosen week, and triggers a download.
+//
+// Template layout (rows are 1-indexed):
+//   B3: employee name, G4: week-ending date (Saturday)
+//   Day cols: E=Sun, F=Mon, G=Tue, H=Wed, I=Thu, J=Fri, K=Sat
+//   Sub-table cols: A=Job Name, B=Job #, C=Department, D=Notes
+//   Hour-type sections (rows are job entries within each section):
+//     REGULAR    rows 9–17  (Q = row sum)
+//     NIGHT      rows 19–23 (P = row sum) — not currently tracked, left empty
+//     OT         rows 25–28 (O = row sum)
+//     PW         rows 30–35 (N = row sum)
+//     PW_OT      rows 37–42 (M = row sum)
+//     MISC       rows 44–46 (L = row sum)
+//   Totals row 47.
+
+const SECTION_RANGES = {
+  REG:   { start: 9,  end: 17 },
+  OT:    { start: 25, end: 28 },
+  PW:    { start: 30, end: 35 },
+  PW_OT: { start: 37, end: 42 },
+  MISC:  { start: 44, end: 46 },
+};
+
+// Categorize an entry into a template section
+function categorizeEntry(e) {
+  const dept = (e.department || "").toUpperCase();
+  const name = (e.jobName || "").toUpperCase();
+  if (dept === "OVERHEAD" || /\b(PTO|HOLIDAY|OFFICE|VACATION|SICK)\b/.test(name) || /\b(PTO|HOLIDAY|VACATION|SICK)\b/.test(dept)) {
+    return "MISC";
+  }
+  if (e.prevailingWage) return e.hoursType === "overtime" ? "PW_OT" : "PW";
+  return e.hoursType === "overtime" ? "OT" : "REG";
+}
+
+// Excel serial date: days since 1900-01-01 (with the historical 1900 leap year bug,
+// which Excel keeps for compatibility — so 1900-03-01 = serial 61, etc.)
+// JS Date can compute this directly: (date - 1899-12-30) / 86400000
+function excelSerialDate(yyyymmdd) {
+  const d = new Date(yyyymmdd + "T00:00:00");
+  const epoch = new Date(Date.UTC(1899, 11, 30));
+  const local = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  return Math.round((local - epoch) / 86400000);
+}
+
+// XML cell builders
+function escXml(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+}
+function buildCellXml(coord, value, styleIdx, kind) {
+  // kind: "number" | "string" | "date"
+  const sAttr = styleIdx ? ` s="${styleIdx}"` : "";
+  if (value === null || value === undefined || value === "") return `<c r="${coord}"${sAttr}/>`;
+  if (kind === "number" && typeof value === "number") {
+    const rounded = Math.round(value * 10000) / 10000;
+    return `<c r="${coord}"${sAttr}><v>${rounded}</v></c>`;
+  }
+  if (kind === "date" && typeof value === "number") {
+    return `<c r="${coord}"${sAttr}><v>${value}</v></c>`;
+  }
+  return `<c r="${coord}"${sAttr} t="inlineStr"><is><t xml:space="preserve">${escXml(value)}</t></is></c>`;
+}
+function replaceCellInXml(xml, coord, value, kind) {
+  const re = new RegExp(`<c r="${coord}"[^>]*?(?:/>|>[\\s\\S]*?</c>)`);
+  const m = re.exec(xml);
+  if (m) {
+    const styleMatch = /\s+s="(\d+)"/.exec(m[0]);
+    const styleIdx = styleMatch ? styleMatch[1] : null;
+    return xml.replace(re, buildCellXml(coord, value, styleIdx, kind));
+  }
+  // Insert into the relevant <row> if cell didn't exist
+  const rowNum = coord.match(/\d+$/)[0];
+  const rowRe = new RegExp(`(<row r="${rowNum}"[^>]*>)([\\s\\S]*?)(</row>)`);
+  const rm = rowRe.exec(xml);
+  if (rm) return xml.replace(rowRe, rm[1] + rm[2] + buildCellXml(coord, value, null, kind) + rm[3]);
+  return xml;
+}
+
+function b64ToArrayBuffer(b64) {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
+}
+
+// Calculate the Saturday that ends a given week (matches the app's gWK convention,
+// which buckets on the Monday of the week, but the template wants the Saturday).
+function saturdayOfWeek(weekStartIso) {
+  // weekStartIso is the Monday (per gWK). Saturday = Monday + 5 days.
+  const d = new Date(weekStartIso + "T00:00:00");
+  d.setDate(d.getDate() + 5);
+  return d.toISOString().split("T")[0];
+}
+
+// Build a YYYY-MM-DD → column letter map (Sun=E .. Sat=K)
+function buildDayColumnMap(saturdayIso) {
+  const sat = new Date(saturdayIso + "T00:00:00");
+  const map = {};
+  const cols = ["E", "F", "G", "H", "I", "J", "K"];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(sat);
+    d.setDate(sat.getDate() - (6 - i));
+    map[d.toISOString().split("T")[0]] = cols[i];
+  }
+  return map;
+}
+
+async function fillTimesheetTemplate({ employeeName, weekStartIso, entries }) {
+  const saturday = saturdayOfWeek(weekStartIso);
+  const dayCol = buildDayColumnMap(saturday);
+
+  // Group entries by (section, jobName, jobNumber, department) and accumulate hours per day
+  const groups = new Map(); // key → { section, jobName, jobNumber, department, notes:Set, days:{col:hours} }
+  const overflow = []; // entries that fell outside the week
+  for (const e of entries) {
+    const col = dayCol[e.date];
+    if (!col) { overflow.push(e); continue; }
+    const sect = categorizeEntry(e);
+    const key = `${sect}|${e.jobName || ""}|${e.jobNumber || ""}|${e.department || ""}`;
+    let g = groups.get(key);
+    if (!g) {
+      g = { section: sect, jobName: e.jobName || "", jobNumber: e.jobNumber || "", department: e.department || "", notes: new Set(), days: {} };
+      groups.set(key, g);
+    }
+    if (e.notes) g.notes.add(e.notes);
+    g.days[col] = (g.days[col] || 0) + (parseFloat(e.hours) || 0);
+  }
+
+  // Bucket groups by section
+  const buckets = { REG: [], OT: [], PW: [], PW_OT: [], MISC: [] };
+  for (const g of groups.values()) buckets[g.section].push(g);
+
+  // Check for overflow vs. row capacity
+  const overruns = [];
+  for (const [sect, range] of Object.entries(SECTION_RANGES)) {
+    const cap = range.end - range.start + 1;
+    if (buckets[sect].length > cap) overruns.push(`${sect}: ${buckets[sect].length} jobs but template has ${cap} rows`);
+  }
+  if (overruns.length > 0) {
+    const proceed = confirm("⚠ Timesheet overflow:\n\n" + overruns.join("\n") + "\n\nExtra rows will be omitted from the template. Proceed?");
+    if (!proceed) return null;
+  }
+
+  // Load template
+  const zip = await JSZip.loadAsync(b64ToArrayBuffer(TIMESHEET_TEMPLATE_B64));
+  const sheetPath = "xl/worksheets/sheet1.xml";
+  let xml = await zip.file(sheetPath).async("string");
+
+  // Header
+  xml = replaceCellInXml(xml, "B3", employeeName || "", "string");
+  xml = replaceCellInXml(xml, "G4", excelSerialDate(saturday), "date");
+
+  // Clear all data rows first (rows 9-46) — write empty A-D and 0 for E-K
+  for (let r = 9; r <= 46; r++) {
+    // Skip section header rows (18, 24, 29, 36, 43) — those have merged labels
+    if (r === 18 || r === 24 || r === 29 || r === 36 || r === 43) continue;
+    ["A", "B", "C", "D"].forEach(c => { xml = replaceCellInXml(xml, `${c}${r}`, "", "string"); });
+    ["E", "F", "G", "H", "I", "J", "K"].forEach(c => { xml = replaceCellInXml(xml, `${c}${r}`, "", "string"); });
+  }
+
+  // Fill each section
+  for (const [sect, range] of Object.entries(SECTION_RANGES)) {
+    const rows = buckets[sect].slice(0, range.end - range.start + 1);
+    rows.forEach((g, i) => {
+      const r = range.start + i;
+      xml = replaceCellInXml(xml, `A${r}`, g.jobName, "string");
+      xml = replaceCellInXml(xml, `B${r}`, g.jobNumber, "string");
+      xml = replaceCellInXml(xml, `C${r}`, g.department, "string");
+      const notesStr = [...g.notes].join("; ");
+      xml = replaceCellInXml(xml, `D${r}`, notesStr, "string");
+      for (const [col, hrs] of Object.entries(g.days)) {
+        if (hrs > 0) xml = replaceCellInXml(xml, `${col}${r}`, hrs, "number");
+      }
+    });
+  }
+
+  // Ensure Excel recalculates on open
+  let wbXml = await zip.file("xl/workbook.xml").async("string");
+  if (!/fullCalcOnLoad/.test(wbXml)) {
+    if (/<calcPr\b[^/>]*\/>/.test(wbXml)) {
+      wbXml = wbXml.replace(/<calcPr\b([^/>]*)\/>/, '<calcPr$1 fullCalcOnLoad="1"/>');
+    } else if (/<calcPr\b[^>]*>/.test(wbXml)) {
+      wbXml = wbXml.replace(/<calcPr\b([^>]*)>/, '<calcPr$1 fullCalcOnLoad="1">');
+    } else {
+      wbXml = wbXml.replace(/<\/workbook>/, '<calcPr fullCalcOnLoad="1"/></workbook>');
+    }
+    zip.file("xl/workbook.xml", wbXml);
+  }
+
+  zip.file(sheetPath, xml);
+
+  const blob = await zip.generateAsync({
+    type: "blob",
+    compression: "DEFLATE",
+    mimeType: "application/vnd.ms-excel.sheet.macroEnabled.12",
+  });
+  return blob;
+}
+
+// Trigger a browser download of the filled timesheet
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 function useIsMobile() {
@@ -45,17 +259,46 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
   const [showAdminMember, setShowAdminMember] = useState(null);
   const [showForm, setShowForm] = useState(!isMobile);
 
+  async function downloadFilledTimesheet() {
+    if (filterWeek === "all" || filtered.length === 0) return null;
+    try {
+      const blob = await fillTimesheetTemplate({
+        employeeName: myName,
+        weekStartIso: filterWeek,
+        entries: filtered,
+      });
+      if (!blob) return null;
+      const safeName = (myName || "Employee").replace(/[^a-zA-Z0-9]+/g, "_");
+      const sat = (() => { const d = new Date(filterWeek + "T00:00:00"); d.setDate(d.getDate() + 5); return d.toISOString().split("T")[0]; })();
+      const filename = `FWT_Timesheet_${safeName}_WE_${sat}.xlsm`;
+      downloadBlob(blob, filename);
+      return filename;
+    } catch (err) {
+      console.error("Timesheet template fill failed:", err);
+      alert("Could not generate timesheet file: " + err.message);
+      return null;
+    }
+  }
+
   async function emailTimesheet() {
     if (filterWeek === "all" || filtered.length === 0) return;
+
+    // 1. Generate and download the filled timesheet file
+    const filename = await downloadFilledTimesheet();
+    if (!filename) return; // user cancelled or fill failed
+
+    // 2. Build the email body
     const adminEmails = await getAdminEmails();
     const recipients = [...new Set([...adminEmails, ...(predefinedEmail ? [predefinedEmail] : [])])].filter(Boolean);
-
     const getCatName = id => (LABOR_PHASES.find(l => l.id === id)?.name) || id || "—";
     const body = [
       `Timesheet submitted by ${myName}`,
       `Week of ${filterWeek}`,
       `Total: ${(totalReg + totalOT).toFixed(1)}h (Regular ${totalReg.toFixed(1)}h / OT ${totalOT.toFixed(1)}h)`,
       "",
+      `📎 Filled timesheet file (${filename}) was downloaded — please attach it to this email before sending.`,
+      "",
+      "Entries:",
       ...filtered.map(e =>
         `${e.date}  |  ${e.jobName || "—"}  |  ${e.hours}h${e.hoursType === "overtime" ? " (OT)" : ""}  |  ${getCatName(e.category)}${e.prevailingWage ? "  |  PW" : ""}${e.notes ? "  |  " + e.notes : ""}`
       ),
@@ -63,6 +306,9 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
       "— Sent from FWT Workspaces",
     ].join("\n");
 
+    // 3. Open Outlook web compose. The user will need to drag-drop the
+    // downloaded .xlsm file into the draft, since browsers can't pre-attach
+    // files via URL parameters.
     openOutlookCompose({
       to: recipients.join(","),
       cc: myEmail || "",
@@ -254,11 +500,16 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
           </div>
 
           {filterWeek !== "all" && filtered.length > 0 && (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-              <button onClick={emailTimesheet} style={{ display: "flex", alignItems: "center", gap: 6, padding: isMobile ? "12px 20px" : "8px 16px", borderRadius: 8, border: "none", background: "#10b981", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
-                <Send size={14} /> Email Timesheet
+            <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", alignItems: isMobile ? "stretch" : "center", gap: 8, marginBottom: 14 }}>
+              <button onClick={downloadFilledTimesheet} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: isMobile ? "12px 20px" : "8px 16px", borderRadius: 8, border: "1px solid #6366f1", background: "#6366f122", color: "#818cf8", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", minHeight: isMobile ? 44 : "auto" }}>
+                <Download size={15} /> Download Timesheet
               </button>
-              <span style={{ fontSize: 11, color: "#64748b" }}>Opens in Outlook / your default mail client</span>
+              <button onClick={emailTimesheet} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: isMobile ? "12px 20px" : "8px 16px", borderRadius: 8, border: "none", background: "#10b981", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", minHeight: isMobile ? 44 : "auto" }}>
+                <Send size={15} /> Email Timesheet
+              </button>
+              <span style={{ fontSize: 11, color: "#94a3b8", fontStyle: "italic" }}>
+                {isMobile ? "Email opens Outlook web — attach the downloaded file" : "Download fills the FWT template; Email also opens Outlook with body pre-filled"}
+              </span>
             </div>
           )}
 
@@ -344,4 +595,3 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
     </div>
   );
 }
-
