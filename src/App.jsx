@@ -102,7 +102,7 @@ export default function App() {
 }
 
 function LoadingScreen({ text }) {
-  return (<div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#0f1729", color: "#94a3b8", fontFamily: "'DM Sans',sans-serif" }}>
+  return (<div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#0A192F", color: "#94a3b8", fontFamily: "'DM Sans',sans-serif" }}>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet" />
     <div style={{ textAlign: "center" }}><img src="/FWT_LOGO_FULL.png" alt="FWT" style={{ width: 60, height: 60, objectFit: "contain", marginBottom: 12 }} onError={e => { e.target.style.display = "none"; }} /><div>{text}</div></div>
   </div>);
@@ -122,28 +122,29 @@ function LoginScreen() {
     setLoading(false);
   }
   async function handleGoogle() { setError(""); setLoading(true); try { await signInWithPopup(auth, googleProvider); } catch (err) { setError(err.message); } setLoading(false); }
-  const iS = { width: "100%", padding: "12px 14px", borderRadius: 10, border: "1px solid #1e293b", background: "#0f1729", color: "#e2e8f0", fontSize: 14, fontFamily: "'DM Sans',sans-serif", outline: "none" };
+  const iS = { width: "100%", padding: "12px 14px", borderRadius: 10, border: "1px solid #1A3050", background: "#0A192F", color: "#e2e8f0", fontSize: 14, fontFamily: "'DM Sans',sans-serif", outline: "none" };
   const lS = { fontSize: 11, fontWeight: 600, color: "#64748b", marginBottom: 4, display: "block", textTransform: "uppercase", letterSpacing: "0.05em" };
   return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: "#0f1729", fontFamily: "'DM Sans',sans-serif", padding: 16 }}>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: "#0A192F", fontFamily: "'DM Sans',sans-serif", padding: 16 }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet" />
       <div style={{ width: "100%", maxWidth: 400 }}>
         <div style={{ textAlign: "center", marginBottom: 32 }}>
-          <img src="/FWT_LOGO_FULL.png" alt="FWT" style={{ width: 72, height: 72, objectFit: "contain", marginBottom: 12 }} onError={e => { e.target.style.display = "none"; }} />
-          <h1 style={{ fontSize: 26, fontWeight: 800, color: "#fff", fontFamily: "'Outfit',sans-serif", margin: "0 0 4px" }}>FWT Workspaces</h1>
-          <p style={{ fontSize: 13, color: "#64748b", margin: 0 }}>Far West Technologies Project Management</p>
+          <img src="/FWT_LOGO_FULL.png" alt="Far West Technologies" style={{ width: 120, height: 120, objectFit: "contain", marginBottom: 16 }} onError={e => { e.target.style.display = "none"; }} />
+          <div style={{ height: 3, width: 60, background: "#69BE28", borderRadius: 2, margin: "0 auto 14px" }} />
+          <h1 style={{ fontSize: 26, fontWeight: 800, color: "#fff", fontFamily: "'Outfit',sans-serif", margin: "0 0 4px", letterSpacing: "0.02em" }}>FWT Workspaces</h1>
+          <p style={{ fontSize: 13, color: "#A5ACAF", margin: 0 }}>Far West Technologies Project Management</p>
         </div>
-        <div style={{ background: "#1a2332", borderRadius: 16, border: "1px solid #1e293b", padding: 24 }}>
+        <div style={{ background: "#0F2444", borderRadius: 16, border: "1px solid #1A3050", padding: 24 }}>
           <div style={{ display: "flex", gap: 4, marginBottom: 20 }}>
-            {["login", "register"].map(m => (<button key={m} onClick={() => { setMode(m); setError(""); }} style={{ flex: 1, padding: 8, borderRadius: 8, border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", background: mode === m ? "#6366f1" : "transparent", color: mode === m ? "#fff" : "#64748b" }}>{m === "login" ? "Sign In" : "Register"}</button>))}
+            {["login", "register"].map(m => (<button key={m} onClick={() => { setMode(m); setError(""); }} style={{ flex: 1, padding: 8, borderRadius: 8, border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", background: mode === m ? "#69BE28" : "transparent", color: mode === m ? "#fff" : "#64748b" }}>{m === "login" ? "Sign In" : "Register"}</button>))}
           </div>
           {mode === "register" && <div style={{ marginBottom: 12 }}><label style={lS}>Full Name</label><input style={iS} value={displayName} onChange={e => setDisplayName(e.target.value)} placeholder="John Smith" /></div>}
           <div style={{ marginBottom: 12 }}><label style={lS}>Email</label><input style={iS} type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@company.com" /></div>
           <div style={{ marginBottom: 16 }}><label style={lS}>Password</label><input style={iS} type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" onKeyDown={e => { if (e.key === "Enter") handleEmail(e); }} /></div>
           {error && <div style={{ padding: "10px 12px", borderRadius: 8, background: "#7f1d1d22", border: "1px solid #7f1d1d", color: "#fca5a5", fontSize: 12, marginBottom: 12 }}>{error}</div>}
-          <button onClick={handleEmail} disabled={loading} style={{ width: "100%", padding: 12, borderRadius: 10, border: "none", background: "#6366f1", color: "#fff", fontSize: 14, fontWeight: 600, cursor: loading ? "wait" : "pointer", fontFamily: "inherit", opacity: loading ? 0.6 : 1, marginBottom: 12 }}>{loading ? "Please wait..." : mode === "login" ? "Sign In" : "Create Account"}</button>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "16px 0" }}><div style={{ flex: 1, height: 1, background: "#1e293b" }} /><span style={{ fontSize: 11, color: "#475569" }}>or</span><div style={{ flex: 1, height: 1, background: "#1e293b" }} /></div>
-          <button onClick={handleGoogle} disabled={loading} style={{ width: "100%", padding: 12, borderRadius: 10, border: "1px solid #1e293b", background: "#0f1729", color: "#e2e8f0", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+          <button onClick={handleEmail} disabled={loading} style={{ width: "100%", padding: 12, borderRadius: 10, border: "none", background: "#69BE28", color: "#fff", fontSize: 14, fontWeight: 600, cursor: loading ? "wait" : "pointer", fontFamily: "inherit", opacity: loading ? 0.6 : 1, marginBottom: 12 }}>{loading ? "Please wait..." : mode === "login" ? "Sign In" : "Create Account"}</button>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "16px 0" }}><div style={{ flex: 1, height: 1, background: "#1A3050" }} /><span style={{ fontSize: 11, color: "#475569" }}>or</span><div style={{ flex: 1, height: 1, background: "#1A3050" }} /></div>
+          <button onClick={handleGoogle} disabled={loading} style={{ width: "100%", padding: 12, borderRadius: 10, border: "1px solid #1A3050", background: "#0A192F", color: "#e2e8f0", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
             <svg width="16" height="16" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
             Continue with Google
           </button>
@@ -154,15 +155,15 @@ function LoginScreen() {
 }
 
 function PendingScreen({ user, error }) {
-  return (<div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#0f1729", fontFamily: "'DM Sans',sans-serif", padding: 16 }}>
+  return (<div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#0A192F", fontFamily: "'DM Sans',sans-serif", padding: 16 }}>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet" />
     <div style={{ width: "100%", maxWidth: 420, padding: 32, textAlign: "center" }}>
       <div style={{ width: 56, height: 56, borderRadius: 16, background: error ? "#7f1d1d22" : "#f59e0b22", display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 20, color: error ? "#ef4444" : "#f59e0b" }}><Clock size={28} /></div>
       <h2 style={{ fontSize: 22, fontWeight: 700, color: "#fff", fontFamily: "'Outfit',sans-serif", margin: "0 0 8px" }}>{error ? "Connection Error" : "Awaiting Approval"}</h2>
       <p style={{ fontSize: 14, color: "#94a3b8", lineHeight: 1.6, margin: "0 0 24px" }}>{error ? "Unable to verify your account." : `Your account (${user.email}) is pending admin approval.`}</p>
       <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
-        <button onClick={() => window.location.reload()} style={{ padding: "10px 20px", borderRadius: 10, border: "1px solid #1e293b", background: "#1a2332", color: "#94a3b8", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Refresh</button>
-        <button onClick={() => signOut(auth)} style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: "#6366f1", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Sign Out</button>
+        <button onClick={() => window.location.reload()} style={{ padding: "10px 20px", borderRadius: 10, border: "1px solid #1A3050", background: "#0F2444", color: "#94a3b8", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Refresh</button>
+        <button onClick={() => signOut(auth)} style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: "#69BE28", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Sign Out</button>
       </div>
     </div>
   </div>);
@@ -181,7 +182,7 @@ function Tracker({ user, userRecord }) {
   const [showNewProject, setShowNewProject] = useState(false);
   const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
-  const [newPhaseName, setNewPhaseName] = useState(""); const [newPhaseColor, setNewPhaseColor] = useState("#6366f1");
+  const [newPhaseName, setNewPhaseName] = useState(""); const [newPhaseColor, setNewPhaseColor] = useState("#69BE28");
   const [newTeamName, setNewTeamName] = useState(""); const [newTeamRole, setNewTeamRole] = useState("");
   const [syncStatus, setSyncStatus] = useState("connecting");
   const [lastSync, setLastSync] = useState(null);
@@ -317,7 +318,7 @@ function Tracker({ user, userRecord }) {
   const filteredProjects = data.projects.filter(p => !searchTerm || p.name.toLowerCase().includes(searchTerm.toLowerCase()) || p.customer.toLowerCase().includes(searchTerm.toLowerCase()));
   const phaseMap = {}; data.phases.forEach(ph => { phaseMap[ph.id] = ph; });
 
-  const sC = { connecting: { c: "#f59e0b", t: "Connecting...", s: true }, synced: { c: "#10b981", t: "Live", s: false }, saving: { c: "#6366f1", t: "Saving...", s: true }, reconnecting: { c: "#f59e0b", t: "Reconnecting...", s: true }, error: { c: "#ef4444", t: "Offline", s: false } }[syncStatus] || { c: "#10b981", t: "Live", s: false };
+  const sC = { connecting: { c: "#f59e0b", t: "Connecting...", s: true }, synced: { c: "#10b981", t: "Live", s: false }, saving: { c: "#69BE28", t: "Saving...", s: true }, reconnecting: { c: "#f59e0b", t: "Reconnecting...", s: true }, error: { c: "#ef4444", t: "Offline", s: false } }[syncStatus] || { c: "#10b981", t: "Live", s: false };
 
   const navItems = [
     { id: "dashboard", icon: Home, label: "Dashboard" },
@@ -346,7 +347,7 @@ function Tracker({ user, userRecord }) {
   const SidebarContent = (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
       {/* Logo */}
-      <div style={{ padding: "16px 16px 14px", borderBottom: "1px solid #1e293b", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <div style={{ padding: "16px 16px 14px", borderBottom: "1px solid #1A3050", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <img src="/FWT_LOGO_FULL.png" alt="FWT" style={{ width: 36, height: 36, objectFit: "contain", borderRadius: 4 }} onError={e => { e.target.style.display = "none"; }} />
           <div>
@@ -365,7 +366,7 @@ function Tracker({ user, userRecord }) {
       <nav style={{ padding: "12px 8px", flex: 1, overflowY: "auto" }}>
         {navItems.map(item => (
           <button key={item.id} onClick={() => navigate(item.id)}
-            style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: isMobile ? "13px 12px" : "10px 12px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 500, background: view === item.id && !selectedProject ? "#1e293b" : "transparent", color: view === item.id && !selectedProject ? "#fff" : "#94a3b8", marginBottom: 2, fontFamily: "inherit" }}>
+            style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: isMobile ? "13px 12px" : "10px 12px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 500, background: view === item.id && !selectedProject ? "#1A3050" : "transparent", color: view === item.id && !selectedProject ? "#fff" : "#94a3b8", marginBottom: 2, fontFamily: "inherit" }}>
             <item.icon size={16} />{item.label}
           </button>
         ))}
@@ -373,14 +374,14 @@ function Tracker({ user, userRecord }) {
         <div style={{ padding: "16px 12px 6px", fontSize: 10, fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.08em" }}>My Space</div>
         {mySpaceItems.map(item => (
           <button key={item.id} onClick={() => navigate("myspace", item.id)}
-            style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: isMobile ? "12px 12px" : "8px 12px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 500, background: view === "myspace" && mySpaceTab === item.id ? "#1e293b" : "transparent", color: view === "myspace" && mySpaceTab === item.id ? "#fff" : "#64748b", marginBottom: 1, fontFamily: "inherit" }}>
+            style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: isMobile ? "12px 12px" : "8px 12px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 500, background: view === "myspace" && mySpaceTab === item.id ? "#1A3050" : "transparent", color: view === "myspace" && mySpaceTab === item.id ? "#fff" : "#64748b", marginBottom: 1, fontFamily: "inherit" }}>
             <span style={{ fontSize: 16 }}>{item.icon}</span>{item.label}
           </button>
         ))}
       </nav>
 
       {/* Footer */}
-      <div style={{ padding: "12px 16px", borderTop: "1px solid #1e293b" }}>
+      <div style={{ padding: "12px 16px", borderTop: "1px solid #1A3050" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
           <div style={{ width: 8, height: 8, borderRadius: "50%", background: sC.c }} />
           <RefreshCw size={12} style={{ color: sC.c, animation: sC.s ? "spin 1s linear infinite" : "none" }} />
@@ -388,10 +389,10 @@ function Tracker({ user, userRecord }) {
           <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0" }}>
-          <div style={{ width: 32, height: 32, borderRadius: "50%", background: "#6366f1", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "#fff", flexShrink: 0 }}>{myName.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()}</div>
+          <div style={{ width: 32, height: 32, borderRadius: "50%", background: "#69BE28", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "#fff", flexShrink: 0 }}>{myName.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()}</div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{myName}</div>
-            {isAdmin && <div style={{ fontSize: 9, color: "#6366f1", fontWeight: 700, textTransform: "uppercase" }}>Admin</div>}
+            {isAdmin && <div style={{ fontSize: 9, color: "#69BE28", fontWeight: 700, textTransform: "uppercase" }}>Admin</div>}
           </div>
           <button onClick={() => signOut(auth)} title="Sign out" style={{ background: "none", border: "none", color: "#475569", cursor: "pointer", padding: 4 }}><LogOut size={14} /></button>
         </div>
@@ -400,7 +401,7 @@ function Tracker({ user, userRecord }) {
   );
 
   return (
-    <div style={{ display: "flex", height: "100vh", fontFamily: "'DM Sans',sans-serif", background: "#0f1729", color: "#e2e8f0", overflow: "hidden" }}>
+    <div style={{ display: "flex", height: "100vh", fontFamily: "'DM Sans',sans-serif", background: "#0A192F", color: "#e2e8f0", overflow: "hidden" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet" />
       {/* Mobile-friendly overrides — bumps form controls to touch-friendly sizes on phones.
           16px input font also prevents iOS auto-zoom on input focus. */}
@@ -450,14 +451,14 @@ function Tracker({ user, userRecord }) {
       {isMobile ? (
         <div style={{
           position: "fixed", top: 0, left: 0, bottom: 0, width: 260,
-          background: "#0b1120", borderRight: "1px solid #1e293b",
+          background: "#001528", borderRight: "1px solid #1A3050",
           transform: sidebarOpen ? "translateX(0)" : "translateX(-100%)",
           transition: "transform 0.25s ease", zIndex: 50, display: "flex", flexDirection: "column"
         }}>
           {SidebarContent}
         </div>
       ) : (
-        <div style={{ width: 220, background: "#0b1120", borderRight: "1px solid #1e293b", display: "flex", flexDirection: "column", flexShrink: 0 }}>
+        <div style={{ width: 220, background: "#001528", borderRight: "1px solid #1A3050", display: "flex", flexDirection: "column", flexShrink: 0 }}>
           {SidebarContent}
         </div>
       )}
@@ -465,7 +466,7 @@ function Tracker({ user, userRecord }) {
       {/* Main content */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
         {/* Top bar */}
-        <div style={{ padding: isMobile ? "10px 16px" : "12px 24px", borderBottom: "1px solid #1e293b", display: "flex", alignItems: "center", gap: 10, background: "#0f1729", flexShrink: 0 }}>
+        <div style={{ padding: isMobile ? "10px 16px" : "12px 24px", borderBottom: "1px solid #1A3050", display: "flex", alignItems: "center", gap: 10, background: "#0A192F", flexShrink: 0 }}>
           {/* Hamburger on mobile */}
           {isMobile && (
             <button onClick={() => setSidebarOpen(true)} style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", padding: 4, flexShrink: 0 }}>
@@ -483,9 +484,9 @@ function Tracker({ user, userRecord }) {
             <>
               <div style={{ position: "relative", flex: 1, maxWidth: 320 }}>
                 <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#475569" }} />
-                <input value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search projects..." style={{ width: "100%", padding: "8px 12px 8px 32px", borderRadius: 8, border: "1px solid #1e293b", background: "#1e293b", color: "#e2e8f0", fontSize: 13, fontFamily: "inherit", outline: "none" }} />
+                <input value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search projects..." style={{ width: "100%", padding: "8px 12px 8px 32px", borderRadius: 8, border: "1px solid #1A3050", background: "#1A3050", color: "#e2e8f0", fontSize: 13, fontFamily: "inherit", outline: "none" }} />
               </div>
-              <button onClick={() => setShowNewProject(true)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, border: "none", background: "#6366f1", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}><Plus size={15} /> New Project</button>
+              <button onClick={() => setShowNewProject(true)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, border: "none", background: "#69BE28", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}><Plus size={15} /> New Project</button>
             </>
           ) : (
             <div style={{ fontSize: isMobile ? 15 : 15, fontWeight: 600, color: "#fff", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -495,7 +496,7 @@ function Tracker({ user, userRecord }) {
 
           {/* Mobile board actions */}
           {isMobile && view === "board" && !selectedProject && (
-            <button onClick={() => setShowNewProject(true)} style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 36, height: 36, borderRadius: 8, border: "none", background: "#6366f1", color: "#fff", cursor: "pointer", flexShrink: 0 }}>
+            <button onClick={() => setShowNewProject(true)} style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 36, height: 36, borderRadius: 8, border: "none", background: "#69BE28", color: "#fff", cursor: "pointer", flexShrink: 0 }}>
               <Plus size={18} />
             </button>
           )}
@@ -584,10 +585,10 @@ function KanbanBoard({ projects, phases, onSelectProject, onDragStart, onDrop, d
   return (
     <div style={{ display: "flex", gap: 12, padding: "16px 20px", height: "100%", overflowX: "auto", alignItems: "flex-start" }}>
       {orphaned.length > 0 && (
-        <div style={{ minWidth: 280, maxWidth: 280, background: "#1a2332", borderRadius: 12, border: "2px dashed #f59e0b", display: "flex", flexDirection: "column", maxHeight: "100%", flexShrink: 0 }}>
-          <div style={{ padding: "14px 14px 10px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid #1e293b" }}><div style={{ width: 10, height: 10, borderRadius: "50%", background: "#f59e0b" }} /><span style={{ fontSize: 13, fontWeight: 600, color: "#f59e0b", flex: 1 }}>Needs Reassignment</span><span style={{ fontSize: 11, color: "#64748b", background: "#0f1729", borderRadius: 10, padding: "2px 8px" }}>{orphaned.length}</span></div>
+        <div style={{ minWidth: 280, maxWidth: 280, background: "#0F2444", borderRadius: 12, border: "2px dashed #f59e0b", display: "flex", flexDirection: "column", maxHeight: "100%", flexShrink: 0 }}>
+          <div style={{ padding: "14px 14px 10px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid #1A3050" }}><div style={{ width: 10, height: 10, borderRadius: "50%", background: "#f59e0b" }} /><span style={{ fontSize: 13, fontWeight: 600, color: "#f59e0b", flex: 1 }}>Needs Reassignment</span><span style={{ fontSize: 11, color: "#64748b", background: "#0A192F", borderRadius: 10, padding: "2px 8px" }}>{orphaned.length}</span></div>
           <div style={{ padding: 8, overflowY: "auto", flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
-            {orphaned.map(p => (<div key={p.id} onClick={() => onSelectProject(p)} style={{ padding: 12, borderRadius: 8, background: "#0f1729", border: "1px solid #f59e0b33", cursor: "pointer" }}>
+            {orphaned.map(p => (<div key={p.id} onClick={() => onSelectProject(p)} style={{ padding: 12, borderRadius: 8, background: "#0A192F", border: "1px solid #f59e0b33", cursor: "pointer" }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: "#fff", marginBottom: 4 }}>{p.name}</div>
               <div style={{ fontSize: 11, color: "#f59e0b", marginBottom: 4 }}>Phase "{p.phaseId}" no longer exists</div>
               <div style={{ fontSize: 11, color: "#64748b" }}>{p.customer}</div>
@@ -596,13 +597,13 @@ function KanbanBoard({ projects, phases, onSelectProject, onDragStart, onDrop, d
         </div>
       )}
       {phases.map(phase => { const pp = projects.filter(p => p.phaseId === phase.id); const isOver = dragItem && dragItem.phaseId !== phase.id; return (
-        <div key={phase.id} onDragOver={e => e.preventDefault()} onDrop={() => onDrop(phase.id)} style={{ minWidth: 280, maxWidth: 280, background: "#1a2332", borderRadius: 12, border: isOver ? `2px dashed ${phase.color}` : "1px solid #1e293b", display: "flex", flexDirection: "column", maxHeight: "100%", flexShrink: 0 }}>
-          <div style={{ padding: "14px 14px 10px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid #1e293b" }}><div style={{ width: 10, height: 10, borderRadius: "50%", background: phase.color }} /><span style={{ fontSize: 13, fontWeight: 600, color: "#fff", flex: 1 }}>{phase.name}</span><span style={{ fontSize: 11, color: "#64748b", background: "#0f1729", borderRadius: 10, padding: "2px 8px" }}>{pp.length}</span></div>
+        <div key={phase.id} onDragOver={e => e.preventDefault()} onDrop={() => onDrop(phase.id)} style={{ minWidth: 280, maxWidth: 280, background: "#0F2444", borderRadius: 12, border: isOver ? `2px dashed ${phase.color}` : "1px solid #1A3050", display: "flex", flexDirection: "column", maxHeight: "100%", flexShrink: 0 }}>
+          <div style={{ padding: "14px 14px 10px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid #1A3050" }}><div style={{ width: 10, height: 10, borderRadius: "50%", background: phase.color }} /><span style={{ fontSize: 13, fontWeight: 600, color: "#fff", flex: 1 }}>{phase.name}</span><span style={{ fontSize: 11, color: "#64748b", background: "#0A192F", borderRadius: 10, padding: "2px 8px" }}>{pp.length}</span></div>
           <div style={{ padding: 8, overflowY: "auto", flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
-            {pp.map(p => (<div key={p.id} draggable onDragStart={() => onDragStart(p)} onClick={() => onSelectProject(p)} style={{ padding: 12, borderRadius: 8, background: "#0f1729", border: "1px solid #1e293b", cursor: "pointer" }} onMouseEnter={e => e.currentTarget.style.borderColor = phase.color} onMouseLeave={e => e.currentTarget.style.borderColor = "#1e293b"}>
+            {pp.map(p => (<div key={p.id} draggable onDragStart={() => onDragStart(p)} onClick={() => onSelectProject(p)} style={{ padding: 12, borderRadius: 8, background: "#0A192F", border: "1px solid #1A3050", cursor: "pointer" }} onMouseEnter={e => e.currentTarget.style.borderColor = phase.color} onMouseLeave={e => e.currentTarget.style.borderColor = "#1A3050"}>
               <div style={{ fontSize: 13, fontWeight: 600, color: "#fff", marginBottom: 4 }}>{p.name}</div>
               <div style={{ fontSize: 11, color: "#64748b", marginBottom: 6 }}>{p.customer}</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>{p.projectTypes?.map(t => <span key={t} style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: "#1e293b", color: "#94a3b8" }}>{t}</span>)}</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>{p.projectTypes?.map(t => <span key={t} style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: "#1A3050", color: "#94a3b8" }}>{t}</span>)}</div>
               {p.tasks?.length > 0 && <div style={{ marginTop: 6, fontSize: 11, color: "#64748b" }}>✓ {p.tasks.filter(t => t.done).length}/{p.tasks.length} tasks</div>}
             </div>))}
             {pp.length === 0 && <div style={{ padding: 16, textAlign: "center", fontSize: 12, color: "#334155" }}>Drag projects here</div>}
@@ -636,7 +637,7 @@ function KanbanListView({ projects, phases, orphaned, onSelectProject, onMovePha
       <div
         onClick={() => onSelectProject(p)}
         style={{
-          background: "#0f1729",
+          background: "#0A192F",
           borderRadius: 10,
           border: `1px solid ${phase ? phase.color + "44" : "#7f1d1d"}`,
           borderLeft: `4px solid ${phase ? phase.color : "#f59e0b"}`,
@@ -658,7 +659,7 @@ function KanbanListView({ projects, phases, orphaned, onSelectProject, onMovePha
               padding: "8px 12px",
               borderRadius: 8,
               border: "1px solid #334155",
-              background: "#1a2332",
+              background: "#0F2444",
               color: "#cbd5e1",
               fontSize: 12,
               fontWeight: 600,
@@ -678,7 +679,7 @@ function KanbanListView({ projects, phases, orphaned, onSelectProject, onMovePha
         {p.projectTypes?.length > 0 && (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
             {p.projectTypes.map(t => (
-              <span key={t} style={{ fontSize: 11, padding: "3px 8px", borderRadius: 4, background: "#1e293b", color: "#94a3b8" }}>{t}</span>
+              <span key={t} style={{ fontSize: 11, padding: "3px 8px", borderRadius: 4, background: "#1A3050", color: "#94a3b8" }}>{t}</span>
             ))}
           </div>
         )}
@@ -696,11 +697,11 @@ function KanbanListView({ projects, phases, orphaned, onSelectProject, onMovePha
     <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 12 }}>
       {/* Orphaned projects */}
       {orphaned.length > 0 && (
-        <div style={{ background: "#1a2332", borderRadius: 12, border: "2px dashed #f59e0b", padding: 12 }}>
+        <div style={{ background: "#0F2444", borderRadius: 12, border: "2px dashed #f59e0b", padding: 12 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
             <div style={{ width: 12, height: 12, borderRadius: "50%", background: "#f59e0b" }} />
             <span style={{ fontSize: 14, fontWeight: 700, color: "#f59e0b", flex: 1 }}>Needs Reassignment</span>
-            <span style={{ fontSize: 12, color: "#f59e0b", background: "#0f1729", borderRadius: 10, padding: "3px 10px", fontWeight: 600 }}>{orphaned.length}</span>
+            <span style={{ fontSize: 12, color: "#f59e0b", background: "#0A192F", borderRadius: 10, padding: "3px 10px", fontWeight: 600 }}>{orphaned.length}</span>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {orphaned.map(p => <ProjectCard key={p.id} p={p} phase={null} />)}
@@ -713,7 +714,7 @@ function KanbanListView({ projects, phases, orphaned, onSelectProject, onMovePha
         const pp = projects.filter(p => p.phaseId === phase.id);
         const isCollapsed = collapsed[phase.id];
         return (
-          <div key={phase.id} style={{ background: "#1a2332", borderRadius: 12, border: "1px solid #1e293b", overflow: "hidden" }}>
+          <div key={phase.id} style={{ background: "#0F2444", borderRadius: 12, border: "1px solid #1A3050", overflow: "hidden" }}>
             <button
               onClick={() => toggle(phase.id)}
               style={{
@@ -752,7 +753,7 @@ function KanbanListView({ projects, phases, orphaned, onSelectProject, onMovePha
           <div onClick={() => setMovePickerFor(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 200 }} />
           <div style={{
             position: "fixed", left: 0, right: 0, bottom: 0,
-            background: "#1a2332", borderTop: "1px solid #334155",
+            background: "#0F2444", borderTop: "1px solid #334155",
             borderRadius: "16px 16px 0 0",
             padding: 16,
             paddingBottom: "max(16px, env(safe-area-inset-bottom))",
@@ -763,7 +764,7 @@ function KanbanListView({ projects, phases, orphaned, onSelectProject, onMovePha
                 <div style={{ fontSize: 11, color: "#64748b", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.05em" }}>Move project to phase</div>
                 <div style={{ fontSize: 16, fontWeight: 700, color: "#fff", marginTop: 2 }}>{movePickerFor.name}</div>
               </div>
-              <button onClick={() => setMovePickerFor(null)} style={{ width: 40, height: 40, borderRadius: 8, border: "none", background: "#0f1729", color: "#94a3b8", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <button onClick={() => setMovePickerFor(null)} style={{ width: 40, height: 40, borderRadius: 8, border: "none", background: "#0A192F", color: "#94a3b8", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                 <X size={20} />
               </button>
             </div>
@@ -782,7 +783,7 @@ function KanbanListView({ projects, phases, orphaned, onSelectProject, onMovePha
                       padding: "14px 14px",
                       borderRadius: 10,
                       border: isCurrent ? `2px solid ${ph.color}` : "1px solid #334155",
-                      background: isCurrent ? ph.color + "22" : "#0f1729",
+                      background: isCurrent ? ph.color + "22" : "#0A192F",
                       cursor: isCurrent ? "default" : "pointer",
                       fontFamily: "inherit",
                       minHeight: 56,
@@ -810,23 +811,23 @@ function ScheduleView({ schedule, teamRoster, projects, onUpdate }) {
   function getWeekDates(off) { const now = new Date(); const d = now.getDay(); const m = new Date(now); m.setDate(now.getDate() - (d === 0 ? 6 : d - 1) + off * 7); const ds = []; for (let i = 0; i < 7; i++) { const x = new Date(m); x.setDate(m.getDate() + i); ds.push(x.toISOString().split("T")[0]); } return ds; }
   const dates = getWeekDates(wo); const today = new Date().toISOString().split("T")[0];
   const fmt = ds => new Date(ds + "T00:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
-  const iS = { width: "100%", padding: "4px 6px", borderRadius: 6, border: "1px solid #1e293b", background: "#0f1729", color: "#e2e8f0", fontSize: 11, fontFamily: "'DM Sans',sans-serif", outline: "none" };
+  const iS = { width: "100%", padding: "4px 6px", borderRadius: 6, border: "1px solid #1A3050", background: "#0A192F", color: "#e2e8f0", fontSize: 11, fontFamily: "'DM Sans',sans-serif", outline: "none" };
   return (<div style={{ padding: "20px 24px" }}>
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <button onClick={() => setWo(w => w - 1)} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #1e293b", background: "#1a2332", color: "#94a3b8", cursor: "pointer" }}>←</button>
+        <button onClick={() => setWo(w => w - 1)} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #1A3050", background: "#0F2444", color: "#94a3b8", cursor: "pointer" }}>←</button>
         <span style={{ fontSize: 15, fontWeight: 700, color: "#fff", fontFamily: "'Outfit',sans-serif" }}>{fmt(dates[0])} — {fmt(dates[6])}</span>
-        <button onClick={() => setWo(w => w + 1)} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #1e293b", background: "#1a2332", color: "#94a3b8", cursor: "pointer" }}>→</button>
+        <button onClick={() => setWo(w => w + 1)} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #1A3050", background: "#0F2444", color: "#94a3b8", cursor: "pointer" }}>→</button>
       </div>
-      <button onClick={() => setWo(0)} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #1e293b", background: wo === 0 ? "#6366f1" : "#1a2332", color: wo === 0 ? "#fff" : "#94a3b8", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>This Week</button>
+      <button onClick={() => setWo(0)} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #1A3050", background: wo === 0 ? "#69BE28" : "#0F2444", color: wo === 0 ? "#fff" : "#94a3b8", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>This Week</button>
     </div>
     {teamRoster.length === 0 ? <div style={{ textAlign: "center", padding: 48, color: "#334155" }}>Add team members first.</div> : (
       <div style={{ overflowX: "auto" }}><div style={{ display: "grid", gridTemplateColumns: "160px repeat(7, 1fr)", gap: 1, minWidth: 900 }}>
-        <div style={{ padding: "10px 12px", background: "#1a2332", fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>Team Member</div>
-        {dates.map(d => <div key={d} style={{ padding: "10px 8px", background: d === today ? "#6366f122" : "#1a2332", textAlign: "center", fontSize: 11, fontWeight: 600, color: d === today ? "#818cf8" : "#94a3b8" }}>{fmt(d)}</div>)}
+        <div style={{ padding: "10px 12px", background: "#0F2444", fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>Team Member</div>
+        {dates.map(d => <div key={d} style={{ padding: "10px 8px", background: d === today ? "#69BE2822" : "#0F2444", textAlign: "center", fontSize: 11, fontWeight: 600, color: d === today ? "#82CC4A" : "#94a3b8" }}>{fmt(d)}</div>)}
         {teamRoster.map(member => (<>
-          <div key={`n-${member.id}`} style={{ padding: "10px 12px", background: "#0b1120", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid #1e293b" }}><div style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0" }}>{member.name}</div></div>
-          {dates.map(d => <div key={`${member.id}-${d}`} style={{ padding: "6px 4px", background: d === today ? "#6366f108" : "#0f1729", borderBottom: "1px solid #1e293b" }}><select style={iS} value={schedule[d]?.[member.name] || ""} onChange={e => { const dd = { ...(schedule[d] || {}) }; if (e.target.value) dd[member.name] = e.target.value; else delete dd[member.name]; onUpdate({ ...schedule, [d]: dd }); }}><option value="">— Off —</option>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>)}
+          <div key={`n-${member.id}`} style={{ padding: "10px 12px", background: "#001528", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid #1A3050" }}><div style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0" }}>{member.name}</div></div>
+          {dates.map(d => <div key={`${member.id}-${d}`} style={{ padding: "6px 4px", background: d === today ? "#69BE2808" : "#0A192F", borderBottom: "1px solid #1A3050" }}><select style={iS} value={schedule[d]?.[member.name] || ""} onChange={e => { const dd = { ...(schedule[d] || {}) }; if (e.target.value) dd[member.name] = e.target.value; else delete dd[member.name]; onUpdate({ ...schedule, [d]: dd }); }}><option value="">— Off —</option>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>)}
         </>))}
       </div></div>
     )}
@@ -835,19 +836,19 @@ function ScheduleView({ schedule, teamRoster, projects, onUpdate }) {
 
 /* ═══ TEAM, PHASES, ADMIN ═══ */
 function TeamView({ teamRoster, newTeamName, setNewTeamName, newTeamRole, setNewTeamRole, onAdd, onRemove }) {
-  const iS = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1e293b", background: "#1a2332", color: "#e2e8f0", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none" };
+  const iS = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1A3050", background: "#0F2444", color: "#e2e8f0", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none" };
   return (<div style={{ maxWidth: 600, margin: "0 auto", padding: 24 }}>
-    <div style={{ display: "flex", gap: 8, marginBottom: 20 }}><input style={{ ...iS, flex: 1 }} placeholder="Name" value={newTeamName} onChange={e => setNewTeamName(e.target.value)} /><input style={{ ...iS, flex: 1 }} placeholder="Role" value={newTeamRole} onChange={e => setNewTeamRole(e.target.value)} /><button onClick={onAdd} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: "#6366f1", color: "#fff", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}><Plus size={15} /></button></div>
-    {teamRoster.map(m => (<div key={m.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", background: "#1a2332", borderRadius: 10, border: "1px solid #1e293b", marginBottom: 8 }}><div style={{ width: 36, height: 36, borderRadius: "50%", background: "#6366f122", display: "flex", alignItems: "center", justifyContent: "center", color: "#818cf8" }}><User size={16} /></div><div style={{ flex: 1 }}><div style={{ fontSize: 14, fontWeight: 600, color: "#fff" }}>{m.name}</div><div style={{ fontSize: 12, color: "#64748b" }}>{m.role || "Team Member"}</div></div><button onClick={() => onRemove(m.id)} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer" }}><X size={16} /></button></div>))}
+    <div style={{ display: "flex", gap: 8, marginBottom: 20 }}><input style={{ ...iS, flex: 1 }} placeholder="Name" value={newTeamName} onChange={e => setNewTeamName(e.target.value)} /><input style={{ ...iS, flex: 1 }} placeholder="Role" value={newTeamRole} onChange={e => setNewTeamRole(e.target.value)} /><button onClick={onAdd} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: "#69BE28", color: "#fff", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}><Plus size={15} /></button></div>
+    {teamRoster.map(m => (<div key={m.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", background: "#0F2444", borderRadius: 10, border: "1px solid #1A3050", marginBottom: 8 }}><div style={{ width: 36, height: 36, borderRadius: "50%", background: "#69BE2822", display: "flex", alignItems: "center", justifyContent: "center", color: "#82CC4A" }}><User size={16} /></div><div style={{ flex: 1 }}><div style={{ fontSize: 14, fontWeight: 600, color: "#fff" }}>{m.name}</div><div style={{ fontSize: 12, color: "#64748b" }}>{m.role || "Team Member"}</div></div><button onClick={() => onRemove(m.id)} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer" }}><X size={16} /></button></div>))}
   </div>);
 }
 
 function PhaseSettings({ phases, newPhaseName, setNewPhaseName, newPhaseColor, setNewPhaseColor, onAdd, onRemove, onMoveUp, onMoveDown }) {
-  const iS = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1e293b", background: "#1a2332", color: "#e2e8f0", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none" };
-  const cols = ["#6366f1", "#8b5cf6", "#3b82f6", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#ec4899", "#6b7280", "#14b8a6"];
+  const iS = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1A3050", background: "#0F2444", color: "#e2e8f0", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none" };
+  const cols = ["#002244", "#8b5cf6", "#3b82f6", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#ec4899", "#6b7280", "#14b8a6"];
   return (<div style={{ maxWidth: 600, margin: "0 auto", padding: 24 }}>
-    <div style={{ display: "flex", gap: 8, marginBottom: 8 }}><input style={{ ...iS, flex: 1 }} placeholder="New phase" value={newPhaseName} onChange={e => setNewPhaseName(e.target.value)} onKeyDown={e => { if (e.key === "Enter") onAdd(); }} /><div style={{ display: "flex", gap: 4 }}>{cols.map(c => <button key={c} onClick={() => setNewPhaseColor(c)} style={{ width: 22, height: 22, borderRadius: "50%", background: c, border: newPhaseColor === c ? "2px solid #fff" : "2px solid transparent", cursor: "pointer" }} />)}</div><button onClick={onAdd} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: "#6366f1", color: "#fff", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}><Plus size={15} /></button></div>
-    <div style={{ marginTop: 16 }}>{phases.map((p, i) => (<div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "#1a2332", borderRadius: 10, border: "1px solid #1e293b", marginBottom: 6 }}><div style={{ width: 14, height: 14, borderRadius: "50%", background: p.color }} /><span style={{ flex: 1, fontSize: 14, fontWeight: 600, color: "#fff" }}>{p.name}</span><button onClick={() => onMoveUp(i)} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer" }}><ChevronUp size={16} /></button><button onClick={() => onMoveDown(i)} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer" }}><ChevronDown size={16} /></button><button onClick={() => onRemove(p.id)} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer" }}><X size={16} /></button></div>))}</div>
+    <div style={{ display: "flex", gap: 8, marginBottom: 8 }}><input style={{ ...iS, flex: 1 }} placeholder="New phase" value={newPhaseName} onChange={e => setNewPhaseName(e.target.value)} onKeyDown={e => { if (e.key === "Enter") onAdd(); }} /><div style={{ display: "flex", gap: 4 }}>{cols.map(c => <button key={c} onClick={() => setNewPhaseColor(c)} style={{ width: 22, height: 22, borderRadius: "50%", background: c, border: newPhaseColor === c ? "2px solid #fff" : "2px solid transparent", cursor: "pointer" }} />)}</div><button onClick={onAdd} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: "#69BE28", color: "#fff", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}><Plus size={15} /></button></div>
+    <div style={{ marginTop: 16 }}>{phases.map((p, i) => (<div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "#0F2444", borderRadius: 10, border: "1px solid #1A3050", marginBottom: 6 }}><div style={{ width: 14, height: 14, borderRadius: "50%", background: p.color }} /><span style={{ flex: 1, fontSize: 14, fontWeight: 600, color: "#fff" }}>{p.name}</span><button onClick={() => onMoveUp(i)} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer" }}><ChevronUp size={16} /></button><button onClick={() => onMoveDown(i)} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer" }}><ChevronDown size={16} /></button><button onClick={() => onRemove(p.id)} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer" }}><X size={16} /></button></div>))}</div>
   </div>);
 }
 
@@ -873,12 +874,12 @@ function PredefinedEmailSetting() {
       setSaved(true); setTimeout(() => setSaved(false), 2000);
     } catch {}
   }
-  const eS = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1e293b", background: "#0f1729", color: "#e2e8f0", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none" };
+  const eS = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1A3050", background: "#0A192F", color: "#e2e8f0", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none" };
   if (loading) return <div style={{ fontSize: 12, color: "#475569" }}>Loading...</div>;
   return (
     <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
       <input style={{ ...eS, flex: 1 }} type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="additional-recipient@company.com" />
-      <button onClick={save} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: saved ? "#10b981" : "#6366f1", color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>{saved ? "✓ Saved" : "Save"}</button>
+      <button onClick={save} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: saved ? "#10b981" : "#69BE28", color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>{saved ? "✓ Saved" : "Save"}</button>
     </div>
   );
 }
@@ -895,15 +896,15 @@ function UserAdminView() {
   if (loading) return <div style={{ padding: 40, textAlign: "center", color: "#64748b" }}>Loading...</div>;
   return (<div style={{ maxWidth: 700, margin: "0 auto", padding: 24 }}>
     <p style={{ fontSize: 13, color: "#64748b", marginBottom: 20 }}>Manage who can access FWT Workspaces.</p>
-    <div style={{ background: "#1a2332", borderRadius: 12, border: "1px solid #1e293b", padding: 20, marginBottom: 24 }}>
+    <div style={{ background: "#0F2444", borderRadius: 12, border: "1px solid #1A3050", padding: 20, marginBottom: 24 }}>
       <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", marginBottom: 10, textTransform: "uppercase" }}>Email Notifications</div>
       <p style={{ fontSize: 12, color: "#64748b", marginBottom: 10 }}>Daily logs, timesheets, and task notifications are automatically emailed to all admins. Add an additional recipient below (e.g., office manager, payroll).</p>
       <PredefinedEmailSetting />
     </div>
     {pending.length > 0 && <><div style={{ fontSize: 12, fontWeight: 700, color: "#f59e0b", marginBottom: 10, textTransform: "uppercase" }}>Pending ({pending.length})</div>
-      {pending.map(([uid, u]) => (<div key={uid} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", background: "#1a2332", borderRadius: 10, border: "1px solid #f59e0b33", marginBottom: 6 }}><div style={{ flex: 1 }}><div style={{ fontSize: 14, fontWeight: 600, color: "#fff" }}>{u.displayName}</div><div style={{ fontSize: 12, color: "#64748b" }}>{u.email}</div></div><button onClick={() => approve(uid)} style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: "#10b981", color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Approve</button><button onClick={() => remove(uid)} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #7f1d1d", background: "transparent", color: "#ef4444", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Deny</button></div>))}</>}
+      {pending.map(([uid, u]) => (<div key={uid} style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", background: "#0F2444", borderRadius: 10, border: "1px solid #f59e0b33", marginBottom: 6 }}><div style={{ flex: 1 }}><div style={{ fontSize: 14, fontWeight: 600, color: "#fff" }}>{u.displayName}</div><div style={{ fontSize: 12, color: "#64748b" }}>{u.email}</div></div><button onClick={() => approve(uid)} style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: "#10b981", color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Approve</button><button onClick={() => remove(uid)} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #7f1d1d", background: "transparent", color: "#ef4444", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Deny</button></div>))}</>}
     <div style={{ fontSize: 12, fontWeight: 700, color: "#10b981", marginBottom: 10, marginTop: pending.length > 0 ? 20 : 0, textTransform: "uppercase" }}>Approved ({approved.length})</div>
-    {approved.map(([uid, u]) => (<div key={uid} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", background: "#1a2332", borderRadius: 10, border: "1px solid #1e293b", marginBottom: 6 }}><div style={{ flex: 1 }}><div style={{ fontSize: 14, fontWeight: 600, color: "#fff" }}>{u.displayName}{u.role === "admin" && <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 4, background: "#6366f1", color: "#fff", fontWeight: 700, marginLeft: 6 }}>ADMIN</span>}</div><div style={{ fontSize: 12, color: "#64748b" }}>{u.email}</div></div><button onClick={() => toggleAdmin(uid)} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #1e293b", background: "transparent", color: "#94a3b8", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{u.role === "admin" ? "Remove Admin" : "Make Admin"}</button>{u.role !== "admin" && <button onClick={() => remove(uid)} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer" }}><X size={14} /></button>}</div>))}
+    {approved.map(([uid, u]) => (<div key={uid} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", background: "#0F2444", borderRadius: 10, border: "1px solid #1A3050", marginBottom: 6 }}><div style={{ flex: 1 }}><div style={{ fontSize: 14, fontWeight: 600, color: "#fff" }}>{u.displayName}{u.role === "admin" && <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 4, background: "#69BE28", color: "#fff", fontWeight: 700, marginLeft: 6 }}>ADMIN</span>}</div><div style={{ fontSize: 12, color: "#64748b" }}>{u.email}</div></div><button onClick={() => toggleAdmin(uid)} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #1A3050", background: "transparent", color: "#94a3b8", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{u.role === "admin" ? "Remove Admin" : "Make Admin"}</button>{u.role !== "admin" && <button onClick={() => remove(uid)} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer" }}><X size={14} /></button>}</div>))}
   </div>);
 }
 
@@ -913,7 +914,7 @@ function QuickAddButton({ projects, onAddTask, onAddNote, onAddMaterial, isMobil
   const [type, setType] = useState("task");
   const [pid, setPid] = useState("");
   const [text, setText] = useState("");
-  const qS = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1e293b", background: "#0f1729", color: "#e2e8f0", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none" };
+  const qS = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1A3050", background: "#0A192F", color: "#e2e8f0", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none" };
   function submit() {
     if (!text.trim() || !pid) return;
     if (type === "task") onAddTask(pid, { text: text.trim(), assignee: "", category: "projects" });
@@ -924,12 +925,12 @@ function QuickAddButton({ projects, onAddTask, onAddNote, onAddMaterial, isMobil
   const panelWidth = isMobile ? "calc(100vw - 32px)" : 340;
   const panelRight = isMobile ? 16 : 24;
   return (<>
-    <button onClick={() => setOpen(!open)} style={{ position: "fixed", bottom: 24, right: 24, width: 52, height: 52, borderRadius: "50%", border: "none", background: "linear-gradient(135deg, #6366f1, #8b5cf6)", color: "#fff", fontSize: 24, cursor: "pointer", boxShadow: "0 4px 20px rgba(99,102,241,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 90, transition: "transform 0.2s", transform: open ? "rotate(45deg)" : "none" }}><Plus size={24} /></button>
+    <button onClick={() => setOpen(!open)} style={{ position: "fixed", bottom: 24, right: 24, width: 52, height: 52, borderRadius: "50%", border: "none", background: "linear-gradient(135deg, #69BE28, #002244)", color: "#fff", fontSize: 24, cursor: "pointer", boxShadow: "0 4px 20px rgba(105,190,40,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 90, transition: "transform 0.2s", transform: open ? "rotate(45deg)" : "none" }}><Plus size={24} /></button>
     {open && (
-      <div style={{ position: "fixed", bottom: 88, right: panelRight, width: panelWidth, background: "#1a2332", borderRadius: 16, border: "1px solid #1e293b", padding: 20, zIndex: 90, boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
+      <div style={{ position: "fixed", bottom: 88, right: panelRight, width: panelWidth, background: "#0F2444", borderRadius: 16, border: "1px solid #1A3050", padding: 20, zIndex: 90, boxShadow: "0 8px 32px rgba(0,0,0,0.4)" }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}>⚡ Quick Add</div>
         <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
-          {["task", "note", "material"].map(t => (<button key={t} onClick={() => setType(t)} style={{ flex: 1, padding: "8px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", background: type === t ? "#6366f1" : "transparent", color: type === t ? "#fff" : "#64748b", textTransform: "capitalize" }}>{t}</button>))}
+          {["task", "note", "material"].map(t => (<button key={t} onClick={() => setType(t)} style={{ flex: 1, padding: "8px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", background: type === t ? "#69BE28" : "transparent", color: type === t ? "#fff" : "#64748b", textTransform: "capitalize" }}>{t}</button>))}
         </div>
         <select style={{ ...qS, marginBottom: 8 }} value={pid} onChange={e => setPid(e.target.value)}>
           <option value="">Select project...</option>
@@ -937,7 +938,7 @@ function QuickAddButton({ projects, onAddTask, onAddNote, onAddMaterial, isMobil
         </select>
         <input style={qS} value={text} onChange={e => setText(e.target.value)} placeholder={type === "task" ? "Task description..." : type === "note" ? "Note..." : "Material item..."} onKeyDown={e => { if (e.key === "Enter") submit(); }} />
         <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
-          <button onClick={submit} style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: "#6366f1", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", opacity: text.trim() && pid ? 1 : 0.4 }}>Add</button>
+          <button onClick={submit} style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: "#69BE28", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", opacity: text.trim() && pid ? 1 : 0.4 }}>Add</button>
         </div>
       </div>
     )}
@@ -953,15 +954,15 @@ function NewProjectModal({ phases, onSave, onClose, templates }) {
     window.addEventListener("resize", handler);
     return () => window.removeEventListener("resize", handler);
   }, []);
-  const iS = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1e293b", background: "#0f1729", color: "#e2e8f0", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none" };
+  const iS = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1A3050", background: "#0A192F", color: "#e2e8f0", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none" };
   const lS = { fontSize: 11, fontWeight: 600, color: "#64748b", marginBottom: 4, display: "block", textTransform: "uppercase", letterSpacing: "0.05em" };
   const cols = isMobile ? "1fr" : "1fr 1fr";
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: isMobile ? "flex-end" : "center", justifyContent: "center", zIndex: 100, padding: isMobile ? 0 : 16 }}>
       <div style={{
-        background: "#1a2332",
+        background: "#0F2444",
         borderRadius: isMobile ? "16px 16px 0 0" : 16,
-        border: "1px solid #1e293b",
+        border: "1px solid #1A3050",
         padding: isMobile ? 18 : 24,
         width: "100%",
         maxWidth: isMobile ? "100%" : 520,
@@ -969,12 +970,12 @@ function NewProjectModal({ phases, onSave, onClose, templates }) {
         overflowY: "auto",
         paddingBottom: isMobile ? "max(18px, env(safe-area-inset-bottom))" : 24,
       }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}><h2 style={{ fontSize: 18, fontWeight: 700, color: "#fff", fontFamily: "'Outfit',sans-serif", margin: 0 }}>New Project</h2><button onClick={onClose} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "#0f1729", color: "#94a3b8", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><X size={18} /></button></div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}><h2 style={{ fontSize: 18, fontWeight: 700, color: "#fff", fontFamily: "'Outfit',sans-serif", margin: 0 }}>New Project</h2><button onClick={onClose} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "#0A192F", color: "#94a3b8", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><X size={18} /></button></div>
         {templates && templates.length > 0 && (
           <div style={{ marginBottom: 16 }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: "#64748b", marginBottom: 6, textTransform: "uppercase" }}>Start from template</div>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {templates.map((t, i) => (<button key={i} onClick={() => setForm({ ...form, name: form.name || t.name, projectTypes: t.projectTypes || [], type: t.type || "retrofit", tasks: (t.tasks || []).map(tk => ({ ...tk, id: genId(), done: false })), devices: t.devices || [] })} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #1e293b", background: "#0f1729", color: "#cbd5e1", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 4, minHeight: 36 }}><Copy size={12} /> {t.name}</button>))}
+              {templates.map((t, i) => (<button key={i} onClick={() => setForm({ ...form, name: form.name || t.name, projectTypes: t.projectTypes || [], type: t.type || "retrofit", tasks: (t.tasks || []).map(tk => ({ ...tk, id: genId(), done: false })), devices: t.devices || [] })} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #1A3050", background: "#0A192F", color: "#cbd5e1", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 4, minHeight: 36 }}><Copy size={12} /> {t.name}</button>))}
             </div>
           </div>
         )}
@@ -984,11 +985,10 @@ function NewProjectModal({ phases, onSave, onClose, templates }) {
           <div style={{ display: "grid", gridTemplateColumns: cols, gap: 12 }}><div><label style={lS}>Phone</label><input style={iS} type="tel" value={form.contactPhone} onChange={e => setForm({ ...form, contactPhone: e.target.value })} /></div><div><label style={lS}>Email</label><input style={iS} type="email" value={form.contactEmail} onChange={e => setForm({ ...form, contactEmail: e.target.value })} /></div></div>
           <div><label style={lS}>Site Address</label><input style={iS} value={form.siteAddress} onChange={e => setForm({ ...form, siteAddress: e.target.value })} /></div>
           <div style={{ display: "grid", gridTemplateColumns: cols, gap: 12 }}><div><label style={lS}>Phase</label><select style={iS} value={form.phaseId} onChange={e => setForm({ ...form, phaseId: e.target.value })}>{phases.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div><div><label style={lS}>Type</label><select style={iS} value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}><option value="retrofit">Retrofit</option><option value="new-construction">New Construction</option></select></div></div>
-          <div><label style={lS}>Systems</label><div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>{PROJECT_TYPES.map(pt => (<button key={pt} onClick={() => { const t = form.projectTypes || []; setForm({ ...form, projectTypes: t.includes(pt) ? t.filter(x => x !== pt) : [...t, pt] }); }} style={{ padding: "8px 14px", borderRadius: 6, border: "1px solid #1e293b", fontSize: 12, cursor: "pointer", fontFamily: "inherit", background: (form.projectTypes || []).includes(pt) ? "#6366f1" : "transparent", color: (form.projectTypes || []).includes(pt) ? "#fff" : "#94a3b8", minHeight: 36, fontWeight: 600 }}>{pt}</button>))}</div></div>
+          <div><label style={lS}>Systems</label><div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>{PROJECT_TYPES.map(pt => (<button key={pt} onClick={() => { const t = form.projectTypes || []; setForm({ ...form, projectTypes: t.includes(pt) ? t.filter(x => x !== pt) : [...t, pt] }); }} style={{ padding: "8px 14px", borderRadius: 6, border: "1px solid #1A3050", fontSize: 12, cursor: "pointer", fontFamily: "inherit", background: (form.projectTypes || []).includes(pt) ? "#69BE28" : "transparent", color: (form.projectTypes || []).includes(pt) ? "#fff" : "#94a3b8", minHeight: 36, fontWeight: 600 }}>{pt}</button>))}</div></div>
         </div>
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 20 }}><button onClick={onClose} style={{ flex: isMobile ? 1 : "0 0 auto", padding: "12px 20px", borderRadius: 8, border: "1px solid #1e293b", background: "transparent", color: "#cbd5e1", fontSize: 14, cursor: "pointer", fontFamily: "inherit", fontWeight: 600 }}>Cancel</button><button onClick={() => { if (form.name.trim() && form.customer.trim()) onSave(form); }} style={{ flex: isMobile ? 2 : "0 0 auto", padding: "12px 24px", borderRadius: 8, border: "none", background: "#6366f1", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", opacity: form.name.trim() && form.customer.trim() ? 1 : 0.4 }}>Create Project</button></div>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 20 }}><button onClick={onClose} style={{ flex: isMobile ? 1 : "0 0 auto", padding: "12px 20px", borderRadius: 8, border: "1px solid #1A3050", background: "transparent", color: "#cbd5e1", fontSize: 14, cursor: "pointer", fontFamily: "inherit", fontWeight: 600 }}>Cancel</button><button onClick={() => { if (form.name.trim() && form.customer.trim()) onSave(form); }} style={{ flex: isMobile ? 2 : "0 0 auto", padding: "12px 24px", borderRadius: 8, border: "none", background: "#69BE28", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", opacity: form.name.trim() && form.customer.trim() ? 1 : 0.4 }}>Create Project</button></div>
       </div>
     </div>
   );
 }
-
