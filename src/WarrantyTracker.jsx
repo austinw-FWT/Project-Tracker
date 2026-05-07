@@ -53,6 +53,57 @@ export default function WarrantyTracker({ projects, onUpdateProject }) {
     <div style={{ maxWidth: 860, margin: "0 auto", padding: 24 }}>
       <p style={{ fontSize: 13, color: "#64748b", marginBottom: 20 }}>Track warranties across all projects. Get alerted before coverage expires.</p>
 
+      {/* Projects currently in warranty period (handed off from Closeout) */}
+      {(() => {
+        const inWarranty = projects.filter(p => p.movedToWarranty);
+        if (inWarranty.length === 0) return null;
+        return (
+          <div style={{ background: "#0F2444", borderRadius: 12, border: "1px solid #1A3050", padding: 16, marginBottom: 20 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
+              <Shield size={16} style={{ color: "#69BE28" }} />
+              Projects in Warranty Period
+              <span style={{ fontSize: 11, color: "#69BE28", background: "#69BE2822", borderRadius: 10, padding: "2px 10px", fontWeight: 700 }}>{inWarranty.length}</span>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {inWarranty.map(p => {
+                const start = p.warrantyStartDate ? new Date(p.warrantyStartDate) : null;
+                const daysIn = start ? Math.floor((today - start) / (1000 * 60 * 60 * 24)) : null;
+                return (
+                  <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", background: "#0A192F", borderRadius: 8, borderLeft: "3px solid #69BE28" }}>
+                    <Shield size={16} style={{ color: "#69BE28", flexShrink: 0 }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
+                      <div style={{ fontSize: 11, color: "#94a3b8" }}>
+                        {p.customer}
+                        {start && <> · Started {start.toLocaleDateString()}{daysIn !== null && ` (${daysIn}d ago)`}</>}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => {
+                        if (confirm(`Return "${p.name}" to the active project board?`)) {
+                          onUpdateProject(p.id, { movedToWarranty: false });
+                        }
+                      }}
+                      style={{
+                        padding: "6px 12px", borderRadius: 6,
+                        border: "1px solid #1A3050",
+                        background: "transparent",
+                        color: "#94a3b8",
+                        fontSize: 11, fontWeight: 600,
+                        cursor: "pointer", fontFamily: "inherit",
+                        flexShrink: 0,
+                      }}
+                    >
+                      Return to Active
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Summary */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, marginBottom: 20 }}>
         {[
