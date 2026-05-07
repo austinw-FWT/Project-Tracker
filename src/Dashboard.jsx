@@ -1,7 +1,14 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { AlertCircle, Clock, DollarSign, CheckCircle2, Calendar, ArrowRight, TrendingUp, Package } from "lucide-react";
 
 export default function Dashboard({ data, myName, onSelectProject, onNavigate }) {
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener("resize", handler);
+    return () => window.removeEventListener("resize", handler);
+  }, []);
+
   const projects = data.projects || [];
   const myPrivate = (data.memberPrivate || {})[myName] || {};
   const schedule = data.schedule || {};
@@ -10,9 +17,15 @@ export default function Dashboard({ data, myName, onSelectProject, onNavigate })
   // My assigned projects
   const myProjects = projects.filter(p => (p.teamMembers || []).includes(myName));
 
-  // Today's schedule
-  const todayAssignment = schedule[today]?.[myName];
-  const todayProject = todayAssignment ? projects.find(p => p.id === todayAssignment) : null;
+  // Today's schedule — handle both legacy (string) and new (array of entries) formats
+  const rawAssignment = schedule[today]?.[myName];
+  let todayProject = null;
+  if (typeof rawAssignment === "string" && rawAssignment) {
+    todayProject = projects.find(p => p.id === rawAssignment) || null;
+  } else if (Array.isArray(rawAssignment)) {
+    const projEntry = rawAssignment.find(e => e.type === "project" && e.id);
+    if (projEntry) todayProject = projects.find(p => p.id === projEntry.id) || null;
+  }
 
   // Overdue tasks across my projects
   const overdueTasks = [];
@@ -55,15 +68,15 @@ export default function Dashboard({ data, myName, onSelectProject, onNavigate })
   const iS = { background: "#1a2332", borderRadius: 12, border: "1px solid #1e293b", padding: "18px 20px" };
 
   return (
-    <div style={{ maxWidth: 960, margin: "0 auto", padding: "20px 24px" }}>
+    <div style={{ maxWidth: 960, margin: "0 auto", padding: isMobile ? "16px 14px" : "20px 24px" }}>
       {/* Welcome */}
       <div style={{ marginBottom: 24 }}>
-        <h1 style={{ fontSize: 24, fontWeight: 700, color: "#fff", fontFamily: "'Outfit',sans-serif", margin: "0 0 4px" }}>Good {new Date().getHours() < 12 ? "morning" : new Date().getHours() < 17 ? "afternoon" : "evening"}, {myName.split(" ")[0]}</h1>
-        <p style={{ fontSize: 13, color: "#64748b", margin: 0 }}>{new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</p>
+        <h1 style={{ fontSize: isMobile ? 22 : 24, fontWeight: 700, color: "#fff", fontFamily: "'Outfit',sans-serif", margin: "0 0 4px" }}>Good {new Date().getHours() < 12 ? "morning" : new Date().getHours() < 17 ? "afternoon" : "evening"}, {myName.split(" ")[0]}</h1>
+        <p style={{ fontSize: 13, color: "#94a3b8", margin: 0 }}>{new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</p>
       </div>
 
       {/* Top Row: Today + Daily Progress */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, marginBottom: 12 }}>
         <div style={iS}>
           <div style={{ fontSize: 12, fontWeight: 700, color: "#64748b", textTransform: "uppercase", marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}><Calendar size={14} /> Today's Assignment</div>
           {todayProject ? (
@@ -87,7 +100,7 @@ export default function Dashboard({ data, myName, onSelectProject, onNavigate })
       </div>
 
       {/* Alerts Row */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, marginBottom: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 12 }}>
         {[
           { label: "My Tasks", value: overdueTasks.length, color: overdueTasks.length > 0 ? "#f59e0b" : "#10b981", icon: CheckCircle2 },
           { label: "Budget Alerts", value: budgetWarnings.length, color: budgetWarnings.length > 0 ? "#ef4444" : "#10b981", icon: TrendingUp },
@@ -102,7 +115,7 @@ export default function Dashboard({ data, myName, onSelectProject, onNavigate })
       </div>
 
       {/* My Projects + Opportunities */}
-      <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr", gap: 16, marginBottom: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1.5fr 1fr", gap: 12, marginBottom: 12 }}>
         <div style={iS}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
             <span style={{ fontSize: 12, fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>My Active Projects ({myProjects.length})</span>
@@ -177,3 +190,4 @@ export default function Dashboard({ data, myName, onSelectProject, onNavigate })
     </div>
   );
 }
+
