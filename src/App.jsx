@@ -9,7 +9,6 @@ import TimesheetView from "./TimesheetView.jsx";
 import Dashboard from "./Dashboard.jsx";
 import Contacts from "./Contacts.jsx";
 import WarrantyTracker from "./WarrantyTracker.jsx";
-import MeetingNotes from "./MeetingNotes.jsx";
 
 const FB_URL = "https://fwt-lv-tracker-default-rtdb.firebaseio.com";
 const DB_PATH = "/tracker";
@@ -275,27 +274,21 @@ function Tracker({ user, userRecord }) {
   function addProject(project) {
     const now = new Date().toISOString();
     const np = { ...EMPTY_PROJECT, ...project, id: genId(), phaseId: project.phaseId || data.phases[0]?.id || "awarded", createdAt: now, updatedAt: now };
-    // Auto-add customer to contacts archive if not already present (matched by company name, case-insensitive)
-    let contacts = data.contacts || [];
-    const customerName = (np.customer || "").trim();
-    if (customerName && !contacts.some(c => (c.company || "").trim().toLowerCase() === customerName.toLowerCase())) {
-      contacts = [...contacts, {
-        id: genId(),
-        company: customerName,
-        contactName: np.contactName || "",
-        phone: np.contactPhone || "",
-        email: np.contactEmail || "",
-        address: np.siteAddress || "",
-        notes: `Auto-added from project: ${np.name}`,
-        type: "customer",
-        createdAt: now,
-        updatedAt: now,
-      }];
-    }
-    saveData({ ...data, projects: [...data.projects, np], contacts }); setShowNewProject(false);
+    saveData({ ...data, projects: [...data.projects, np] }); setShowNewProject(false);
   }
   function deleteProject(pid) { saveData({ ...data, projects: data.projects.filter(p => p.id !== pid) }); setSelectedProject(null); }
-  function handleDrop(phaseId) { if (dragItem && dragItem.phaseId !== phaseId) updateProject(dragItem.id, { phaseId }); setDragItem(null); }
+  function handleDrop(phaseId, explicitProjectId) {
+    // Two call patterns:
+    //  - Drag-and-drop on desktop kanban: onDrop(phaseId), pulls from dragItem state
+    //  - Tap "Move →" on mobile list view: onDrop(phaseId, projectId), explicit
+    if (explicitProjectId) {
+      const proj = data.projects.find(p => p.id === explicitProjectId);
+      if (proj && proj.phaseId !== phaseId) updateProject(explicitProjectId, { phaseId });
+      return;
+    }
+    if (dragItem && dragItem.phaseId !== phaseId) updateProject(dragItem.id, { phaseId });
+    setDragItem(null);
+  }
   function getMyPrivate() { return (data.memberPrivate || {})[myName] || {}; }
   function saveMyPrivate(updates) { saveData({ ...data, memberPrivate: { ...(data.memberPrivate || {}), [myName]: { ...getMyPrivate(), ...updates } } }); }
 
@@ -321,7 +314,7 @@ function Tracker({ user, userRecord }) {
   if (loading) return <LoadingScreen text="Connecting to Firebase..." />;
   if (!data) return null;
 
-  const filteredProjects = data.projects.filter(p => !p.movedToWarranty && (!searchTerm || p.name.toLowerCase().includes(searchTerm.toLowerCase()) || p.customer.toLowerCase().includes(searchTerm.toLowerCase())));
+  const filteredProjects = data.projects.filter(p => !searchTerm || p.name.toLowerCase().includes(searchTerm.toLowerCase()) || p.customer.toLowerCase().includes(searchTerm.toLowerCase()));
   const phaseMap = {}; data.phases.forEach(ph => { phaseMap[ph.id] = ph; });
 
   const sC = { connecting: { c: "#f59e0b", t: "Connecting...", s: true }, synced: { c: "#10b981", t: "Live", s: false }, saving: { c: "#6366f1", t: "Saving...", s: true }, reconnecting: { c: "#f59e0b", t: "Reconnecting...", s: true }, error: { c: "#ef4444", t: "Offline", s: false } }[syncStatus] || { c: "#10b981", t: "Live", s: false };
@@ -339,15 +332,13 @@ function Tracker({ user, userRecord }) {
 
   const mySpaceItems = [
     { id: "daily", label: "Daily Task Board", icon: "📋" },
-    { id: "weekly", label: "Weekly Task Board", icon: "📅" },
     { id: "dailylog", label: "Daily Log", icon: "📝" },
-    { id: "meetings", label: "Meeting Notes", icon: "📓" },
     { id: "opportunities", label: "Opportunities", icon: "🎯" },
     { id: "timesheets", label: "My Timesheets", icon: "⏱️" },
   ];
 
   const currentPageTitle = selectedProject ? selectedProject.name
-    : view === "myspace" ? (mySpaceTab === "daily" ? "Daily Task Board" : mySpaceTab === "weekly" ? "Weekly Task Board" : mySpaceTab === "dailylog" ? "Daily Log" : mySpaceTab === "meetings" ? "Meeting Notes" : mySpaceTab === "opportunities" ? "Opportunities" : "My Timesheets")
+    : view === "myspace" ? (mySpaceTab === "daily" ? "Daily Task Board" : mySpaceTab === "dailylog" ? "Daily Log" : mySpaceTab === "opportunities" ? "Opportunities" : "My Timesheets")
     : view === "team" ? "Team Roster" : view === "schedule" ? "Team Schedule" : view === "admin" ? "User Admin"
     : view === "contacts" ? "Contacts" : view === "warranties" ? "Warranties" : view === "dashboard" ? "Dashboard"
     : view === "board" ? "Project Board" : "Phase Settings";
@@ -483,11 +474,9 @@ function Tracker({ user, userRecord }) {
           ) : view === "contacts" ? (
             <Contacts contacts={data.contacts || []} projects={data.projects} onSave={c => saveData({ ...data, contacts: c })} />
           ) : view === "warranties" ? (
-            <WarrantyTracker projects={data.projects} onUpdateProject={(pid, u) => updateProject(pid, u)} onSelectProject={p => { setSelectedProject(p); setDetailTab("overview"); }} />
+            <WarrantyTracker projects={data.projects} onUpdateProject={(pid, u) => updateProject(pid, u)} />
           ) : view === "myspace" && mySpaceTab === "daily" ? (
-            <DailyTracker data={getMyPrivate().dailyTracker} view="daily" onSave={dt => saveMyPrivate({ dailyTracker: dt })} />
-          ) : view === "myspace" && mySpaceTab === "weekly" ? (
-            <DailyTracker data={getMyPrivate().dailyTracker} view="weekly" onSave={dt => saveMyPrivate({ dailyTracker: dt })} />
+            <DailyTracker data={getMyPrivate().dailyTracker} archivedDays={getMyPrivate().archivedDays || []} onSave={dt => saveMyPrivate({ dailyTracker: dt })} onArchive={archive => saveMyPrivate({ archivedDays: archive })} />
           ) : view === "myspace" && mySpaceTab === "dailylog" ? (
             <MyDailyLog dailyLogs={getMyPrivate().dailyLogs || []} projects={data.projects} teamRoster={data.teamRoster} myName={myName} myEmail={user.email} predefinedEmail={data.adminSettings?.predefinedEmail || ""}
               onSubmit={(logs, projectUpdates) => {
@@ -498,10 +487,6 @@ function Tracker({ user, userRecord }) {
                 saveData(nd);
               }}
               onDeleteLog={logs => saveMyPrivate({ dailyLogs: logs })} />
-          ) : view === "myspace" && mySpaceTab === "meetings" ? (
-            <MeetingNotes
-              meetings={getMyPrivate().meetings || []}
-              onSave={meetings => saveMyPrivate({ meetings })} />
           ) : view === "myspace" && mySpaceTab === "opportunities" ? (
             <Opportunities opportunities={getMyPrivate().opportunities || []} onSave={opps => saveMyPrivate({ opportunities: opps })} onConvert={opp => { addProject({ ...opp, phaseId: "awarded" }); const opps = (getMyPrivate().opportunities || []).filter(o => o.id !== opp.id); saveMyPrivate({ opportunities: opps }); }} />
           ) : view === "myspace" && mySpaceTab === "timesheets" ? (
@@ -535,13 +520,33 @@ function Tracker({ user, userRecord }) {
   );
 }
 
-/* ═══ KANBAN BOARD ═══ */
+/* ═══ KANBAN BOARD ═══
+   On wide screens, horizontal Kanban with drag-and-drop.
+   On narrow screens (< 900px — phones and iPad portrait), vertical phase-grouped lists
+   with a "Move →" button per project that opens a bottom-sheet phase picker.
+   Drag-and-drop is unreliable on touch devices, so we replace it on narrow screens. */
 function KanbanBoard({ projects, phases, onSelectProject, onDragStart, onDrop, dragItem, isMobile }) {
+  // Use a separate breakpoint for the kanban list/board switch, since iPad portrait
+  // is 768px (above isMobile) but still benefits from the list view.
+  const [useListView, setUseListView] = useState(() => window.innerWidth < 900);
+  useEffect(() => {
+    const handler = () => setUseListView(window.innerWidth < 900);
+    window.addEventListener("resize", handler);
+    return () => window.removeEventListener("resize", handler);
+  }, []);
+
   const orphaned = projects.filter(p => !phases.some(ph => ph.id === p.phaseId));
+
+  // ── LIST VIEW (mobile + iPad portrait) ──
+  if (useListView) {
+    return <KanbanListView projects={projects} phases={phases} orphaned={orphaned} onSelectProject={onSelectProject} onMovePhase={(pid, newPhaseId) => onDrop(newPhaseId, pid)} />;
+  }
+
+  // ── BOARD VIEW (desktop + iPad landscape) — original drag-and-drop kanban ──
   return (
-    <div style={{ display: "flex", gap: 12, padding: isMobile ? "12px" : "16px 20px", height: "100%", overflowX: "auto", alignItems: "flex-start" }}>
+    <div style={{ display: "flex", gap: 12, padding: "16px 20px", height: "100%", overflowX: "auto", alignItems: "flex-start" }}>
       {orphaned.length > 0 && (
-        <div style={{ minWidth: isMobile ? 260 : 280, maxWidth: isMobile ? 260 : 280, background: "#1a2332", borderRadius: 12, border: "2px dashed #f59e0b", display: "flex", flexDirection: "column", maxHeight: "100%", flexShrink: 0 }}>
+        <div style={{ minWidth: 280, maxWidth: 280, background: "#1a2332", borderRadius: 12, border: "2px dashed #f59e0b", display: "flex", flexDirection: "column", maxHeight: "100%", flexShrink: 0 }}>
           <div style={{ padding: "14px 14px 10px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid #1e293b" }}><div style={{ width: 10, height: 10, borderRadius: "50%", background: "#f59e0b" }} /><span style={{ fontSize: 13, fontWeight: 600, color: "#f59e0b", flex: 1 }}>Needs Reassignment</span><span style={{ fontSize: 11, color: "#64748b", background: "#0f1729", borderRadius: 10, padding: "2px 8px" }}>{orphaned.length}</span></div>
           <div style={{ padding: 8, overflowY: "auto", flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
             {orphaned.map(p => (<div key={p.id} onClick={() => onSelectProject(p)} style={{ padding: 12, borderRadius: 8, background: "#0f1729", border: "1px solid #f59e0b33", cursor: "pointer" }}>
@@ -553,7 +558,7 @@ function KanbanBoard({ projects, phases, onSelectProject, onDragStart, onDrop, d
         </div>
       )}
       {phases.map(phase => { const pp = projects.filter(p => p.phaseId === phase.id); const isOver = dragItem && dragItem.phaseId !== phase.id; return (
-        <div key={phase.id} onDragOver={e => e.preventDefault()} onDrop={() => onDrop(phase.id)} style={{ minWidth: isMobile ? 260 : 280, maxWidth: isMobile ? 260 : 280, background: "#1a2332", borderRadius: 12, border: isOver ? `2px dashed ${phase.color}` : "1px solid #1e293b", display: "flex", flexDirection: "column", maxHeight: "100%", flexShrink: 0 }}>
+        <div key={phase.id} onDragOver={e => e.preventDefault()} onDrop={() => onDrop(phase.id)} style={{ minWidth: 280, maxWidth: 280, background: "#1a2332", borderRadius: 12, border: isOver ? `2px dashed ${phase.color}` : "1px solid #1e293b", display: "flex", flexDirection: "column", maxHeight: "100%", flexShrink: 0 }}>
           <div style={{ padding: "14px 14px 10px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid #1e293b" }}><div style={{ width: 10, height: 10, borderRadius: "50%", background: phase.color }} /><span style={{ fontSize: 13, fontWeight: 600, color: "#fff", flex: 1 }}>{phase.name}</span><span style={{ fontSize: 11, color: "#64748b", background: "#0f1729", borderRadius: 10, padding: "2px 8px" }}>{pp.length}</span></div>
           <div style={{ padding: 8, overflowY: "auto", flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
             {pp.map(p => (<div key={p.id} draggable onDragStart={() => onDragStart(p)} onClick={() => onSelectProject(p)} style={{ padding: 12, borderRadius: 8, background: "#0f1729", border: "1px solid #1e293b", cursor: "pointer" }} onMouseEnter={e => e.currentTarget.style.borderColor = phase.color} onMouseLeave={e => e.currentTarget.style.borderColor = "#1e293b"}>
@@ -569,95 +574,207 @@ function KanbanBoard({ projects, phases, onSelectProject, onDragStart, onDrop, d
   );
 }
 
-/* ═══ SCHEDULE VIEW ═══ */
-/*
- * Schedule data model (backward-compatible migration happens on read):
- *   Old: schedule[date][memberName] = "projectId"  (or "" for off)
- *   New: schedule[date][memberName] = [{ type: 'project'|'training'|'office'|'pto'|'off', id?: string }]
- *
- * Day-type codes for non-project assignments are stored as string constants.
- */
-const DAY_TYPES = [
-  { code: "training",  label: "Training",  color: "#8b5cf6", short: "📚 Training" },
-  { code: "office",    label: "Office",    color: "#0ea5e9", short: "🏢 Office" },
-  { code: "pto",       label: "PTO / Vacation", color: "#f59e0b", short: "🌴 PTO" },
-  { code: "off",       label: "Off / Unavailable", color: "#6b7280", short: "🚫 Off" },
-];
+/* ── Mobile/portrait list view: phases as collapsible sections ── */
+function KanbanListView({ projects, phases, orphaned, onSelectProject, onMovePhase }) {
+  // Collapsed state per phase. Default: expand phases that have projects.
+  const [collapsed, setCollapsed] = useState(() => {
+    const init = {};
+    phases.forEach(ph => {
+      const count = projects.filter(p => p.phaseId === ph.id).length;
+      init[ph.id] = count === 0; // collapsed if empty
+    });
+    return init;
+  });
+  const [movePickerFor, setMovePickerFor] = useState(null); // project being moved
 
-// Normalize any legacy string entry into an array of entry objects
-function normalizeDayEntries(raw) {
-  if (!raw) return [];
-  if (Array.isArray(raw)) return raw;
-  // Legacy: string projectId OR "" for off
-  if (typeof raw === "string") {
-    return raw ? [{ type: "project", id: raw }] : [];
+  function toggle(phaseId) {
+    setCollapsed(c => ({ ...c, [phaseId]: !c[phaseId] }));
   }
-  return [];
+
+  function ProjectCard({ p, phase }) {
+    const taskCount = p.tasks?.length || 0;
+    const doneCount = (p.tasks || []).filter(t => t.done).length;
+    return (
+      <div
+        onClick={() => onSelectProject(p)}
+        style={{
+          background: "#0f1729",
+          borderRadius: 10,
+          border: `1px solid ${phase ? phase.color + "44" : "#7f1d1d"}`,
+          borderLeft: `4px solid ${phase ? phase.color : "#f59e0b"}`,
+          padding: "14px 14px 12px",
+          cursor: "pointer",
+          display: "flex",
+          flexDirection: "column",
+          gap: 6,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "#fff", lineHeight: 1.25, wordBreak: "break-word" }}>{p.name}</div>
+            <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>{p.customer || "—"}</div>
+          </div>
+          <button
+            onClick={e => { e.stopPropagation(); setMovePickerFor(p); }}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 8,
+              border: "1px solid #334155",
+              background: "#1a2332",
+              color: "#cbd5e1",
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: "pointer",
+              fontFamily: "inherit",
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              flexShrink: 0,
+              minHeight: 38,
+            }}
+          >
+            Move →
+          </button>
+        </div>
+
+        {p.projectTypes?.length > 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+            {p.projectTypes.map(t => (
+              <span key={t} style={{ fontSize: 11, padding: "3px 8px", borderRadius: 4, background: "#1e293b", color: "#94a3b8" }}>{t}</span>
+            ))}
+          </div>
+        )}
+
+        {taskCount > 0 && (
+          <div style={{ fontSize: 12, color: doneCount === taskCount ? "#10b981" : "#64748b" }}>
+            ✓ {doneCount}/{taskCount} tasks
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: "12px 14px", display: "flex", flexDirection: "column", gap: 12 }}>
+      {/* Orphaned projects */}
+      {orphaned.length > 0 && (
+        <div style={{ background: "#1a2332", borderRadius: 12, border: "2px dashed #f59e0b", padding: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+            <div style={{ width: 12, height: 12, borderRadius: "50%", background: "#f59e0b" }} />
+            <span style={{ fontSize: 14, fontWeight: 700, color: "#f59e0b", flex: 1 }}>Needs Reassignment</span>
+            <span style={{ fontSize: 12, color: "#f59e0b", background: "#0f1729", borderRadius: 10, padding: "3px 10px", fontWeight: 600 }}>{orphaned.length}</span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {orphaned.map(p => <ProjectCard key={p.id} p={p} phase={null} />)}
+          </div>
+        </div>
+      )}
+
+      {/* Each phase as a collapsible section */}
+      {phases.map(phase => {
+        const pp = projects.filter(p => p.phaseId === phase.id);
+        const isCollapsed = collapsed[phase.id];
+        return (
+          <div key={phase.id} style={{ background: "#1a2332", borderRadius: 12, border: "1px solid #1e293b", overflow: "hidden" }}>
+            <button
+              onClick={() => toggle(phase.id)}
+              style={{
+                display: "flex", alignItems: "center", gap: 10,
+                width: "100%", padding: "14px 16px",
+                background: "transparent", border: "none",
+                cursor: "pointer", fontFamily: "inherit",
+                color: "#fff", textAlign: "left",
+                minHeight: 56,
+                borderLeft: `4px solid ${phase.color}`,
+              }}
+            >
+              <span style={{ fontSize: 16, fontWeight: 700, flex: 1 }}>{phase.name}</span>
+              <span style={{ fontSize: 13, color: phase.color, background: phase.color + "22", borderRadius: 12, padding: "3px 12px", fontWeight: 700, minWidth: 30, textAlign: "center" }}>
+                {pp.length}
+              </span>
+              <ChevronDown size={20} style={{ color: "#64748b", transform: isCollapsed ? "rotate(-90deg)" : "rotate(0)", transition: "transform 0.15s" }} />
+            </button>
+            {!isCollapsed && pp.length > 0 && (
+              <div style={{ padding: "0 12px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
+                {pp.map(p => <ProjectCard key={p.id} p={p} phase={phase} />)}
+              </div>
+            )}
+            {!isCollapsed && pp.length === 0 && (
+              <div style={{ padding: "12px 16px 16px", fontSize: 13, color: "#475569", fontStyle: "italic" }}>
+                No projects in this phase
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {/* Bottom-sheet move-to-phase picker */}
+      {movePickerFor && (
+        <>
+          <div onClick={() => setMovePickerFor(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 200 }} />
+          <div style={{
+            position: "fixed", left: 0, right: 0, bottom: 0,
+            background: "#1a2332", borderTop: "1px solid #334155",
+            borderRadius: "16px 16px 0 0",
+            padding: 16,
+            paddingBottom: "max(16px, env(safe-area-inset-bottom))",
+            zIndex: 201, maxHeight: "75vh", overflowY: "auto",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+              <div>
+                <div style={{ fontSize: 11, color: "#64748b", textTransform: "uppercase", fontWeight: 700, letterSpacing: "0.05em" }}>Move project to phase</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: "#fff", marginTop: 2 }}>{movePickerFor.name}</div>
+              </div>
+              <button onClick={() => setMovePickerFor(null)} style={{ width: 40, height: 40, borderRadius: 8, border: "none", background: "#0f1729", color: "#94a3b8", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <X size={20} />
+              </button>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {phases.map(ph => {
+                const isCurrent = ph.id === movePickerFor.phaseId;
+                return (
+                  <button
+                    key={ph.id}
+                    onClick={() => {
+                      if (!isCurrent) onMovePhase(movePickerFor.id, ph.id);
+                      setMovePickerFor(null);
+                    }}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 12,
+                      padding: "14px 14px",
+                      borderRadius: 10,
+                      border: isCurrent ? `2px solid ${ph.color}` : "1px solid #334155",
+                      background: isCurrent ? ph.color + "22" : "#0f1729",
+                      cursor: isCurrent ? "default" : "pointer",
+                      fontFamily: "inherit",
+                      minHeight: 56,
+                      textAlign: "left",
+                      opacity: isCurrent ? 0.7 : 1,
+                    }}
+                  >
+                    <div style={{ width: 14, height: 14, borderRadius: "50%", background: ph.color, flexShrink: 0 }} />
+                    <span style={{ flex: 1, fontSize: 15, color: "#fff", fontWeight: 600 }}>{ph.name}</span>
+                    {isCurrent && <span style={{ fontSize: 11, color: ph.color, fontWeight: 700, textTransform: "uppercase" }}>Current</span>}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 
+/* ═══ SCHEDULE VIEW ═══ */
 function ScheduleView({ schedule, teamRoster, projects, onUpdate }) {
   const [wo, setWo] = useState(0);
   function getWeekDates(off) { const now = new Date(); const d = now.getDay(); const m = new Date(now); m.setDate(now.getDate() - (d === 0 ? 6 : d - 1) + off * 7); const ds = []; for (let i = 0; i < 7; i++) { const x = new Date(m); x.setDate(m.getDate() + i); ds.push(x.toISOString().split("T")[0]); } return ds; }
   const dates = getWeekDates(wo); const today = new Date().toISOString().split("T")[0];
   const fmt = ds => new Date(ds + "T00:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
-
-  const iS = { width: "100%", padding: "4px 6px", borderRadius: 6, border: "1px solid #1e293b", background: "#0b1120", color: "#e2e8f0", fontSize: 11, fontFamily: "'DM Sans',sans-serif", outline: "none" };
-
-  // Build list of options: projects + day types + add-selector sentinel values
-  function getOptionValue(entry) {
-    if (!entry) return "";
-    return entry.type === "project" ? `project:${entry.id}` : `type:${entry.type}`;
-  }
-
-  function parseOptionValue(val) {
-    if (!val) return null;
-    if (val.startsWith("project:")) return { type: "project", id: val.slice(8) };
-    if (val.startsWith("type:")) return { type: val.slice(5) };
-    return null;
-  }
-
-  function setEntryAt(date, memberName, index, newVal) {
-    const dayMap = { ...(schedule[date] || {}) };
-    const entries = normalizeDayEntries(dayMap[memberName]);
-    const parsed = parseOptionValue(newVal);
-    if (!parsed) {
-      // Remove this entry
-      const next = entries.filter((_, i) => i !== index);
-      if (next.length === 0) delete dayMap[memberName];
-      else dayMap[memberName] = next;
-    } else {
-      const next = [...entries];
-      next[index] = parsed;
-      dayMap[memberName] = next;
-    }
-    onUpdate({ ...schedule, [date]: dayMap });
-  }
-
-  function addEntryAt(date, memberName, newVal) {
-    const parsed = parseOptionValue(newVal);
-    if (!parsed) return;
-    const dayMap = { ...(schedule[date] || {}) };
-    const entries = normalizeDayEntries(dayMap[memberName]);
-    dayMap[memberName] = [...entries, parsed];
-    onUpdate({ ...schedule, [date]: dayMap });
-  }
-
-  function getEntryLabel(entry) {
-    if (entry.type === "project") {
-      const p = projects.find(pr => pr.id === entry.id);
-      return p ? p.name : "(deleted project)";
-    }
-    const dt = DAY_TYPES.find(t => t.code === entry.type);
-    return dt ? dt.short : entry.type;
-  }
-
-  function getEntryColor(entry) {
-    if (entry.type === "project") return "#6366f1";
-    return DAY_TYPES.find(t => t.code === entry.type)?.color || "#64748b";
-  }
-
+  const iS = { width: "100%", padding: "4px 6px", borderRadius: 6, border: "1px solid #1e293b", background: "#0f1729", color: "#e2e8f0", fontSize: 11, fontFamily: "'DM Sans',sans-serif", outline: "none" };
   return (<div style={{ padding: "20px 24px" }}>
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <button onClick={() => setWo(w => w - 1)} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #1e293b", background: "#1a2332", color: "#94a3b8", cursor: "pointer" }}>←</button>
         <span style={{ fontSize: 15, fontWeight: 700, color: "#fff", fontFamily: "'Outfit',sans-serif" }}>{fmt(dates[0])} — {fmt(dates[6])}</span>
@@ -665,73 +782,16 @@ function ScheduleView({ schedule, teamRoster, projects, onUpdate }) {
       </div>
       <button onClick={() => setWo(0)} style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid #1e293b", background: wo === 0 ? "#6366f1" : "#1a2332", color: wo === 0 ? "#fff" : "#94a3b8", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>This Week</button>
     </div>
-    <div style={{ fontSize: 11, color: "#64748b", marginBottom: 16 }}>Click a row to assign a project or day type. Add multiple entries per day for split shifts.</div>
-
     {teamRoster.length === 0 ? <div style={{ textAlign: "center", padding: 48, color: "#334155" }}>Add team members first.</div> : (
-      <div style={{ overflowX: "auto" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "160px repeat(7, minmax(160px, 1fr))", gap: 1, minWidth: 1200 }}>
-          <div style={{ padding: "10px 12px", background: "#1a2332", fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>Team Member</div>
-          {dates.map(d => <div key={d} style={{ padding: "10px 8px", background: d === today ? "#6366f122" : "#1a2332", textAlign: "center", fontSize: 11, fontWeight: 600, color: d === today ? "#818cf8" : "#94a3b8" }}>{fmt(d)}</div>)}
-
-          {teamRoster.map(member => (
-            <div key={member.id} style={{ display: "contents" }}>
-              <div key={`n-${member.id}`} style={{ padding: "10px 12px", background: "#0b1120", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid #1e293b", minHeight: 80 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0" }}>{member.name}</div>
-              </div>
-              {dates.map(d => {
-                const entries = normalizeDayEntries(schedule[d]?.[member.name]);
-                return (
-                  <div key={`${member.id}-${d}`} style={{ padding: "6px 4px", background: d === today ? "#6366f108" : "#0f1729", borderBottom: "1px solid #1e293b", display: "flex", flexDirection: "column", gap: 3, minHeight: 80 }}>
-                    {entries.map((entry, i) => (
-                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 2 }}>
-                        <select
-                          style={{ ...iS, flex: 1, borderLeft: `3px solid ${getEntryColor(entry)}`, fontWeight: 500 }}
-                          value={getOptionValue(entry)}
-                          onChange={e => setEntryAt(d, member.name, i, e.target.value)}
-                          title={getEntryLabel(entry)}
-                        >
-                          <option value="">— Remove —</option>
-                          <optgroup label="Projects">
-                            {projects.map(p => <option key={p.id} value={`project:${p.id}`}>{p.name}</option>)}
-                          </optgroup>
-                          <optgroup label="Other">
-                            {DAY_TYPES.map(t => <option key={t.code} value={`type:${t.code}`}>{t.short}</option>)}
-                          </optgroup>
-                        </select>
-                      </div>
-                    ))}
-                    {/* Add entry selector */}
-                    <select
-                      style={{ ...iS, fontSize: 10, color: "#64748b", cursor: "pointer" }}
-                      value=""
-                      onChange={e => { if (e.target.value) addEntryAt(d, member.name, e.target.value); }}
-                    >
-                      <option value="">{entries.length === 0 ? "+ Assign..." : "+ Add another..."}</option>
-                      <optgroup label="Projects">
-                        {projects.map(p => <option key={p.id} value={`project:${p.id}`}>{p.name}</option>)}
-                      </optgroup>
-                      <optgroup label="Other">
-                        {DAY_TYPES.map(t => <option key={t.code} value={`type:${t.code}`}>{t.short}</option>)}
-                      </optgroup>
-                    </select>
-                  </div>
-                );
-              })}
-            </div>
-          ))}
-        </div>
-      </div>
+      <div style={{ overflowX: "auto" }}><div style={{ display: "grid", gridTemplateColumns: "160px repeat(7, 1fr)", gap: 1, minWidth: 900 }}>
+        <div style={{ padding: "10px 12px", background: "#1a2332", fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase" }}>Team Member</div>
+        {dates.map(d => <div key={d} style={{ padding: "10px 8px", background: d === today ? "#6366f122" : "#1a2332", textAlign: "center", fontSize: 11, fontWeight: 600, color: d === today ? "#818cf8" : "#94a3b8" }}>{fmt(d)}</div>)}
+        {teamRoster.map(member => (<>
+          <div key={`n-${member.id}`} style={{ padding: "10px 12px", background: "#0b1120", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid #1e293b" }}><div style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0" }}>{member.name}</div></div>
+          {dates.map(d => <div key={`${member.id}-${d}`} style={{ padding: "6px 4px", background: d === today ? "#6366f108" : "#0f1729", borderBottom: "1px solid #1e293b" }}><select style={iS} value={schedule[d]?.[member.name] || ""} onChange={e => { const dd = { ...(schedule[d] || {}) }; if (e.target.value) dd[member.name] = e.target.value; else delete dd[member.name]; onUpdate({ ...schedule, [d]: dd }); }}><option value="">— Off —</option>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>)}
+        </>))}
+      </div></div>
     )}
-
-    {/* Legend */}
-    <div style={{ display: "flex", gap: 16, marginTop: 16, flexWrap: "wrap", fontSize: 11, color: "#64748b" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 5 }}><div style={{ width: 10, height: 10, borderRadius: 2, background: "#6366f1" }} /> Project</div>
-      {DAY_TYPES.map(t => (
-        <div key={t.code} style={{ display: "flex", alignItems: "center", gap: 5 }}>
-          <div style={{ width: 10, height: 10, borderRadius: 2, background: t.color }} /> {t.short}
-        </div>
-      ))}
-    </div>
   </div>);
 }
 
@@ -876,4 +936,3 @@ function NewProjectModal({ phases, onSave, onClose, templates }) {
     </div>
   );
 }
-
