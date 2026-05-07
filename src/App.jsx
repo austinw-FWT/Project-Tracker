@@ -402,6 +402,44 @@ function Tracker({ user, userRecord }) {
   return (
     <div style={{ display: "flex", height: "100vh", fontFamily: "'DM Sans',sans-serif", background: "#0f1729", color: "#e2e8f0", overflow: "hidden" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet" />
+      {/* Mobile-friendly overrides — bumps form controls to touch-friendly sizes on phones.
+          16px input font also prevents iOS auto-zoom on input focus. */}
+      <style>{`
+        @media (max-width: 768px) {
+          input, select, textarea {
+            font-size: 16px !important;
+            min-height: 44px;
+            box-sizing: border-box;
+          }
+          input[type="checkbox"], input[type="radio"] {
+            min-height: 0 !important;
+            width: 20px;
+            height: 20px;
+          }
+          input[type="date"], input[type="time"], input[type="datetime-local"] {
+            min-height: 44px;
+          }
+          textarea {
+            min-height: 88px;
+          }
+          button {
+            min-height: 40px;
+            font-size: 13px;
+          }
+          /* Buttons that are clearly icon-only (small fixed size) keep their dimensions */
+          button[style*="width: 22px"], button[style*="width: 24px"],
+          button[style*="width: 28px"], button[style*="width: 30px"],
+          button[style*="width: 32px"], button[style*="width: 36px"] {
+            min-height: 0;
+          }
+          /* Modal dialogs become full-screen-ish on phones */
+          [data-mobile-fullscreen="true"] {
+            max-width: 100% !important;
+            max-height: 100% !important;
+            border-radius: 0 !important;
+          }
+        }
+      `}</style>
 
       {/* Mobile overlay */}
       {isMobile && sidebarOpen && (
@@ -909,30 +947,48 @@ function QuickAddButton({ projects, onAddTask, onAddNote, onAddMaterial, isMobil
 /* ═══ NEW PROJECT MODAL ═══ */
 function NewProjectModal({ phases, onSave, onClose, templates }) {
   const [form, setForm] = useState({ ...EMPTY_PROJECT, phaseId: phases[0]?.id || "" });
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768);
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener("resize", handler);
+    return () => window.removeEventListener("resize", handler);
+  }, []);
   const iS = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1e293b", background: "#0f1729", color: "#e2e8f0", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none" };
   const lS = { fontSize: 11, fontWeight: 600, color: "#64748b", marginBottom: 4, display: "block", textTransform: "uppercase", letterSpacing: "0.05em" };
+  const cols = isMobile ? "1fr" : "1fr 1fr";
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100, padding: 16 }}>
-      <div style={{ background: "#1a2332", borderRadius: 16, border: "1px solid #1e293b", padding: 24, width: "100%", maxWidth: 520, maxHeight: "90vh", overflowY: "auto" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 20 }}><h2 style={{ fontSize: 18, fontWeight: 700, color: "#fff", fontFamily: "'Outfit',sans-serif", margin: 0 }}>New Project</h2><button onClick={onClose} style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer" }}><X size={18} /></button></div>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: isMobile ? "flex-end" : "center", justifyContent: "center", zIndex: 100, padding: isMobile ? 0 : 16 }}>
+      <div style={{
+        background: "#1a2332",
+        borderRadius: isMobile ? "16px 16px 0 0" : 16,
+        border: "1px solid #1e293b",
+        padding: isMobile ? 18 : 24,
+        width: "100%",
+        maxWidth: isMobile ? "100%" : 520,
+        maxHeight: isMobile ? "94vh" : "90vh",
+        overflowY: "auto",
+        paddingBottom: isMobile ? "max(18px, env(safe-area-inset-bottom))" : 24,
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}><h2 style={{ fontSize: 18, fontWeight: 700, color: "#fff", fontFamily: "'Outfit',sans-serif", margin: 0 }}>New Project</h2><button onClick={onClose} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "#0f1729", color: "#94a3b8", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><X size={18} /></button></div>
         {templates && templates.length > 0 && (
           <div style={{ marginBottom: 16 }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: "#64748b", marginBottom: 6, textTransform: "uppercase" }}>Start from template</div>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {templates.map((t, i) => (<button key={i} onClick={() => setForm({ ...form, name: form.name || t.name, projectTypes: t.projectTypes || [], type: t.type || "retrofit", tasks: (t.tasks || []).map(tk => ({ ...tk, id: genId(), done: false })), devices: t.devices || [] })} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #1e293b", background: "#0f1729", color: "#94a3b8", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 4 }}><Copy size={11} /> {t.name}</button>))}
+              {templates.map((t, i) => (<button key={i} onClick={() => setForm({ ...form, name: form.name || t.name, projectTypes: t.projectTypes || [], type: t.type || "retrofit", tasks: (t.tasks || []).map(tk => ({ ...tk, id: genId(), done: false })), devices: t.devices || [] })} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #1e293b", background: "#0f1729", color: "#cbd5e1", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 4, minHeight: 36 }}><Copy size={12} /> {t.name}</button>))}
             </div>
           </div>
         )}
         <div style={{ display: "grid", gap: 14 }}>
           <div><label style={lS}>Project Name *</label><input style={iS} value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}><div><label style={lS}>Customer *</label><input style={iS} value={form.customer} onChange={e => setForm({ ...form, customer: e.target.value })} /></div><div><label style={lS}>Contact</label><input style={iS} value={form.contactName} onChange={e => setForm({ ...form, contactName: e.target.value })} /></div></div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}><div><label style={lS}>Phone</label><input style={iS} value={form.contactPhone} onChange={e => setForm({ ...form, contactPhone: e.target.value })} /></div><div><label style={lS}>Email</label><input style={iS} value={form.contactEmail} onChange={e => setForm({ ...form, contactEmail: e.target.value })} /></div></div>
+          <div style={{ display: "grid", gridTemplateColumns: cols, gap: 12 }}><div><label style={lS}>Customer *</label><input style={iS} value={form.customer} onChange={e => setForm({ ...form, customer: e.target.value })} /></div><div><label style={lS}>Contact</label><input style={iS} value={form.contactName} onChange={e => setForm({ ...form, contactName: e.target.value })} /></div></div>
+          <div style={{ display: "grid", gridTemplateColumns: cols, gap: 12 }}><div><label style={lS}>Phone</label><input style={iS} type="tel" value={form.contactPhone} onChange={e => setForm({ ...form, contactPhone: e.target.value })} /></div><div><label style={lS}>Email</label><input style={iS} type="email" value={form.contactEmail} onChange={e => setForm({ ...form, contactEmail: e.target.value })} /></div></div>
           <div><label style={lS}>Site Address</label><input style={iS} value={form.siteAddress} onChange={e => setForm({ ...form, siteAddress: e.target.value })} /></div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}><div><label style={lS}>Phase</label><select style={iS} value={form.phaseId} onChange={e => setForm({ ...form, phaseId: e.target.value })}>{phases.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div><div><label style={lS}>Type</label><select style={iS} value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}><option value="retrofit">Retrofit</option><option value="new-construction">New Construction</option></select></div></div>
-          <div><label style={lS}>Systems</label><div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>{PROJECT_TYPES.map(pt => (<button key={pt} onClick={() => { const t = form.projectTypes || []; setForm({ ...form, projectTypes: t.includes(pt) ? t.filter(x => x !== pt) : [...t, pt] }); }} style={{ padding: "5px 12px", borderRadius: 6, border: "1px solid #1e293b", fontSize: 12, cursor: "pointer", fontFamily: "inherit", background: (form.projectTypes || []).includes(pt) ? "#6366f1" : "transparent", color: (form.projectTypes || []).includes(pt) ? "#fff" : "#94a3b8" }}>{pt}</button>))}</div></div>
+          <div style={{ display: "grid", gridTemplateColumns: cols, gap: 12 }}><div><label style={lS}>Phase</label><select style={iS} value={form.phaseId} onChange={e => setForm({ ...form, phaseId: e.target.value })}>{phases.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div><div><label style={lS}>Type</label><select style={iS} value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}><option value="retrofit">Retrofit</option><option value="new-construction">New Construction</option></select></div></div>
+          <div><label style={lS}>Systems</label><div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>{PROJECT_TYPES.map(pt => (<button key={pt} onClick={() => { const t = form.projectTypes || []; setForm({ ...form, projectTypes: t.includes(pt) ? t.filter(x => x !== pt) : [...t, pt] }); }} style={{ padding: "8px 14px", borderRadius: 6, border: "1px solid #1e293b", fontSize: 12, cursor: "pointer", fontFamily: "inherit", background: (form.projectTypes || []).includes(pt) ? "#6366f1" : "transparent", color: (form.projectTypes || []).includes(pt) ? "#fff" : "#94a3b8", minHeight: 36, fontWeight: 600 }}>{pt}</button>))}</div></div>
         </div>
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 24 }}><button onClick={onClose} style={{ padding: "9px 20px", borderRadius: 8, border: "1px solid #1e293b", background: "transparent", color: "#94a3b8", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button><button onClick={() => { if (form.name.trim() && form.customer.trim()) onSave(form); }} style={{ padding: "9px 20px", borderRadius: 8, border: "none", background: "#6366f1", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", opacity: form.name.trim() && form.customer.trim() ? 1 : 0.4 }}>Create Project</button></div>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 20 }}><button onClick={onClose} style={{ flex: isMobile ? 1 : "0 0 auto", padding: "12px 20px", borderRadius: 8, border: "1px solid #1e293b", background: "transparent", color: "#cbd5e1", fontSize: 14, cursor: "pointer", fontFamily: "inherit", fontWeight: 600 }}>Cancel</button><button onClick={() => { if (form.name.trim() && form.customer.trim()) onSave(form); }} style={{ flex: isMobile ? 2 : "0 0 auto", padding: "12px 24px", borderRadius: 8, border: "none", background: "#6366f1", color: "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", opacity: form.name.trim() && form.customer.trim() ? 1 : 0.4 }}>Create Project</button></div>
       </div>
     </div>
   );
 }
+
