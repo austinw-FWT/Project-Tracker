@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Plus, X, Send, ChevronDown, ChevronUp, Clock, Users, Briefcase, Archive, Trash2 } from "lucide-react";
 import { LABOR_PHASES } from "./App.jsx";
+import { openOutlookCompose } from "./emailHelper.js";
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 
@@ -18,16 +19,6 @@ async function getAdminEmails() {
     if (!users) return [];
     return Object.values(users).filter(u => u.role === "admin" && u.status === "approved" && u.email).map(u => u.email);
   } catch (e) { console.error("Failed to fetch admin emails:", e); return []; }
-}
-
-// Opens default mail client (Outlook on Windows) with pre-filled message.
-function openMailto({ to, cc, subject, body }) {
-  const params = [];
-  if (cc) params.push(`cc=${encodeURIComponent(cc)}`);
-  if (subject) params.push(`subject=${encodeURIComponent(subject)}`);
-  if (body) params.push(`body=${encodeURIComponent(body)}`);
-  const url = `mailto:${encodeURIComponent(to || "")}${params.length ? "?" + params.join("&") : ""}`;
-  window.location.href = url;
 }
 
 const getCategoryName = id => (LABOR_PHASES.find(l => l.id === id)?.name) || id || "—";
@@ -249,14 +240,14 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
           "— Sent from FWT Workspaces",
         ].join("\n");
 
-        openMailto({
+        openOutlookCompose({
           to: recipients.join(","),
           cc: myEmail || "",
           subject: `FWT Daily Log — ${myName} — ${date}`,
           body,
         });
       } catch (err) {
-        console.error("Mailto failed:", err);
+        console.error("Email open failed:", err);
       }
     })();
 
@@ -413,7 +404,7 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
           {/* Submit */}
           {entries.length > 0 && (
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center", marginTop: 16 }}>
-              <span style={{ fontSize: 11, color: "#64748b" }}>Opens in Outlook after saving</span>
+              <span style={{ fontSize: 11, color: "#64748b" }}>Opens Outlook web after saving</span>
               <button onClick={submit} style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 20px", borderRadius: 8, border: "none", background: "#6366f1", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
                 <Send size={14} /> Submit &amp; Email
               </button>
