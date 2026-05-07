@@ -335,9 +335,9 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
         minWidth: isMobile ? 60 : 70, height: isMobile ? 56 : 60,
         padding: "6px 8px",
         borderRadius: 10,
-        border: active ? `2px solid ${accent || "#6366f1"}` : "1px solid #1e293b",
-        background: active ? (accent || "#6366f1") + "22" : "#1a2332",
-        color: disabled ? "#334155" : (active ? (accent || "#818cf8") : (danger ? "#ef4444" : "#cbd5e1")),
+        border: active ? `2px solid ${accent || "#69BE28"}` : "1px solid #1A3050",
+        background: active ? (accent || "#69BE28") + "22" : "#0F2444",
+        color: disabled ? "#334155" : (active ? (accent || "#82CC4A") : (danger ? "#ef4444" : "#cbd5e1")),
         cursor: disabled ? "default" : "pointer",
         fontFamily: "inherit",
         fontSize: 11,
@@ -362,7 +362,7 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
       <div
         style={{
           position: "fixed", left: 0, right: 0, bottom: 0,
-          background: "#1a2332", borderTop: "1px solid #334155",
+          background: "#0F2444", borderTop: "1px solid #334155",
           borderRadius: "16px 16px 0 0",
           padding: 16,
           paddingBottom: "max(16px, env(safe-area-inset-bottom))",
@@ -372,7 +372,7 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
       >
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
           <div style={{ fontSize: 15, fontWeight: 700, color: "#fff" }}>{title}</div>
-          <button onClick={closeSheet} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "#0f1729", color: "#94a3b8", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <button onClick={closeSheet} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "#0A192F", color: "#94a3b8", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <X size={18} />
           </button>
         </div>
@@ -382,13 +382,13 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
   );
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "#0f1729", zIndex: 100, display: "flex", flexDirection: "column", overscrollBehavior: "contain" }}>
+    <div style={{ position: "fixed", inset: 0, background: "#0A192F", zIndex: 100, display: "flex", flexDirection: "column", overscrollBehavior: "contain" }}>
       {/* ─── HEADER ─── */}
-      <div style={{ padding: "10px 14px", borderBottom: "1px solid #1e293b", display: "flex", alignItems: "center", gap: 10, background: "#0b1120", flexShrink: 0 }}>
+      <div style={{ padding: "10px 14px", borderBottom: "1px solid #1A3050", display: "flex", alignItems: "center", gap: 10, background: "#001528", flexShrink: 0 }}>
         <button onClick={onClose} style={{
           display: "flex", alignItems: "center", gap: 6,
           padding: "10px 14px", borderRadius: 8,
-          background: "#1a2332", border: "1px solid #1e293b",
+          background: "#0F2444", border: "1px solid #1A3050",
           color: "#cbd5e1", cursor: "pointer", fontFamily: "inherit",
           fontSize: 14, fontWeight: 600,
           minHeight: 44,
@@ -403,7 +403,7 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
 
       {/* ─── CANVAS AREA ─── */}
       <div
-        style={{ flex: 1, overflow: "auto", padding: isMobile ? 8 : 16, background: "#0f1729", WebkitOverflowScrolling: "touch" }}
+        style={{ flex: 1, overflow: "auto", padding: isMobile ? 8 : 16, background: "#0A192F", WebkitOverflowScrolling: "touch" }}
         onClick={() => { if (tool === "select") { setSelectedItem(null); setEditingTextId(null); } }}
       >
         <div style={{ width: "100%", maxWidth: 1200, margin: "0 auto", transform: `scale(${zoom})`, transformOrigin: "top center", transition: dragState || currentStroke ? "none" : "transform 0.15s" }}>
@@ -443,8 +443,8 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
                   />
                   {isSelected && (
                     <>
-                      <rect x={img.x - 2} y={img.y - 2} width={img.w + 4} height={img.h + 4} fill="none" stroke="#6366f1" strokeWidth="2" strokeDasharray="4 4" pointerEvents="none" />
-                      <rect x={img.x + img.w - 12} y={img.y + img.h - 12} width={24} height={24} fill="#6366f1" stroke="#fff" strokeWidth="2"
+                      <rect x={img.x - 2} y={img.y - 2} width={img.w + 4} height={img.h + 4} fill="none" stroke="#69BE28" strokeWidth="2" strokeDasharray="4 4" pointerEvents="none" />
+                      <rect x={img.x + img.w - 12} y={img.y + img.h - 12} width={24} height={24} fill="#69BE28" stroke="#fff" strokeWidth="2"
                         onPointerDown={e => startDrag(e, "image", img.id, "resize")}
                         style={{ cursor: "nwse-resize" }}
                       />
@@ -539,7 +539,7 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
                           ...baseStyle,
                           width: availW,
                           minHeight: tb.size * 1.4 + 12,
-                          border: "1.5px solid #6366f1",
+                          border: "1.5px solid #69BE28",
                           background: "rgba(255,255,255,0.95)",
                           borderRadius: 4,
                           padding: 4,
@@ -561,9 +561,9 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
                           display: "inline-block",
                           maxWidth: availW,
                           padding: 4,
-                          border: isSelected ? "1.5px dashed #6366f1" : "1.5px dashed transparent",
+                          border: isSelected ? "1.5px dashed #69BE28" : "1.5px dashed transparent",
                           borderRadius: 4,
-                          background: isSelected ? "rgba(99,102,241,0.05)" : "transparent",
+                          background: isSelected ? "rgba(105,190,40,0.05)" : "transparent",
                           cursor: tool === "select" ? "text" : "default",
                           minHeight: tb.size * 1.4,
                           minWidth: 40,
@@ -585,8 +585,8 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
       {/* ─── SELECTED ITEM ACTION BAR (above main toolbar) ─── */}
       {selectedItem && (
         <div style={{
-          padding: "8px 12px", background: "#0b1120",
-          borderTop: "1px solid #1e293b",
+          padding: "8px 12px", background: "#001528",
+          borderTop: "1px solid #1A3050",
           display: "flex", alignItems: "center", gap: 8,
           flexShrink: 0,
         }}>
@@ -601,8 +601,8 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
               onClick={() => setActiveSheet("textFormat")}
               style={{
                 padding: "8px 14px", borderRadius: 8,
-                border: "1px solid #6366f1", background: "#6366f122",
-                color: "#818cf8", cursor: "pointer", fontFamily: "inherit",
+                border: "1px solid #69BE28", background: "#69BE2822",
+                color: "#82CC4A", cursor: "pointer", fontFamily: "inherit",
                 fontSize: 13, fontWeight: 600, minHeight: 40,
               }}
             >
@@ -628,7 +628,7 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
       <div style={{
         padding: "10px 12px",
         paddingBottom: "max(10px, env(safe-area-inset-bottom))",
-        background: "#0b1120", borderTop: "1px solid #1e293b",
+        background: "#001528", borderTop: "1px solid #1A3050",
         display: "flex", gap: 6, overflowX: "auto",
         flexShrink: 0,
         scrollbarWidth: "thin",
@@ -638,7 +638,7 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
         <ToolButton id="eraser" Icon={Eraser} label="Eraser" active={tool === "eraser"} onClick={() => { setTool("eraser"); setActiveSheet(null); setSelectedItem(null); setEditingTextId(null); }} />
         <ToolButton id="text" Icon={Type} label="Text" active={tool === "text"} onClick={() => { setTool("text"); setActiveSheet(null); setSelectedItem(null); setEditingTextId(null); }} />
 
-        <div style={{ width: 1, alignSelf: "stretch", background: "#1e293b", margin: "0 2px" }} />
+        <div style={{ width: 1, alignSelf: "stretch", background: "#1A3050", margin: "0 2px" }} />
 
         {/* Color picker — opens bottom sheet */}
         <button
@@ -648,8 +648,8 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
             display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2,
             minWidth: isMobile ? 60 : 70, height: isMobile ? 56 : 60,
             padding: "6px 8px", borderRadius: 10,
-            border: activeSheet === "color" ? "2px solid #6366f1" : "1px solid #1e293b",
-            background: "#1a2332", color: "#cbd5e1",
+            border: activeSheet === "color" ? "2px solid #69BE28" : "1px solid #1A3050",
+            background: "#0F2444", color: "#cbd5e1",
             cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 600, flexShrink: 0,
           }}
         >
@@ -665,8 +665,8 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
             display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2,
             minWidth: isMobile ? 60 : 70, height: isMobile ? 56 : 60,
             padding: "6px 8px", borderRadius: 10,
-            border: activeSheet === "size" ? "2px solid #6366f1" : "1px solid #1e293b",
-            background: "#1a2332", color: "#cbd5e1",
+            border: activeSheet === "size" ? "2px solid #69BE28" : "1px solid #1A3050",
+            background: "#0F2444", color: "#cbd5e1",
             cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 600, flexShrink: 0,
           }}
         >
@@ -676,14 +676,14 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
           <span>Size</span>
         </button>
 
-        <div style={{ width: 1, alignSelf: "stretch", background: "#1e293b", margin: "0 2px" }} />
+        <div style={{ width: 1, alignSelf: "stretch", background: "#1A3050", margin: "0 2px" }} />
 
         {/* Image */}
         <label style={{
           display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2,
           minWidth: isMobile ? 60 : 70, height: isMobile ? 56 : 60,
           padding: "6px 8px", borderRadius: 10,
-          border: "1px solid #1e293b", background: "#1a2332",
+          border: "1px solid #1A3050", background: "#0F2444",
           color: uploading ? "#475569" : "#cbd5e1",
           cursor: uploading ? "wait" : "pointer", fontFamily: "inherit",
           fontSize: 11, fontWeight: 600, flexShrink: 0,
@@ -699,13 +699,13 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
         <div style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0 }}>
           <button
             onClick={() => setZoom(z => Math.min(3, z + 0.25))}
-            style={{ width: isMobile ? 60 : 70, height: 27, borderRadius: "10px 10px 0 0", border: "1px solid #1e293b", background: "#1a2332", color: "#cbd5e1", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 2, fontFamily: "inherit", fontSize: 10, fontWeight: 600 }}
+            style={{ width: isMobile ? 60 : 70, height: 27, borderRadius: "10px 10px 0 0", border: "1px solid #1A3050", background: "#0F2444", color: "#cbd5e1", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 2, fontFamily: "inherit", fontSize: 10, fontWeight: 600 }}
           >
             <Plus size={12} /> {Math.round(zoom * 100)}%
           </button>
           <button
             onClick={() => setZoom(z => Math.max(0.5, z - 0.25))}
-            style={{ width: isMobile ? 60 : 70, height: 27, borderRadius: "0 0 10px 10px", border: "1px solid #1e293b", borderTop: "none", background: "#1a2332", color: "#cbd5e1", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit" }}
+            style={{ width: isMobile ? 60 : 70, height: 27, borderRadius: "0 0 10px 10px", border: "1px solid #1A3050", borderTop: "none", background: "#0F2444", color: "#cbd5e1", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit" }}
           >
             <Minus size={14} />
           </button>
@@ -727,8 +727,8 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
                 style={{
                   display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
                   padding: "12px 8px", borderRadius: 10,
-                  border: color === c.hex ? "2px solid #818cf8" : "1px solid #334155",
-                  background: color === c.hex ? "#6366f122" : "#0f1729",
+                  border: color === c.hex ? "2px solid #82CC4A" : "1px solid #334155",
+                  background: color === c.hex ? "#69BE2822" : "#0A192F",
                   cursor: "pointer", fontFamily: "inherit",
                 }}
               >
@@ -751,8 +751,8 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
                 style={{
                   display: "flex", alignItems: "center", gap: 16,
                   padding: "14px 16px", borderRadius: 10,
-                  border: size === s.v ? "2px solid #818cf8" : "1px solid #334155",
-                  background: size === s.v ? "#6366f122" : "#0f1729",
+                  border: size === s.v ? "2px solid #82CC4A" : "1px solid #334155",
+                  background: size === s.v ? "#69BE2822" : "#0A192F",
                   cursor: "pointer", fontFamily: "inherit",
                   minHeight: 56, textAlign: "left",
                 }}
@@ -788,8 +788,8 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
                   style={{
                     minWidth: 50, minHeight: 44, padding: "8px 12px",
                     borderRadius: 8,
-                    border: selectedTextBox.size === s ? "2px solid #818cf8" : "1px solid #334155",
-                    background: selectedTextBox.size === s ? "#6366f122" : "#0f1729",
+                    border: selectedTextBox.size === s ? "2px solid #82CC4A" : "1px solid #334155",
+                    background: selectedTextBox.size === s ? "#69BE2822" : "#0A192F",
                     color: "#cbd5e1", cursor: "pointer", fontFamily: "inherit",
                     fontSize: 13, fontWeight: 600,
                   }}
@@ -815,9 +815,9 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
                   style={{
                     flex: 1, minHeight: 48, padding: "10px 8px",
                     borderRadius: 8,
-                    border: selectedTextBox[key] ? "2px solid #818cf8" : "1px solid #334155",
-                    background: selectedTextBox[key] ? "#6366f122" : "#0f1729",
-                    color: selectedTextBox[key] ? "#818cf8" : "#cbd5e1",
+                    border: selectedTextBox[key] ? "2px solid #82CC4A" : "1px solid #334155",
+                    background: selectedTextBox[key] ? "#69BE2822" : "#0A192F",
+                    color: selectedTextBox[key] ? "#82CC4A" : "#cbd5e1",
                     cursor: "pointer", fontFamily: "inherit",
                     fontSize: 12, fontWeight: 600,
                     display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
@@ -848,9 +848,9 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
                     style={{
                       flex: 1, minHeight: 48, padding: "10px 8px",
                       borderRadius: 8,
-                      border: active ? "2px solid #818cf8" : "1px solid #334155",
-                      background: active ? "#6366f122" : "#0f1729",
-                      color: active ? "#818cf8" : "#cbd5e1",
+                      border: active ? "2px solid #82CC4A" : "1px solid #334155",
+                      background: active ? "#69BE2822" : "#0A192F",
+                      color: active ? "#82CC4A" : "#cbd5e1",
                       cursor: "pointer", fontFamily: "inherit",
                       fontSize: 12, fontWeight: 600,
                       display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
@@ -884,8 +884,8 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
                   style={{
                     display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
                     padding: "10px 4px", borderRadius: 8,
-                    border: selectedTextBox.color === c.hex ? "2px solid #818cf8" : "1px solid #334155",
-                    background: selectedTextBox.color === c.hex ? "#6366f122" : "#0f1729",
+                    border: selectedTextBox.color === c.hex ? "2px solid #82CC4A" : "1px solid #334155",
+                    background: selectedTextBox.color === c.hex ? "#69BE2822" : "#0A192F",
                     cursor: "pointer", fontFamily: "inherit",
                     minHeight: 56,
                   }}
@@ -916,8 +916,8 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
                     style={{
                       minHeight: 48, padding: "10px 12px",
                       borderRadius: 8,
-                      border: active ? "2px solid #818cf8" : "1px solid #334155",
-                      background: active ? "#6366f122" : "#0f1729",
+                      border: active ? "2px solid #82CC4A" : "1px solid #334155",
+                      background: active ? "#69BE2822" : "#0A192F",
                       color: "#cbd5e1", cursor: "pointer",
                       fontFamily: f.value,
                       fontSize: 14, fontWeight: 600,
