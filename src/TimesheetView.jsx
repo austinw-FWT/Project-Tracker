@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Plus, X, Clock, Users, Send, ChevronDown, ChevronUp } from "lucide-react";
 import { LABOR_PHASES } from "./App.jsx";
+import { openOutlookCompose } from "./emailHelper.js";
 
 const DEPARTMENTS = ["Brandon", "Justin", "Service", "Steve", "Tim", "Todd", "Overhead", "Tech Staffing"];
 
@@ -15,16 +16,6 @@ async function getAdminEmails() {
     if (!users) return [];
     return Object.values(users).filter(u => u.role === "admin" && u.status === "approved" && u.email).map(u => u.email);
   } catch (e) { console.error("Failed to fetch admin emails:", e); return []; }
-}
-
-// Open user's default mail client (Outlook on Windows) with pre-filled fields.
-function openMailto({ to, cc, subject, body }) {
-  const params = [];
-  if (cc) params.push(`cc=${encodeURIComponent(cc)}`);
-  if (subject) params.push(`subject=${encodeURIComponent(subject)}`);
-  if (body) params.push(`body=${encodeURIComponent(body)}`);
-  const url = `mailto:${encodeURIComponent(to || "")}${params.length ? "?" + params.join("&") : ""}`;
-  window.location.href = url;
 }
 
 function useIsMobile() {
@@ -72,7 +63,7 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
       "— Sent from FWT Workspaces",
     ].join("\n");
 
-    openMailto({
+    openOutlookCompose({
       to: recipients.join(","),
       cc: myEmail || "",
       subject: `FWT Timesheet — ${myName} — Week of ${filterWeek}`,
@@ -353,3 +344,4 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
     </div>
   );
 }
+
