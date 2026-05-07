@@ -1,11 +1,17 @@
 import { useState, useRef, useEffect } from "react";
-import { Pencil, Eraser, Type, Image as ImageIcon, Trash2, X, Save, MousePointer2, Undo2, Palette, Bold, Italic, Underline, AlignLeft, AlignCenter, AlignRight } from "lucide-react";
+import { Pencil, Eraser, Type, Image as ImageIcon, Trash2, X, Check, MousePointer2, Undo2, Bold, Italic, Underline, AlignLeft, AlignCenter, AlignRight, Plus, Minus, ZoomIn } from "lucide-react";
 import { storage, storageRef, uploadBytes, getDownloadURL } from "./firebase.js";
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 
 /**
- * SiteWalkCanvas — Freehand drawing + photo + text notes, stylus-friendly.
+ * SiteWalkCanvas — Freehand drawing + photo + text notes, stylus and touch friendly.
+ *
+ * Mobile-first redesign:
+ *  - Bottom toolbar (thumb-friendly), labeled buttons, ≥48px tap targets
+ *  - Bottom sheets for color & size & text formatting (no fiddly dropdowns)
+ *  - Full-screen canvas; pinch-zoom + two-finger pan
+ *  - Drawing locked behind explicit tool selection so you can scroll the page normally
  *
  * Data model (stored as siteWalk.canvas on the opportunity):
  * {
@@ -27,23 +33,47 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
   const CANVAS_H = 2000;
 
   const [tool, setTool] = useState("select"); // select | pen | eraser | text
-  const [color, setColor] = useState("#e2e8f0");
+  const [color, setColor] = useState("#1f2937");
   const [size, setSize] = useState(3);
   const [strokes, setStrokes] = useState(canvas?.strokes || []);
   const [images, setImages] = useState(canvas?.images || []);
   const [textBoxes, setTextBoxes] = useState(canvas?.textBoxes || []);
   const [currentStroke, setCurrentStroke] = useState(null);
-  const [selectedItem, setSelectedItem] = useState(null); // { type: 'image'|'text', id }
-  const [dragState, setDragState] = useState(null); // { id, type, mode: 'move'|'resize', ox, oy, orig }
+  const [selectedItem, setSelectedItem] = useState(null);
+  const [dragState, setDragState] = useState(null);
   const [uploading, setUploading] = useState(false);
-  const [showColors, setShowColors] = useState(false);
+  const [activeSheet, setActiveSheet] = useState(null); // 'color' | 'size' | 'textFormat' | null
+  const [zoom, setZoom] = useState(1);
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 900);
 
   const svgRef = useRef(null);
   const fileRef = useRef(null);
   const saveTimer = useRef(null);
+  const pinchRef = useRef(null); // tracks two-finger pinch state
 
-  const PEN_COLORS = ["#e2e8f0", "#f59e0b", "#10b981", "#6366f1", "#ef4444", "#ec4899", "#000000"];
-  const PEN_SIZES = [2, 3, 5, 8];
+  // Curated palette: dark (default for white canvas), then bright markers
+  const PEN_COLORS = [
+    { hex: "#1f2937", name: "Black" },
+    { hex: "#dc2626", name: "Red" },
+    { hex: "#ea580c", name: "Orange" },
+    { hex: "#ca8a04", name: "Yellow" },
+    { hex: "#16a34a", name: "Green" },
+    { hex: "#2563eb", name: "Blue" },
+    { hex: "#7c3aed", name: "Purple" },
+    { hex: "#db2777", name: "Pink" },
+  ];
+  const PEN_SIZES = [
+    { v: 2, label: "Fine" },
+    { v: 4, label: "Medium" },
+    { v: 7, label: "Thick" },
+    { v: 12, label: "Marker" },
+  ];
+
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 900);
+    window.addEventListener("resize", handler);
+    return () => window.removeEventListener("resize", handler);
+  }, []);
 
   // Debounced auto-save whenever canvas state changes
   useEffect(() => {
@@ -68,8 +98,22 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
   }
 
   // ── Drawing handlers ──
+  // Track active touch points for pinch-zoom
+  const activePointers = useRef(new Map());
+
   function handlePointerDown(e) {
-    // Touch scrolling: ignore non-pen, non-mouse touches unless tool is active
+    activePointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    // Two-finger pinch starts: don't draw, just record
+    if (activePointers.current.size === 2) {
+      const pts = [...activePointers.current.values()];
+      const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      pinchRef.current = { startDist: dist, startZoom: zoom };
+      // If we started a stroke, abandon it
+      setCurrentStroke(null);
+      return;
+    }
+
     if (tool === "select") return;
     e.preventDefault();
     e.target.setPointerCapture?.(e.pointerId);
@@ -80,15 +124,33 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
     } else if (tool === "eraser") {
       eraseAt(pt);
     } else if (tool === "text") {
-      // Drop a new text box at the click position
       const id = genId();
-      setTextBoxes([...textBoxes, { id, text: "", x: pt.x, y: pt.y, w: 260, h: 80, size: 18, color, bold: false, italic: false, underline: false, align: "left", fontFamily: "'DM Sans',sans-serif" }]);
+      setTextBoxes([...textBoxes, {
+        id, text: "", x: pt.x, y: pt.y, w: 280, h: 90,
+        size: 22, color: "#000000",
+        bold: false, italic: false, underline: false,
+        align: "left", fontFamily: "'DM Sans',sans-serif",
+      }]);
       setSelectedItem({ type: "text", id });
       setTool("select");
     }
   }
 
   function handlePointerMove(e) {
+    if (activePointers.current.has(e.pointerId)) {
+      activePointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    }
+
+    // Pinch-zoom in progress
+    if (pinchRef.current && activePointers.current.size === 2) {
+      const pts = [...activePointers.current.values()];
+      const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      const ratio = dist / pinchRef.current.startDist;
+      const next = Math.max(0.5, Math.min(3, pinchRef.current.startZoom * ratio));
+      setZoom(next);
+      return;
+    }
+
     if (tool === "pen" && currentStroke) {
       const pt = getSvgPoint(e);
       setCurrentStroke(cs => cs ? { ...cs, points: [...cs.points, pt] } : cs);
@@ -97,7 +159,10 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
     }
   }
 
-  function handlePointerUp() {
+  function handlePointerUp(e) {
+    activePointers.current.delete(e.pointerId);
+    if (activePointers.current.size < 2) pinchRef.current = null;
+
     if (currentStroke && currentStroke.points.length > 1) {
       setStrokes(s => [...s, currentStroke]);
     }
@@ -105,7 +170,7 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
   }
 
   function eraseAt(pt) {
-    const ERASE_R = 20;
+    const ERASE_R = 28;
     setStrokes(prev => prev.filter(stroke => {
       return !stroke.points.some(p => {
         const dx = p.x - pt.x, dy = p.y - pt.y;
@@ -124,7 +189,6 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
       const sRef = storageRef(storage, path);
       await uploadBytes(sRef, file);
       const url = await getDownloadURL(sRef);
-      // Figure out a reasonable default size by loading the image
       const img = new Image();
       img.onload = () => {
         const maxW = 600;
@@ -142,7 +206,7 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
     if (fileRef.current) fileRef.current.value = "";
   }
 
-  // ── Item manipulation (move/resize images, move/edit text) ──
+  // ── Item manipulation ──
   function startDrag(e, type, id, mode = "move") {
     if (tool !== "select") return;
     e.stopPropagation();
@@ -169,14 +233,14 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
         dragState.mode === "move"
           ? { ...t, x: dragState.orig.x + dx, y: dragState.orig.y + dy }
           : { ...t,
-              w: Math.max(80, dragState.orig.w + dx),
-              h: Math.max(40, (dragState.orig.h || 80) + dy) }
+              w: Math.max(120, dragState.orig.w + dx),
+              h: Math.max(50, (dragState.orig.h || 90) + dy) }
       )));
     }
   }
 
-  function handleCanvasPointerUp() {
-    handlePointerUp();
+  function handleCanvasPointerUp(e) {
+    handlePointerUp(e);
     setDragState(null);
   }
 
@@ -189,6 +253,7 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
     if (selectedItem.type === "image") setImages(prev => prev.filter(i => i.id !== selectedItem.id));
     else if (selectedItem.type === "text") setTextBoxes(prev => prev.filter(t => t.id !== selectedItem.id));
     setSelectedItem(null);
+    setActiveSheet(null);
   }
 
   function undoLast() {
@@ -211,177 +276,94 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
     return d;
   }
 
-  const toolBtn = (id, Icon, label) => (
+  const cursorStyle = tool === "pen" ? "crosshair" : tool === "eraser" ? "cell" : tool === "text" ? "text" : "default";
+  const selectedTextBox = selectedItem?.type === "text" ? textBoxes.find(t => t.id === selectedItem.id) : null;
+
+  // ── Reusable sub-components ──
+
+  // Bottom-toolbar tool button (large, labeled, thumb-friendly)
+  const ToolButton = ({ id, Icon, label, onClick, active, disabled, danger, accent }) => (
     <button
-      onClick={() => setTool(id)}
-      title={label}
+      onClick={onClick}
+      disabled={disabled}
       style={{
-        display: "flex", alignItems: "center", justifyContent: "center",
-        width: 36, height: 36, borderRadius: 8,
-        border: tool === id ? "2px solid #6366f1" : "1px solid #1e293b",
-        background: tool === id ? "#6366f122" : "#1a2332",
-        color: tool === id ? "#818cf8" : "#94a3b8",
-        cursor: "pointer", fontFamily: "inherit",
+        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+        gap: 2,
+        minWidth: isMobile ? 60 : 70, height: isMobile ? 56 : 60,
+        padding: "6px 8px",
+        borderRadius: 10,
+        border: active ? `2px solid ${accent || "#6366f1"}` : "1px solid #1e293b",
+        background: active ? (accent || "#6366f1") + "22" : "#1a2332",
+        color: disabled ? "#334155" : (active ? (accent || "#818cf8") : (danger ? "#ef4444" : "#cbd5e1")),
+        cursor: disabled ? "default" : "pointer",
+        fontFamily: "inherit",
+        fontSize: 11,
+        fontWeight: 600,
+        flexShrink: 0,
+        opacity: disabled ? 0.5 : 1,
+        transition: "background 0.1s",
       }}
     >
-      <Icon size={16} />
+      <Icon size={isMobile ? 22 : 20} />
+      <span>{label}</span>
     </button>
   );
 
-  const cursorStyle = tool === "pen" ? "crosshair" : tool === "eraser" ? "cell" : tool === "text" ? "text" : "default";
+  // Bottom sheet wrapper
+  const BottomSheet = ({ title, children, onClose: closeSheet }) => (
+    <>
+      <div
+        onClick={closeSheet}
+        style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 200 }}
+      />
+      <div
+        style={{
+          position: "fixed", left: 0, right: 0, bottom: 0,
+          background: "#1a2332", borderTop: "1px solid #334155",
+          borderRadius: "16px 16px 0 0",
+          padding: 16,
+          paddingBottom: "max(16px, env(safe-area-inset-bottom))",
+          zIndex: 201,
+          maxHeight: "70vh", overflowY: "auto",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: "#fff" }}>{title}</div>
+          <button onClick={closeSheet} style={{ width: 36, height: 36, borderRadius: 8, border: "none", background: "#0f1729", color: "#94a3b8", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <X size={18} />
+          </button>
+        </div>
+        {children}
+      </div>
+    </>
+  );
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "#0f1729", zIndex: 100, display: "flex", flexDirection: "column" }}>
-      {/* Header */}
-      <div style={{ padding: "10px 16px", borderBottom: "1px solid #1e293b", display: "flex", alignItems: "center", gap: 12, background: "#0b1120" }}>
-        <button onClick={onClose} style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", padding: 6, display: "flex", alignItems: "center", gap: 4, fontSize: 13, fontFamily: "inherit" }}>
-          <X size={18} /> Close
+    <div style={{ position: "fixed", inset: 0, background: "#0f1729", zIndex: 100, display: "flex", flexDirection: "column", overscrollBehavior: "contain" }}>
+      {/* ─── HEADER ─── */}
+      <div style={{ padding: "10px 14px", borderBottom: "1px solid #1e293b", display: "flex", alignItems: "center", gap: 10, background: "#0b1120", flexShrink: 0 }}>
+        <button onClick={onClose} style={{
+          display: "flex", alignItems: "center", gap: 6,
+          padding: "10px 14px", borderRadius: 8,
+          background: "#1a2332", border: "1px solid #1e293b",
+          color: "#cbd5e1", cursor: "pointer", fontFamily: "inherit",
+          fontSize: 14, fontWeight: 600,
+          minHeight: 44,
+        }}>
+          <Check size={18} /> Done
         </button>
-        <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", flex: 1 }}>📝 {walkTitle || "Site Walk"}</div>
-        <span style={{ fontSize: 11, color: "#10b981" }}>✓ Auto-saving</span>
+        <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          📝 {walkTitle || "Notes"}
+        </div>
+        <span style={{ fontSize: 11, color: "#10b981", whiteSpace: "nowrap" }}>✓ Auto-saving</span>
       </div>
 
-      {/* Toolbar */}
-      <div style={{ padding: "8px 16px", borderBottom: "1px solid #1e293b", display: "flex", alignItems: "center", gap: 8, background: "#0b1120", flexWrap: "wrap" }}>
-        {toolBtn("select", MousePointer2, "Select / Move")}
-        {toolBtn("pen", Pencil, "Pen")}
-        {toolBtn("eraser", Eraser, "Eraser")}
-        {toolBtn("text", Type, "Text")}
-
-        <div style={{ width: 1, height: 24, background: "#1e293b" }} />
-
-        {/* Color */}
-        <div style={{ position: "relative" }}>
-          <button onClick={() => setShowColors(!showColors)} title="Color" style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", borderRadius: 8, border: "1px solid #1e293b", background: "#1a2332", color: "#94a3b8", cursor: "pointer", fontFamily: "inherit", fontSize: 12 }}>
-            <div style={{ width: 14, height: 14, borderRadius: "50%", background: color, border: "1px solid #1e293b" }} />
-            <Palette size={14} />
-          </button>
-          {showColors && (
-            <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, display: "flex", gap: 4, padding: 6, background: "#1a2332", border: "1px solid #1e293b", borderRadius: 8, zIndex: 10 }}>
-              {PEN_COLORS.map(c => (
-                <button key={c} onClick={() => { setColor(c); setShowColors(false); }} style={{ width: 22, height: 22, borderRadius: "50%", background: c, border: color === c ? "2px solid #fff" : "1px solid #1e293b", cursor: "pointer" }} />
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Pen size */}
-        <div style={{ display: "flex", gap: 2, padding: 2, background: "#1a2332", borderRadius: 8, border: "1px solid #1e293b" }}>
-          {PEN_SIZES.map(s => (
-            <button key={s} onClick={() => setSize(s)} title={`Size ${s}`} style={{ width: 30, height: 28, borderRadius: 6, border: "none", background: size === s ? "#6366f122" : "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <div style={{ width: s * 2, height: s * 2, borderRadius: "50%", background: size === s ? "#818cf8" : "#64748b" }} />
-            </button>
-          ))}
-        </div>
-
-        <div style={{ width: 1, height: 24, background: "#1e293b" }} />
-
-        {/* Image upload */}
-        <label style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 8, border: "1px solid #6366f1", background: "#6366f122", color: "#818cf8", fontSize: 12, fontWeight: 600, cursor: uploading ? "wait" : "pointer", fontFamily: "inherit" }}>
-          <ImageIcon size={14} /> {uploading ? "Uploading..." : "Add Image"}
-          <input ref={fileRef} type="file" accept="image/*" onChange={handleImageUpload} style={{ display: "none" }} disabled={uploading} />
-        </label>
-
-        <button onClick={undoLast} disabled={strokes.length === 0} title="Undo last stroke" style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 10px", borderRadius: 8, border: "1px solid #1e293b", background: "#1a2332", color: strokes.length > 0 ? "#94a3b8" : "#334155", cursor: strokes.length > 0 ? "pointer" : "default", fontSize: 12, fontFamily: "inherit" }}>
-          <Undo2 size={14} /> Undo
-        </button>
-
-        <div style={{ flex: 1 }} />
-
-        {/* Text formatting bar — visible when a text box is selected */}
-        {selectedItem?.type === "text" && (() => {
-          const tb = textBoxes.find(t => t.id === selectedItem.id);
-          if (!tb) return null;
-          const FONT_SIZES = [12, 14, 16, 18, 22, 28, 36, 48, 64];
-          const FONT_FAMILIES = [
-            { label: "Sans", value: "'DM Sans',sans-serif" },
-            { label: "Serif", value: "Georgia,serif" },
-            { label: "Mono", value: "'Courier New',monospace" },
-            { label: "Display", value: "'Outfit',sans-serif" },
-          ];
-          const TEXT_COLORS = ["#000000", "#ef4444", "#f59e0b", "#10b981", "#3b82f6", "#6366f1", "#ec4899", "#ffffff"];
-          const fmtBtn = (active, onClick, Icon, label) => (
-            <button onClick={onClick} title={label} style={{
-              display: "flex", alignItems: "center", justifyContent: "center",
-              width: 30, height: 30, borderRadius: 6,
-              border: active ? "1px solid #6366f1" : "1px solid #1e293b",
-              background: active ? "#6366f122" : "#0f1729",
-              color: active ? "#818cf8" : "#94a3b8",
-              cursor: "pointer", fontFamily: "inherit",
-            }}><Icon size={14} /></button>
-          );
-          return (
-            <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", background: "#1a2332", borderRadius: 8, border: "1px solid #6366f133", flexWrap: "wrap" }}>
-              {/* Font family */}
-              <select
-                value={tb.fontFamily || "'DM Sans',sans-serif"}
-                onChange={e => updateText(tb.id, { fontFamily: e.target.value })}
-                title="Font family"
-                style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid #1e293b", background: "#0f1729", color: "#e2e8f0", fontSize: 11, fontFamily: "inherit", outline: "none" }}
-              >
-                {FONT_FAMILIES.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
-              </select>
-
-              {/* Font size */}
-              <select
-                value={tb.size}
-                onChange={e => updateText(tb.id, { size: parseInt(e.target.value, 10) })}
-                title="Font size"
-                style={{ padding: "5px 8px", borderRadius: 6, border: "1px solid #1e293b", background: "#0f1729", color: "#e2e8f0", fontSize: 11, fontFamily: "inherit", outline: "none", width: 56 }}
-              >
-                {FONT_SIZES.map(s => <option key={s} value={s}>{s}px</option>)}
-              </select>
-
-              {/* Bold / Italic / Underline */}
-              {fmtBtn(tb.bold, () => updateText(tb.id, { bold: !tb.bold }), Bold, "Bold")}
-              {fmtBtn(tb.italic, () => updateText(tb.id, { italic: !tb.italic }), Italic, "Italic")}
-              {fmtBtn(tb.underline, () => updateText(tb.id, { underline: !tb.underline }), Underline, "Underline")}
-
-              <div style={{ width: 1, height: 18, background: "#1e293b" }} />
-
-              {/* Alignment */}
-              {fmtBtn((tb.align || "left") === "left",   () => updateText(tb.id, { align: "left" }),   AlignLeft,   "Align left")}
-              {fmtBtn(tb.align === "center",             () => updateText(tb.id, { align: "center" }), AlignCenter, "Align center")}
-              {fmtBtn(tb.align === "right",              () => updateText(tb.id, { align: "right" }),  AlignRight,  "Align right")}
-
-              <div style={{ width: 1, height: 18, background: "#1e293b" }} />
-
-              {/* Text color swatches */}
-              <div style={{ display: "flex", gap: 3 }}>
-                {TEXT_COLORS.map(c => (
-                  <button
-                    key={c}
-                    onClick={() => updateText(tb.id, { color: c })}
-                    title={c}
-                    style={{
-                      width: 18, height: 18, borderRadius: "50%",
-                      background: c,
-                      border: tb.color === c ? "2px solid #818cf8" : "1px solid #1e293b",
-                      cursor: "pointer", padding: 0,
-                    }}
-                  />
-                ))}
-              </div>
-            </div>
-          );
-        })()}
-
-        {selectedItem && (
-          <button onClick={deleteSelected} style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 10px", borderRadius: 8, border: "1px solid #7f1d1d", background: "transparent", color: "#ef4444", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
-            <X size={13} /> Delete Selected
-          </button>
-        )}
-
-        <button onClick={clearAll} style={{ display: "flex", alignItems: "center", gap: 4, padding: "6px 10px", borderRadius: 8, border: "1px solid #1e293b", background: "transparent", color: "#64748b", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>
-          <Trash2 size={13} /> Clear All
-        </button>
-      </div>
-
-      {/* Canvas area */}
-      <div style={{ flex: 1, overflow: "auto", padding: 20, background: "#0f1729" }}
-        onClick={() => { setSelectedItem(null); setShowColors(false); }}
+      {/* ─── CANVAS AREA ─── */}
+      <div
+        style={{ flex: 1, overflow: "auto", padding: isMobile ? 8 : 16, background: "#0f1729", WebkitOverflowScrolling: "touch" }}
+        onClick={() => { if (tool === "select") setSelectedItem(null); }}
       >
-        <div style={{ width: "100%", maxWidth: 1200, margin: "0 auto" }}>
+        <div style={{ width: "100%", maxWidth: 1200, margin: "0 auto", transform: `scale(${zoom})`, transformOrigin: "top center", transition: dragState || currentStroke ? "none" : "transform 0.15s" }}>
           <svg
             ref={svgRef}
             viewBox={`0 0 ${CANVAS_W} ${CANVAS_H}`}
@@ -390,6 +372,7 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
               borderRadius: 8, boxShadow: "0 2px 12px rgba(0,0,0,0.3)",
               cursor: cursorStyle,
               touchAction: tool === "select" ? "auto" : "none",
+              display: "block",
             }}
             onPointerDown={handlePointerDown}
             onPointerMove={handleCanvasPointerMove}
@@ -418,7 +401,7 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
                   {isSelected && (
                     <>
                       <rect x={img.x - 2} y={img.y - 2} width={img.w + 4} height={img.h + 4} fill="none" stroke="#6366f1" strokeWidth="2" strokeDasharray="4 4" pointerEvents="none" />
-                      <rect x={img.x + img.w - 8} y={img.y + img.h - 8} width={16} height={16} fill="#6366f1" stroke="#fff" strokeWidth="1.5"
+                      <rect x={img.x + img.w - 12} y={img.y + img.h - 12} width={24} height={24} fill="#6366f1" stroke="#fff" strokeWidth="2"
                         onPointerDown={e => startDrag(e, "image", img.id, "resize")}
                         style={{ cursor: "nwse-resize" }}
                       />
@@ -430,40 +413,25 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
 
             {/* Strokes */}
             {strokes.map(stroke => (
-              <path
-                key={stroke.id}
-                d={strokeToPath(stroke)}
-                fill="none"
-                stroke={stroke.color}
-                strokeWidth={stroke.size}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                pointerEvents="none"
-              />
+              <path key={stroke.id} d={strokeToPath(stroke)}
+                fill="none" stroke={stroke.color} strokeWidth={stroke.size}
+                strokeLinecap="round" strokeLinejoin="round" pointerEvents="none" />
             ))}
             {currentStroke && (
-              <path
-                d={strokeToPath(currentStroke)}
-                fill="none"
-                stroke={currentStroke.color}
-                strokeWidth={currentStroke.size}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                pointerEvents="none"
-              />
+              <path d={strokeToPath(currentStroke)}
+                fill="none" stroke={currentStroke.color} strokeWidth={currentStroke.size}
+                strokeLinecap="round" strokeLinejoin="round" pointerEvents="none" />
             )}
 
             {/* Text boxes */}
             {textBoxes.map(tb => {
               const isSelected = selectedItem?.type === "text" && selectedItem.id === tb.id;
-              // Height defaults for legacy text boxes that don't have h yet
-              const tbH = tb.h || Math.max(40, tb.size * 3);
+              const tbH = tb.h || Math.max(50, tb.size * 3);
               return (
                 <g key={tb.id}>
                   <foreignObject x={tb.x} y={tb.y} width={tb.w} height={tbH}>
                     <div
                       onPointerDown={e => {
-                        // Only start move-drag from the handle (top edge), not from the text itself
                         if (e.target.classList?.contains("tb-handle")) startDrag(e, "text", tb.id, "move");
                       }}
                       onClick={e => { e.stopPropagation(); setSelectedItem({ type: "text", id: tb.id }); }}
@@ -472,39 +440,34 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
                         padding: isSelected ? "2px" : 0,
                         border: isSelected ? "2px dashed #6366f1" : "2px dashed transparent",
                         borderRadius: 4,
-                        background: "rgba(255,255,255,0.7)",
+                        background: "rgba(255,255,255,0.85)",
                         position: "relative",
                         boxSizing: "border-box",
                       }}
                     >
-                      <div className="tb-handle" style={{ position: "absolute", top: -8, left: 0, right: 0, height: 10, cursor: "move", background: isSelected ? "#6366f1" : "transparent", borderRadius: "4px 4px 0 0" }} />
+                      <div className="tb-handle" style={{ position: "absolute", top: -10, left: 0, right: 0, height: 14, cursor: "move", background: isSelected ? "#6366f1" : "transparent", borderRadius: "4px 4px 0 0" }} />
                       <textarea
                         value={tb.text}
                         onChange={e => updateText(tb.id, { text: e.target.value })}
-                        placeholder="Type a note..."
+                        placeholder="Type here..."
                         autoFocus={tb.text === "" && isSelected}
                         style={{
-                          width: "100%",
-                          height: "100%",
-                          border: "none",
-                          background: "transparent",
-                          color: tb.color,
-                          fontSize: tb.size,
+                          width: "100%", height: "100%",
+                          border: "none", background: "transparent",
+                          color: tb.color, fontSize: tb.size,
                           fontFamily: tb.fontFamily || "'DM Sans',sans-serif",
                           fontWeight: tb.bold ? 700 : 400,
                           fontStyle: tb.italic ? "italic" : "normal",
                           textDecoration: tb.underline ? "underline" : "none",
                           textAlign: tb.align || "left",
-                          resize: "none",
-                          outline: "none",
-                          padding: 4,
-                          boxSizing: "border-box",
+                          resize: "none", outline: "none",
+                          padding: 6, boxSizing: "border-box",
                         }}
                       />
                     </div>
                   </foreignObject>
                   {isSelected && (
-                    <rect x={tb.x + tb.w - 8} y={tb.y + tbH - 8} width={16} height={16} fill="#6366f1" stroke="#fff" strokeWidth="1.5"
+                    <rect x={tb.x + tb.w - 12} y={tb.y + tbH - 12} width={24} height={24} fill="#6366f1" stroke="#fff" strokeWidth="2"
                       onPointerDown={e => startDrag(e, "text", tb.id, "resize")}
                       style={{ cursor: "nwse-resize" }}
                     />
@@ -515,7 +478,355 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
           </svg>
         </div>
       </div>
+
+      {/* ─── SELECTED ITEM ACTION BAR (above main toolbar) ─── */}
+      {selectedItem && (
+        <div style={{
+          padding: "8px 12px", background: "#0b1120",
+          borderTop: "1px solid #1e293b",
+          display: "flex", alignItems: "center", gap: 8,
+          flexShrink: 0,
+        }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: "#94a3b8", flex: 1 }}>
+            {selectedItem.type === "text" ? "📝 Text selected" : "🖼️ Image selected"}
+            <span style={{ fontSize: 10, color: "#64748b", marginLeft: 8 }}>Drag corner to resize</span>
+          </div>
+          {selectedItem.type === "text" && (
+            <button
+              onClick={() => setActiveSheet("textFormat")}
+              style={{
+                padding: "8px 14px", borderRadius: 8,
+                border: "1px solid #6366f1", background: "#6366f122",
+                color: "#818cf8", cursor: "pointer", fontFamily: "inherit",
+                fontSize: 13, fontWeight: 600, minHeight: 40,
+              }}
+            >
+              Format Text
+            </button>
+          )}
+          <button
+            onClick={deleteSelected}
+            style={{
+              padding: "8px 14px", borderRadius: 8,
+              border: "1px solid #7f1d1d", background: "transparent",
+              color: "#ef4444", cursor: "pointer", fontFamily: "inherit",
+              fontSize: 13, fontWeight: 600, minHeight: 40,
+              display: "flex", alignItems: "center", gap: 4,
+            }}
+          >
+            <Trash2 size={15} /> Delete
+          </button>
+        </div>
+      )}
+
+      {/* ─── MAIN BOTTOM TOOLBAR ─── */}
+      <div style={{
+        padding: "10px 12px",
+        paddingBottom: "max(10px, env(safe-area-inset-bottom))",
+        background: "#0b1120", borderTop: "1px solid #1e293b",
+        display: "flex", gap: 6, overflowX: "auto",
+        flexShrink: 0,
+        scrollbarWidth: "thin",
+      }}>
+        <ToolButton id="select" Icon={MousePointer2} label="Select" active={tool === "select"} onClick={() => { setTool("select"); setActiveSheet(null); }} />
+        <ToolButton id="pen" Icon={Pencil} label="Pen" active={tool === "pen"} accent={color} onClick={() => { setTool("pen"); setActiveSheet(null); setSelectedItem(null); }} />
+        <ToolButton id="eraser" Icon={Eraser} label="Eraser" active={tool === "eraser"} onClick={() => { setTool("eraser"); setActiveSheet(null); setSelectedItem(null); }} />
+        <ToolButton id="text" Icon={Type} label="Text" active={tool === "text"} onClick={() => { setTool("text"); setActiveSheet(null); setSelectedItem(null); }} />
+
+        <div style={{ width: 1, alignSelf: "stretch", background: "#1e293b", margin: "0 2px" }} />
+
+        {/* Color picker — opens bottom sheet */}
+        <button
+          onClick={() => setActiveSheet(activeSheet === "color" ? null : "color")}
+          title="Pen color"
+          style={{
+            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2,
+            minWidth: isMobile ? 60 : 70, height: isMobile ? 56 : 60,
+            padding: "6px 8px", borderRadius: 10,
+            border: activeSheet === "color" ? "2px solid #6366f1" : "1px solid #1e293b",
+            background: "#1a2332", color: "#cbd5e1",
+            cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 600, flexShrink: 0,
+          }}
+        >
+          <div style={{ width: 22, height: 22, borderRadius: "50%", background: color, border: "2px solid #fff" }} />
+          <span>Color</span>
+        </button>
+
+        {/* Size picker — opens bottom sheet */}
+        <button
+          onClick={() => setActiveSheet(activeSheet === "size" ? null : "size")}
+          title="Pen size"
+          style={{
+            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2,
+            minWidth: isMobile ? 60 : 70, height: isMobile ? 56 : 60,
+            padding: "6px 8px", borderRadius: 10,
+            border: activeSheet === "size" ? "2px solid #6366f1" : "1px solid #1e293b",
+            background: "#1a2332", color: "#cbd5e1",
+            cursor: "pointer", fontFamily: "inherit", fontSize: 11, fontWeight: 600, flexShrink: 0,
+          }}
+        >
+          <div style={{ width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ width: size * 1.5 + 4, height: size * 1.5 + 4, borderRadius: "50%", background: color }} />
+          </div>
+          <span>Size</span>
+        </button>
+
+        <div style={{ width: 1, alignSelf: "stretch", background: "#1e293b", margin: "0 2px" }} />
+
+        {/* Image */}
+        <label style={{
+          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2,
+          minWidth: isMobile ? 60 : 70, height: isMobile ? 56 : 60,
+          padding: "6px 8px", borderRadius: 10,
+          border: "1px solid #1e293b", background: "#1a2332",
+          color: uploading ? "#475569" : "#cbd5e1",
+          cursor: uploading ? "wait" : "pointer", fontFamily: "inherit",
+          fontSize: 11, fontWeight: 600, flexShrink: 0,
+        }}>
+          <ImageIcon size={isMobile ? 22 : 20} />
+          <span>{uploading ? "..." : "Photo"}</span>
+          <input ref={fileRef} type="file" accept="image/*" onChange={handleImageUpload} style={{ display: "none" }} disabled={uploading} />
+        </label>
+
+        <ToolButton Icon={Undo2} label="Undo" disabled={strokes.length === 0} onClick={undoLast} />
+
+        {/* Zoom controls */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0 }}>
+          <button
+            onClick={() => setZoom(z => Math.min(3, z + 0.25))}
+            style={{ width: isMobile ? 60 : 70, height: 27, borderRadius: "10px 10px 0 0", border: "1px solid #1e293b", background: "#1a2332", color: "#cbd5e1", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 2, fontFamily: "inherit", fontSize: 10, fontWeight: 600 }}
+          >
+            <Plus size={12} /> {Math.round(zoom * 100)}%
+          </button>
+          <button
+            onClick={() => setZoom(z => Math.max(0.5, z - 0.25))}
+            style={{ width: isMobile ? 60 : 70, height: 27, borderRadius: "0 0 10px 10px", border: "1px solid #1e293b", borderTop: "none", background: "#1a2332", color: "#cbd5e1", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit" }}
+          >
+            <Minus size={14} />
+          </button>
+        </div>
+
+        <div style={{ flex: 1, minWidth: 4 }} />
+
+        <ToolButton Icon={Trash2} label="Clear All" danger onClick={clearAll} />
+      </div>
+
+      {/* ─── BOTTOM SHEET: COLOR ─── */}
+      {activeSheet === "color" && (
+        <BottomSheet title="Pen Color" onClose={() => setActiveSheet(null)}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
+            {PEN_COLORS.map(c => (
+              <button
+                key={c.hex}
+                onClick={() => { setColor(c.hex); setActiveSheet(null); }}
+                style={{
+                  display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
+                  padding: "12px 8px", borderRadius: 10,
+                  border: color === c.hex ? "2px solid #818cf8" : "1px solid #334155",
+                  background: color === c.hex ? "#6366f122" : "#0f1729",
+                  cursor: "pointer", fontFamily: "inherit",
+                }}
+              >
+                <div style={{ width: 40, height: 40, borderRadius: "50%", background: c.hex, border: "2px solid #fff" }} />
+                <span style={{ fontSize: 12, color: "#cbd5e1", fontWeight: 600 }}>{c.name}</span>
+              </button>
+            ))}
+          </div>
+        </BottomSheet>
+      )}
+
+      {/* ─── BOTTOM SHEET: SIZE ─── */}
+      {activeSheet === "size" && (
+        <BottomSheet title="Pen Size" onClose={() => setActiveSheet(null)}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {PEN_SIZES.map(s => (
+              <button
+                key={s.v}
+                onClick={() => { setSize(s.v); setActiveSheet(null); }}
+                style={{
+                  display: "flex", alignItems: "center", gap: 16,
+                  padding: "14px 16px", borderRadius: 10,
+                  border: size === s.v ? "2px solid #818cf8" : "1px solid #334155",
+                  background: size === s.v ? "#6366f122" : "#0f1729",
+                  cursor: "pointer", fontFamily: "inherit",
+                  minHeight: 56, textAlign: "left",
+                }}
+              >
+                <div style={{ width: 60, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <div style={{ width: s.v * 2 + 8, height: s.v * 2 + 8, borderRadius: "50%", background: color }} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 15, color: "#fff", fontWeight: 600 }}>{s.label}</div>
+                  <div style={{ fontSize: 11, color: "#64748b" }}>{s.v}px</div>
+                </div>
+                {/* Visual preview line */}
+                <svg width="80" height="20" style={{ flexShrink: 0 }}>
+                  <line x1="4" y1="10" x2="76" y2="10" stroke={color} strokeWidth={s.v} strokeLinecap="round" />
+                </svg>
+              </button>
+            ))}
+          </div>
+        </BottomSheet>
+      )}
+
+      {/* ─── BOTTOM SHEET: TEXT FORMATTING ─── */}
+      {activeSheet === "textFormat" && selectedTextBox && (
+        <BottomSheet title="Format Text" onClose={() => setActiveSheet(null)}>
+          {/* Font size */}
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "#64748b", textTransform: "uppercase", marginBottom: 6 }}>Size</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {[14, 18, 22, 28, 36, 48, 64].map(s => (
+                <button
+                  key={s}
+                  onClick={() => updateText(selectedTextBox.id, { size: s })}
+                  style={{
+                    minWidth: 50, minHeight: 44, padding: "8px 12px",
+                    borderRadius: 8,
+                    border: selectedTextBox.size === s ? "2px solid #818cf8" : "1px solid #334155",
+                    background: selectedTextBox.size === s ? "#6366f122" : "#0f1729",
+                    color: "#cbd5e1", cursor: "pointer", fontFamily: "inherit",
+                    fontSize: 13, fontWeight: 600,
+                  }}
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Style toggles */}
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "#64748b", textTransform: "uppercase", marginBottom: 6 }}>Style</div>
+            <div style={{ display: "flex", gap: 6 }}>
+              {[
+                { Icon: Bold, key: "bold", label: "Bold" },
+                { Icon: Italic, key: "italic", label: "Italic" },
+                { Icon: Underline, key: "underline", label: "Underline" },
+              ].map(({ Icon, key, label }) => (
+                <button
+                  key={key}
+                  onClick={() => updateText(selectedTextBox.id, { [key]: !selectedTextBox[key] })}
+                  style={{
+                    flex: 1, minHeight: 48, padding: "10px 8px",
+                    borderRadius: 8,
+                    border: selectedTextBox[key] ? "2px solid #818cf8" : "1px solid #334155",
+                    background: selectedTextBox[key] ? "#6366f122" : "#0f1729",
+                    color: selectedTextBox[key] ? "#818cf8" : "#cbd5e1",
+                    cursor: "pointer", fontFamily: "inherit",
+                    fontSize: 12, fontWeight: 600,
+                    display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
+                  }}
+                >
+                  <Icon size={18} />
+                  <span>{label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Alignment */}
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "#64748b", textTransform: "uppercase", marginBottom: 6 }}>Alignment</div>
+            <div style={{ display: "flex", gap: 6 }}>
+              {[
+                { Icon: AlignLeft, value: "left", label: "Left" },
+                { Icon: AlignCenter, value: "center", label: "Center" },
+                { Icon: AlignRight, value: "right", label: "Right" },
+              ].map(({ Icon, value, label }) => {
+                const cur = selectedTextBox.align || "left";
+                const active = cur === value;
+                return (
+                  <button
+                    key={value}
+                    onClick={() => updateText(selectedTextBox.id, { align: value })}
+                    style={{
+                      flex: 1, minHeight: 48, padding: "10px 8px",
+                      borderRadius: 8,
+                      border: active ? "2px solid #818cf8" : "1px solid #334155",
+                      background: active ? "#6366f122" : "#0f1729",
+                      color: active ? "#818cf8" : "#cbd5e1",
+                      cursor: "pointer", fontFamily: "inherit",
+                      fontSize: 12, fontWeight: 600,
+                      display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
+                    }}
+                  >
+                    <Icon size={18} />
+                    <span>{label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Text color */}
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "#64748b", textTransform: "uppercase", marginBottom: 6 }}>Color</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
+              {[
+                { hex: "#000000", name: "Black" },
+                { hex: "#dc2626", name: "Red" },
+                { hex: "#ea580c", name: "Orange" },
+                { hex: "#ca8a04", name: "Yellow" },
+                { hex: "#16a34a", name: "Green" },
+                { hex: "#2563eb", name: "Blue" },
+                { hex: "#7c3aed", name: "Purple" },
+                { hex: "#ffffff", name: "White" },
+              ].map(c => (
+                <button
+                  key={c.hex}
+                  onClick={() => updateText(selectedTextBox.id, { color: c.hex })}
+                  style={{
+                    display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
+                    padding: "10px 4px", borderRadius: 8,
+                    border: selectedTextBox.color === c.hex ? "2px solid #818cf8" : "1px solid #334155",
+                    background: selectedTextBox.color === c.hex ? "#6366f122" : "#0f1729",
+                    cursor: "pointer", fontFamily: "inherit",
+                    minHeight: 56,
+                  }}
+                >
+                  <div style={{ width: 28, height: 28, borderRadius: "50%", background: c.hex, border: "2px solid #fff" }} />
+                  <span style={{ fontSize: 10, color: "#cbd5e1", fontWeight: 600 }}>{c.name}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Font family */}
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "#64748b", textTransform: "uppercase", marginBottom: 6 }}>Font</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 6 }}>
+              {[
+                { label: "Sans", value: "'DM Sans',sans-serif" },
+                { label: "Display", value: "'Outfit',sans-serif" },
+                { label: "Serif", value: "Georgia,serif" },
+                { label: "Mono", value: "'Courier New',monospace" },
+              ].map(f => {
+                const cur = selectedTextBox.fontFamily || "'DM Sans',sans-serif";
+                const active = cur === f.value;
+                return (
+                  <button
+                    key={f.value}
+                    onClick={() => updateText(selectedTextBox.id, { fontFamily: f.value })}
+                    style={{
+                      minHeight: 48, padding: "10px 12px",
+                      borderRadius: 8,
+                      border: active ? "2px solid #818cf8" : "1px solid #334155",
+                      background: active ? "#6366f122" : "#0f1729",
+                      color: "#cbd5e1", cursor: "pointer",
+                      fontFamily: f.value,
+                      fontSize: 14, fontWeight: 600,
+                      textAlign: "center",
+                    }}
+                  >
+                    {f.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </BottomSheet>
+      )}
     </div>
   );
 }
-
