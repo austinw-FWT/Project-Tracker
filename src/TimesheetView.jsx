@@ -321,8 +321,8 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
     width: "100%",
     padding: isMobile ? "12px 14px" : "8px 12px",
     borderRadius: 8,
-    border: "1px solid #1e293b",
-    background: "#1a2332",
+    border: "1px solid #1A3050",
+    background: "#0F2444",
     color: "#e2e8f0",
     fontSize: isMobile ? 15 : 13,
     fontFamily: "'DM Sans',sans-serif",
@@ -369,14 +369,14 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
 
   // Mobile entry form
   const MobileEntryForm = (
-    <div style={{ background: "#1a2332", borderRadius: 12, border: "1px solid #1e293b", marginBottom: 16, overflow: "hidden" }}>
+    <div style={{ background: "#0F2444", borderRadius: 12, border: "1px solid #1A3050", marginBottom: 16, overflow: "hidden" }}>
       <button
         onClick={() => setShowForm(!showForm)}
         style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit" }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <div style={{ width: 32, height: 32, borderRadius: 8, background: "#6366f122", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <Plus size={18} style={{ color: "#6366f1" }} />
+          <div style={{ width: 32, height: 32, borderRadius: 8, background: "#69BE2822", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Plus size={18} style={{ color: "#69BE28" }} />
           </div>
           <span style={{ fontSize: 15, fontWeight: 600, color: "#fff" }}>Log Time Entry</span>
         </div>
@@ -393,13 +393,13 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
             <label style={lS}>Hours Type</label>
             <div style={{ display: "flex", gap: 8 }}>
               {["regular", "overtime"].map(t => (
-                <button key={t} onClick={() => setHoursType(t)} style={{ flex: 1, padding: "12px 8px", borderRadius: 10, border: hoursType === t ? `2px solid ${t === "overtime" ? "#f59e0b" : "#10b981"}` : "1px solid #1e293b", background: hoursType === t ? (t === "overtime" ? "#f59e0b22" : "#10b98122") : "transparent", color: hoursType === t ? (t === "overtime" ? "#f59e0b" : "#10b981") : "#64748b", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", textTransform: "capitalize" }}>{t}</button>
+                <button key={t} onClick={() => setHoursType(t)} style={{ flex: 1, padding: "12px 8px", borderRadius: 10, border: hoursType === t ? `2px solid ${t === "overtime" ? "#f59e0b" : "#10b981"}` : "1px solid #1A3050", background: hoursType === t ? (t === "overtime" ? "#f59e0b22" : "#10b98122") : "transparent", color: hoursType === t ? (t === "overtime" ? "#f59e0b" : "#10b981") : "#64748b", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", textTransform: "capitalize" }}>{t}</button>
               ))}
             </div>
           </div>
           <div style={{ marginBottom: 12 }}>
             <label style={lS}>Prevailing Wage</label>
-            <button onClick={() => setPrevailingWage(!prevailingWage)} style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: prevailingWage ? "2px solid #8b5cf6" : "1px solid #1e293b", background: prevailingWage ? "#8b5cf622" : "transparent", color: prevailingWage ? "#8b5cf6" : "#64748b", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{prevailingWage ? "✓ Prevailing Wage" : "Not Prevailing Wage"}</button>
+            <button onClick={() => setPrevailingWage(!prevailingWage)} style={{ width: "100%", padding: "12px 14px", borderRadius: 10, border: prevailingWage ? "2px solid #8b5cf6" : "1px solid #1A3050", background: prevailingWage ? "#8b5cf622" : "transparent", color: prevailingWage ? "#8b5cf6" : "#64748b", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{prevailingWage ? "✓ Prevailing Wage" : "Not Prevailing Wage"}</button>
           </div>
           <div style={{ marginBottom: 12 }}>
             <label style={lS}>Job Name</label>
@@ -421,7 +421,7 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
           <button
             onClick={handleAdd}
             disabled={!hours || !date}
-            style={{ width: "100%", padding: "14px", borderRadius: 10, border: "none", background: "#6366f1", color: "#fff", fontSize: 15, fontWeight: 700, cursor: hours && date ? "pointer" : "default", fontFamily: "inherit", opacity: hours && date ? 1 : 0.4 }}
+            style={{ width: "100%", padding: "14px", borderRadius: 10, border: "none", background: "#69BE28", color: "#fff", fontSize: 15, fontWeight: 700, cursor: hours && date ? "pointer" : "default", fontFamily: "inherit", opacity: hours && date ? 1 : 0.4 }}
           >
             Log Hours
           </button>
@@ -432,8 +432,8 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
 
   // Desktop entry form
   const DesktopEntryForm = (
-    <div style={{ background: "#1a2332", borderRadius: 12, border: "1px solid #1e293b", padding: 20, marginBottom: 24 }}>
-      <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 14, display: "flex", alignItems: "center", gap: 6 }}><Clock size={15} style={{ color: "#6366f1" }} /> Log Time Entry</div>
+    <div style={{ background: "#0F2444", borderRadius: 12, border: "1px solid #1A3050", padding: 20, marginBottom: 24 }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 14, display: "flex", alignItems: "center", gap: 6 }}><Clock size={15} style={{ color: "#69BE28" }} /> Log Time Entry</div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
         <div><label style={lS}>Job Name</label><select style={iS} value={jobName} onChange={e => setJobName(e.target.value)}><option value="">Select or type...</option>{projects.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}</select></div>
         <div><label style={lS}>Job Number</label><input style={iS} value={jobNumber} onChange={e => setJobNumber(e.target.value)} placeholder="e.g., FWT-2024-042" /></div>
@@ -444,17 +444,17 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
         <div><label style={lS}>Hours Type</label>
           <div style={{ display: "flex", gap: 4 }}>
             {["regular", "overtime"].map(t => (
-              <button key={t} onClick={() => setHoursType(t)} style={{ flex: 1, padding: "8px", borderRadius: 8, border: hoursType === t ? "2px solid " + (t === "overtime" ? "#f59e0b" : "#10b981") : "1px solid #1e293b", background: hoursType === t ? (t === "overtime" ? "#f59e0b22" : "#10b98122") : "transparent", color: hoursType === t ? (t === "overtime" ? "#f59e0b" : "#10b981") : "#64748b", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", textTransform: "capitalize" }}>{t}</button>
+              <button key={t} onClick={() => setHoursType(t)} style={{ flex: 1, padding: "8px", borderRadius: 8, border: hoursType === t ? "2px solid " + (t === "overtime" ? "#f59e0b" : "#10b981") : "1px solid #1A3050", background: hoursType === t ? (t === "overtime" ? "#f59e0b22" : "#10b98122") : "transparent", color: hoursType === t ? (t === "overtime" ? "#f59e0b" : "#10b981") : "#64748b", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", textTransform: "capitalize" }}>{t}</button>
             ))}
           </div>
         </div>
         <div><label style={lS}>Prevailing Wage</label>
-          <button onClick={() => setPrevailingWage(!prevailingWage)} style={{ width: "100%", padding: "8px", borderRadius: 8, border: prevailingWage ? "2px solid #8b5cf6" : "1px solid #1e293b", background: prevailingWage ? "#8b5cf622" : "transparent", color: prevailingWage ? "#8b5cf6" : "#64748b", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{prevailingWage ? "✓ PW" : "Not PW"}</button>
+          <button onClick={() => setPrevailingWage(!prevailingWage)} style={{ width: "100%", padding: "8px", borderRadius: 8, border: prevailingWage ? "2px solid #8b5cf6" : "1px solid #1A3050", background: prevailingWage ? "#8b5cf622" : "transparent", color: prevailingWage ? "#8b5cf6" : "#64748b", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{prevailingWage ? "✓ PW" : "Not PW"}</button>
         </div>
         <div style={{ gridColumn: "span 3" }}><label style={lS}>Notes</label><input style={iS} value={notes} onChange={e => setNotes(e.target.value)} placeholder="What was done?" /></div>
       </div>
       <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
-        <button onClick={handleAdd} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", borderRadius: 8, border: "none", background: "#6366f1", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", opacity: hours && date ? 1 : 0.4 }}><Plus size={14} /> Log Hours</button>
+        <button onClick={handleAdd} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", borderRadius: 8, border: "none", background: "#69BE28", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", opacity: hours && date ? 1 : 0.4 }}><Plus size={14} /> Log Hours</button>
       </div>
     </div>
   );
@@ -465,7 +465,7 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
       {isAdmin && (
         <div style={{ display: "flex", gap: 4, marginBottom: 16 }}>
           {[{ id: "mine", label: "My Timesheets" }, { id: "team", label: "Team" }].map(v => (
-            <button key={v.id} onClick={() => setViewMode(v.id)} style={{ padding: isMobile ? "10px 16px" : "8px 18px", borderRadius: 8, border: "1px solid #1e293b", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", background: viewMode === v.id ? "#6366f1" : "transparent", color: viewMode === v.id ? "#fff" : "#94a3b8" }}>{v.label}</button>
+            <button key={v.id} onClick={() => setViewMode(v.id)} style={{ padding: isMobile ? "10px 16px" : "8px 18px", borderRadius: 8, border: "1px solid #1A3050", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", background: viewMode === v.id ? "#69BE28" : "transparent", color: viewMode === v.id ? "#fff" : "#94a3b8" }}>{v.label}</button>
           ))}
         </div>
       )}
@@ -474,7 +474,7 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
         <>
           {isMobile ? MobileEntryForm : DesktopEntryForm}
 
-          <div style={{ background: "#1a2332", borderRadius: 10, border: "1px solid #1e293b", padding: isMobile ? "14px 16px" : "12px 16px", marginBottom: 14, display: "flex", alignItems: "center", gap: isMobile ? 12 : 16, flexWrap: "wrap" }}>
+          <div style={{ background: "#0F2444", borderRadius: 10, border: "1px solid #1A3050", padding: isMobile ? "14px 16px" : "12px 16px", marginBottom: 14, display: "flex", alignItems: "center", gap: isMobile ? 12 : 16, flexWrap: "wrap" }}>
             <select
               style={{ ...iS, width: "auto", flex: isMobile ? "1 1 auto" : "none", minWidth: 0, padding: isMobile ? "10px 12px" : "6px 10px" }}
               value={filterWeek}
@@ -501,7 +501,7 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
 
           {filterWeek !== "all" && filtered.length > 0 && (
             <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", alignItems: isMobile ? "stretch" : "center", gap: 8, marginBottom: 14 }}>
-              <button onClick={downloadFilledTimesheet} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: isMobile ? "12px 20px" : "8px 16px", borderRadius: 8, border: "1px solid #6366f1", background: "#6366f122", color: "#818cf8", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", minHeight: isMobile ? 44 : "auto" }}>
+              <button onClick={downloadFilledTimesheet} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: isMobile ? "12px 20px" : "8px 16px", borderRadius: 8, border: "1px solid #69BE28", background: "#69BE2822", color: "#82CC4A", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", minHeight: isMobile ? 44 : "auto" }}>
                 <Download size={15} /> Download Timesheet
               </button>
               <button onClick={emailTimesheet} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: isMobile ? "12px 20px" : "8px 16px", borderRadius: 8, border: "none", background: "#10b981", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", minHeight: isMobile ? 44 : "auto" }}>
@@ -521,9 +521,9 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
           )}
 
           {filtered.map(entry => (
-            <div key={entry.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: isMobile ? "14px 16px" : "12px 16px", background: "#1a2332", borderRadius: 12, border: "1px solid #1e293b", marginBottom: 8 }}>
-              <div style={{ width: isMobile ? 52 : 44, height: isMobile ? 52 : 44, borderRadius: 10, background: entry.hoursType === "overtime" ? "#f59e0b22" : "#6366f122", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", flexShrink: 0 }}>
-                <span style={{ fontSize: isMobile ? 16 : 14, fontWeight: 700, color: entry.hoursType === "overtime" ? "#f59e0b" : "#818cf8", fontFamily: "'Outfit',sans-serif" }}>{entry.hours}h</span>
+            <div key={entry.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: isMobile ? "14px 16px" : "12px 16px", background: "#0F2444", borderRadius: 12, border: "1px solid #1A3050", marginBottom: 8 }}>
+              <div style={{ width: isMobile ? 52 : 44, height: isMobile ? 52 : 44, borderRadius: 10, background: entry.hoursType === "overtime" ? "#f59e0b22" : "#69BE2822", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", flexShrink: 0 }}>
+                <span style={{ fontSize: isMobile ? 16 : 14, fontWeight: 700, color: entry.hoursType === "overtime" ? "#f59e0b" : "#82CC4A", fontFamily: "'Outfit',sans-serif" }}>{entry.hours}h</span>
                 {entry.hoursType === "overtime" && <span style={{ fontSize: 8, color: "#f59e0b", fontWeight: 700, lineHeight: 1 }}>OT</span>}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -532,8 +532,8 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#64748b", flexWrap: "wrap" }}>
                   <span style={{ fontWeight: 600, color: "#94a3b8" }}>{entry.date}</span>
-                  <span style={{ padding: "1px 6px", borderRadius: 4, background: "#0f1729", color: "#94a3b8", fontSize: 11 }}>{getCategoryName(entry.category)}</span>
-                  {!isMobile && entry.department && <span style={{ padding: "1px 6px", borderRadius: 4, background: "#0f1729", color: "#64748b", fontSize: 11 }}>{entry.department}</span>}
+                  <span style={{ padding: "1px 6px", borderRadius: 4, background: "#0A192F", color: "#94a3b8", fontSize: 11 }}>{getCategoryName(entry.category)}</span>
+                  {!isMobile && entry.department && <span style={{ padding: "1px 6px", borderRadius: 4, background: "#0A192F", color: "#64748b", fontSize: 11 }}>{entry.department}</span>}
                   {entry.prevailingWage && <span style={{ padding: "1px 6px", borderRadius: 4, background: "#8b5cf622", color: "#8b5cf6", fontSize: 11, fontWeight: 600 }}>PW</span>}
                   {entry.notes && <span style={{ color: "#475569", fontSize: 12 }}>— {entry.notes}</span>}
                 </div>
@@ -560,7 +560,7 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
               <option value="all">All Weeks</option>
               {teamWeeks.map(w => <option key={w} value={w}>Week of {w}</option>)}
             </select>
-            <div style={{ padding: "10px 16px", background: "#1a2332", borderRadius: 8, border: "1px solid #1e293b", display: "flex", alignItems: "center" }}>
+            <div style={{ padding: "10px 16px", background: "#0F2444", borderRadius: 8, border: "1px solid #1A3050", display: "flex", alignItems: "center" }}>
               <span style={{ fontSize: 15, fontWeight: 700, color: "#fff", fontFamily: "'Outfit',sans-serif" }}>
                 {teamFiltered.reduce((s, e) => s + (parseFloat(e.hours) || 0), 0).toFixed(1)}h
               </span>
@@ -572,19 +572,19 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
           )}
 
           {teamFiltered.map(entry => (
-            <div key={entry.id + entry.member} style={{ display: "flex", alignItems: "center", gap: 12, padding: isMobile ? "14px 16px" : "12px 16px", background: "#1a2332", borderRadius: 12, border: "1px solid #1e293b", marginBottom: 8 }}>
-              <div style={{ width: isMobile ? 52 : 44, height: isMobile ? 52 : 44, borderRadius: 10, background: entry.hoursType === "overtime" ? "#f59e0b22" : "#6366f122", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", flexShrink: 0 }}>
-                <span style={{ fontSize: isMobile ? 16 : 14, fontWeight: 700, color: entry.hoursType === "overtime" ? "#f59e0b" : "#818cf8", fontFamily: "'Outfit',sans-serif" }}>{entry.hours}h</span>
+            <div key={entry.id + entry.member} style={{ display: "flex", alignItems: "center", gap: 12, padding: isMobile ? "14px 16px" : "12px 16px", background: "#0F2444", borderRadius: 12, border: "1px solid #1A3050", marginBottom: 8 }}>
+              <div style={{ width: isMobile ? 52 : 44, height: isMobile ? 52 : 44, borderRadius: 10, background: entry.hoursType === "overtime" ? "#f59e0b22" : "#69BE2822", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", flexShrink: 0 }}>
+                <span style={{ fontSize: isMobile ? 16 : 14, fontWeight: 700, color: entry.hoursType === "overtime" ? "#f59e0b" : "#82CC4A", fontFamily: "'Outfit',sans-serif" }}>{entry.hours}h</span>
                 {entry.hoursType === "overtime" && <span style={{ fontSize: 8, color: "#f59e0b", fontWeight: 700, lineHeight: 1 }}>OT</span>}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: isMobile ? 14 : 13, fontWeight: 600, color: "#fff", marginBottom: 4 }}>
-                  <span style={{ color: "#818cf8" }}>{entry.member}</span> · {entry.jobName || "—"}
+                  <span style={{ color: "#82CC4A" }}>{entry.member}</span> · {entry.jobName || "—"}
                   {entry.jobNumber ? ` · #${entry.jobNumber}` : ""}
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#64748b", flexWrap: "wrap" }}>
                   <span style={{ fontWeight: 600, color: "#94a3b8" }}>{entry.date}</span>
-                  <span style={{ padding: "1px 6px", borderRadius: 4, background: "#0f1729", color: "#94a3b8", fontSize: 11 }}>{getCategoryName(entry.category)}</span>
+                  <span style={{ padding: "1px 6px", borderRadius: 4, background: "#0A192F", color: "#94a3b8", fontSize: 11 }}>{getCategoryName(entry.category)}</span>
                   {entry.notes && <span style={{ color: "#475569" }}>— {entry.notes}</span>}
                 </div>
               </div>
