@@ -315,7 +315,10 @@ function Tracker({ user, userRecord }) {
   if (loading) return <LoadingScreen text="Connecting to Firebase..." />;
   if (!data) return null;
 
-  const filteredProjects = data.projects.filter(p => !searchTerm || p.name.toLowerCase().includes(searchTerm.toLowerCase()) || p.customer.toLowerCase().includes(searchTerm.toLowerCase()));
+  const filteredProjects = data.projects.filter(p =>
+    !p.movedToWarranty &&
+    (!searchTerm || p.name.toLowerCase().includes(searchTerm.toLowerCase()) || p.customer.toLowerCase().includes(searchTerm.toLowerCase()))
+  );
   const phaseMap = {}; data.phases.forEach(ph => { phaseMap[ph.id] = ph; });
 
   const sC = { connecting: { c: "#f59e0b", t: "Connecting...", s: true }, synced: { c: "#10b981", t: "Live", s: false }, saving: { c: "#69BE28", t: "Saving...", s: true }, reconnecting: { c: "#f59e0b", t: "Reconnecting...", s: true }, error: { c: "#ef4444", t: "Offline", s: false } }[syncStatus] || { c: "#10b981", t: "Live", s: false };
