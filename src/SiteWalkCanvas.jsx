@@ -40,6 +40,7 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
   const [textBoxes, setTextBoxes] = useState(canvas?.textBoxes || []);
   const [currentStroke, setCurrentStroke] = useState(null);
   const [selectedItem, setSelectedItem] = useState(null);
+  const [editingTextId, setEditingTextId] = useState(null); // id of text block currently in edit mode
   const [dragState, setDragState] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [activeSheet, setActiveSheet] = useState(null); // 'color' | 'size' | 'textFormat' | null
@@ -124,15 +125,18 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
     } else if (tool === "eraser") {
       eraseAt(pt);
     } else if (tool === "text") {
+      // OneNote-style: tap anywhere, cursor appears, start typing.
+      // No fixed width/height — text wraps at the canvas edge and grows with content.
       const id = genId();
       setTextBoxes([...textBoxes, {
-        id, text: "", x: pt.x, y: pt.y, w: 280, h: 90,
+        id, text: "", x: pt.x, y: pt.y,
         size: 22, color: "#000000",
         bold: false, italic: false, underline: false,
         align: "left", fontFamily: "'DM Sans',sans-serif",
       }]);
       setSelectedItem({ type: "text", id });
-      setTool("select");
+      setEditingTextId(id);
+      // Stay in text tool so user can keep adding text blocks
     }
   }
 
@@ -217,11 +221,50 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
     setSelectedItem({ type, id });
   }
 
+  // For text blocks: pointer-down starts a "drag-or-tap" state. If the pointer moves
+  // more than ~6px before release, it becomes a move-drag. Otherwise on release it
+  // enters edit mode at that text block. This is what lets you tap to edit OR
+  // touch-and-drag to move, without separate handles.
+  function startDragOrTap(e, type, id) {
+    if (tool === "text" && type === "text") {
+      // Text tool + tap on existing text block → enter edit mode for that block
+      e.stopPropagation();
+      setSelectedItem({ type, id });
+      setEditingTextId(id);
+      return;
+    }
+    if (tool !== "select") return;
+    e.stopPropagation();
+    const pt = getSvgPoint(e);
+    const orig = type === "text" ? textBoxes.find(t => t.id === id) : null;
+    if (!orig) return;
+    setDragState({
+      type, id, mode: "move",
+      ox: pt.x, oy: pt.y,
+      orig: { ...orig },
+      pendingTap: true,           // if released without movement → edit mode
+      tapStartX: e.clientX,
+      tapStartY: e.clientY,
+    });
+    setSelectedItem({ type, id });
+    e.target.setPointerCapture?.(e.pointerId);
+  }
+
   function handleCanvasPointerMove(e) {
     handlePointerMove(e);
     if (!dragState) return;
     const pt = getSvgPoint(e);
     const dx = pt.x - dragState.ox, dy = pt.y - dragState.oy;
+
+    // If this drag started as a "drag-or-tap" on text, see if we've moved enough
+    // to commit to dragging. The 6px threshold is in screen pixels, not canvas units.
+    if (dragState.pendingTap) {
+      const moveDistScreen = Math.hypot(e.clientX - dragState.tapStartX, e.clientY - dragState.tapStartY);
+      if (moveDistScreen < 6) return; // still ambiguous — wait
+      // Commit to drag
+      setDragState(prev => prev ? { ...prev, pendingTap: false } : prev);
+    }
+
     if (dragState.type === "image") {
       setImages(prev => prev.map(i => i.id !== dragState.id ? i : (
         dragState.mode === "move"
@@ -230,17 +273,17 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
       )));
     } else if (dragState.type === "text") {
       setTextBoxes(prev => prev.map(t => t.id !== dragState.id ? t : (
-        dragState.mode === "move"
-          ? { ...t, x: dragState.orig.x + dx, y: dragState.orig.y + dy }
-          : { ...t,
-              w: Math.max(120, dragState.orig.w + dx),
-              h: Math.max(50, (dragState.orig.h || 90) + dy) }
+        { ...t, x: dragState.orig.x + dx, y: dragState.orig.y + dy }
       )));
     }
   }
 
   function handleCanvasPointerUp(e) {
     handlePointerUp(e);
+    // If this was a drag-or-tap that never crossed the movement threshold, treat as a tap → edit mode
+    if (dragState && dragState.pendingTap && dragState.type === "text") {
+      setEditingTextId(dragState.id);
+    }
     setDragState(null);
   }
 
@@ -252,7 +295,7 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
     if (!selectedItem) return;
     if (selectedItem.type === "image") setImages(prev => prev.filter(i => i.id !== selectedItem.id));
     else if (selectedItem.type === "text") setTextBoxes(prev => prev.filter(t => t.id !== selectedItem.id));
-    setSelectedItem(null);
+    setSelectedItem(null); setEditingTextId(null);
     setActiveSheet(null);
   }
 
@@ -262,7 +305,7 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
 
   function clearAll() {
     if (!confirm("Clear entire canvas? This cannot be undone.")) return;
-    setStrokes([]); setImages([]); setTextBoxes([]); setSelectedItem(null);
+    setStrokes([]); setImages([]); setTextBoxes([]); setSelectedItem(null); setEditingTextId(null);
   }
 
   // Convert a stroke's points to SVG path
@@ -361,7 +404,7 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
       {/* ─── CANVAS AREA ─── */}
       <div
         style={{ flex: 1, overflow: "auto", padding: isMobile ? 8 : 16, background: "#0f1729", WebkitOverflowScrolling: "touch" }}
-        onClick={() => { if (tool === "select") setSelectedItem(null); }}
+        onClick={() => { if (tool === "select") { setSelectedItem(null); setEditingTextId(null); } }}
       >
         <div style={{ width: "100%", maxWidth: 1200, margin: "0 auto", transform: `scale(${zoom})`, transformOrigin: "top center", transition: dragState || currentStroke ? "none" : "transform 0.15s" }}>
           <svg
@@ -424,54 +467,114 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
             )}
 
             {/* Text boxes */}
+            {/* Text blocks — OneNote style. No fixed width/height; auto-sized to content.
+                In edit mode, shows a textarea; otherwise shows the rendered text.
+                In Select tool: tap-without-drag re-enters edit mode at that block; tap-and-drag moves it. */}
             {textBoxes.map(tb => {
               const isSelected = selectedItem?.type === "text" && selectedItem.id === tb.id;
-              const tbH = tb.h || Math.max(50, tb.size * 3);
+              const isEditing = editingTextId === tb.id;
+              // Width: from text origin to right edge of canvas, capped reasonable max
+              const availW = Math.min(CANVAS_W - tb.x - 20, 900);
+              const baseStyle = {
+                color: tb.color,
+                fontSize: tb.size,
+                fontFamily: tb.fontFamily || "'DM Sans',sans-serif",
+                fontWeight: tb.bold ? 700 : 400,
+                fontStyle: tb.italic ? "italic" : "normal",
+                textDecoration: tb.underline ? "underline" : "none",
+                textAlign: tb.align || "left",
+                lineHeight: 1.3,
+                whiteSpace: "pre-wrap",
+                wordWrap: "break-word",
+                overflowWrap: "break-word",
+              };
+              // Height estimate from line count for the foreignObject viewport.
+              // Real DOM auto-sizes inside, but the foreignObject needs fixed dims.
+              const textForMeasure = tb.text || (isEditing ? " " : "Tap to edit");
+              const lineCount = Math.max(1, textForMeasure.split("\n").length);
+              const estLines = Math.ceil(textForMeasure.length / Math.max(20, availW / (tb.size * 0.55))) + lineCount;
+              const estH = Math.max(tb.size * 1.4 + 20, estLines * tb.size * 1.4 + 20);
               return (
                 <g key={tb.id}>
-                  <foreignObject x={tb.x} y={tb.y} width={tb.w} height={tbH}>
-                    <div
-                      onPointerDown={e => {
-                        if (e.target.classList?.contains("tb-handle")) startDrag(e, "text", tb.id, "move");
-                      }}
-                      onClick={e => { e.stopPropagation(); setSelectedItem({ type: "text", id: tb.id }); }}
-                      style={{
-                        height: "100%",
-                        padding: isSelected ? "2px" : 0,
-                        border: isSelected ? "2px dashed #6366f1" : "2px dashed transparent",
-                        borderRadius: 4,
-                        background: "rgba(255,255,255,0.85)",
-                        position: "relative",
-                        boxSizing: "border-box",
-                      }}
-                    >
-                      <div className="tb-handle" style={{ position: "absolute", top: -10, left: 0, right: 0, height: 14, cursor: "move", background: isSelected ? "#6366f1" : "transparent", borderRadius: "4px 4px 0 0" }} />
+                  <foreignObject x={tb.x} y={tb.y} width={availW + 8} height={estH + 8} style={{ overflow: "visible" }}>
+                    {isEditing ? (
                       <textarea
+                        ref={el => {
+                          if (el) {
+                            // Auto-grow: reset and use scrollHeight
+                            el.style.height = "auto";
+                            el.style.height = (el.scrollHeight + 2) + "px";
+                          }
+                        }}
+                        autoFocus
                         value={tb.text}
-                        onChange={e => updateText(tb.id, { text: e.target.value })}
+                        onPointerDown={e => e.stopPropagation()}
+                        onPointerMove={e => e.stopPropagation()}
+                        onPointerUp={e => e.stopPropagation()}
+                        onClick={e => e.stopPropagation()}
+                        onChange={e => {
+                          updateText(tb.id, { text: e.target.value });
+                          // Auto-grow on input
+                          e.target.style.height = "auto";
+                          e.target.style.height = (e.target.scrollHeight + 2) + "px";
+                        }}
+                        onBlur={() => {
+                          // Commit on blur unless we're switching format (sheet open)
+                          if (activeSheet === "textFormat") return;
+                          // If user left without typing anything, remove the empty placeholder block
+                          if (!tb.text || !tb.text.trim()) {
+                            setTextBoxes(prev => prev.filter(t => t.id !== tb.id));
+                            setSelectedItem(null);
+                          }
+                          setEditingTextId(null);
+                        }}
+                        onKeyDown={e => {
+                          if (e.key === "Escape") { e.preventDefault(); setEditingTextId(null); e.target.blur(); }
+                          // Stop key events from bubbling to canvas/page shortcuts
+                          e.stopPropagation();
+                        }}
                         placeholder="Type here..."
-                        autoFocus={tb.text === "" && isSelected}
+                        rows={1}
                         style={{
-                          width: "100%", height: "100%",
-                          border: "none", background: "transparent",
-                          color: tb.color, fontSize: tb.size,
-                          fontFamily: tb.fontFamily || "'DM Sans',sans-serif",
-                          fontWeight: tb.bold ? 700 : 400,
-                          fontStyle: tb.italic ? "italic" : "normal",
-                          textDecoration: tb.underline ? "underline" : "none",
-                          textAlign: tb.align || "left",
-                          resize: "none", outline: "none",
-                          padding: 6, boxSizing: "border-box",
+                          ...baseStyle,
+                          width: availW,
+                          minHeight: tb.size * 1.4 + 12,
+                          border: "1.5px solid #6366f1",
+                          background: "rgba(255,255,255,0.95)",
+                          borderRadius: 4,
+                          padding: 4,
+                          resize: "none",
+                          outline: "none",
+                          boxSizing: "border-box",
+                          overflow: "hidden",
                         }}
                       />
-                    </div>
+                    ) : (
+                      <div
+                        onPointerDown={e => {
+                          if (tool === "select" || tool === "text") {
+                            startDragOrTap(e, "text", tb.id);
+                          }
+                        }}
+                        style={{
+                          ...baseStyle,
+                          display: "inline-block",
+                          maxWidth: availW,
+                          padding: 4,
+                          border: isSelected ? "1.5px dashed #6366f1" : "1.5px dashed transparent",
+                          borderRadius: 4,
+                          background: isSelected ? "rgba(99,102,241,0.05)" : "transparent",
+                          cursor: tool === "select" ? "text" : "default",
+                          minHeight: tb.size * 1.4,
+                          minWidth: 40,
+                          color: tb.text ? tb.color : "#94a3b8",
+                          fontStyle: tb.text ? (tb.italic ? "italic" : "normal") : "italic",
+                        }}
+                      >
+                        {tb.text || "Tap to edit"}
+                      </div>
+                    )}
                   </foreignObject>
-                  {isSelected && (
-                    <rect x={tb.x + tb.w - 12} y={tb.y + tbH - 12} width={24} height={24} fill="#6366f1" stroke="#fff" strokeWidth="2"
-                      onPointerDown={e => startDrag(e, "text", tb.id, "resize")}
-                      style={{ cursor: "nwse-resize" }}
-                    />
-                  )}
                 </g>
               );
             })}
@@ -489,7 +592,9 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
         }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: "#94a3b8", flex: 1 }}>
             {selectedItem.type === "text" ? "📝 Text selected" : "🖼️ Image selected"}
-            <span style={{ fontSize: 10, color: "#64748b", marginLeft: 8 }}>Drag corner to resize</span>
+            <span style={{ fontSize: 10, color: "#64748b", marginLeft: 8 }}>
+              {selectedItem.type === "text" ? "Tap to edit · drag to move" : "Drag corner to resize"}
+            </span>
           </div>
           {selectedItem.type === "text" && (
             <button
@@ -529,9 +634,9 @@ export default function SiteWalkCanvas({ walkId, walkTitle, canvas, onSave, onCl
         scrollbarWidth: "thin",
       }}>
         <ToolButton id="select" Icon={MousePointer2} label="Select" active={tool === "select"} onClick={() => { setTool("select"); setActiveSheet(null); }} />
-        <ToolButton id="pen" Icon={Pencil} label="Pen" active={tool === "pen"} accent={color} onClick={() => { setTool("pen"); setActiveSheet(null); setSelectedItem(null); }} />
-        <ToolButton id="eraser" Icon={Eraser} label="Eraser" active={tool === "eraser"} onClick={() => { setTool("eraser"); setActiveSheet(null); setSelectedItem(null); }} />
-        <ToolButton id="text" Icon={Type} label="Text" active={tool === "text"} onClick={() => { setTool("text"); setActiveSheet(null); setSelectedItem(null); }} />
+        <ToolButton id="pen" Icon={Pencil} label="Pen" active={tool === "pen"} accent={color} onClick={() => { setTool("pen"); setActiveSheet(null); setSelectedItem(null); setEditingTextId(null); }} />
+        <ToolButton id="eraser" Icon={Eraser} label="Eraser" active={tool === "eraser"} onClick={() => { setTool("eraser"); setActiveSheet(null); setSelectedItem(null); setEditingTextId(null); }} />
+        <ToolButton id="text" Icon={Type} label="Text" active={tool === "text"} onClick={() => { setTool("text"); setActiveSheet(null); setSelectedItem(null); setEditingTextId(null); }} />
 
         <div style={{ width: 1, alignSelf: "stretch", background: "#1e293b", margin: "0 2px" }} />
 
