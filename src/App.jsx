@@ -10,6 +10,7 @@ import Dashboard from "./Dashboard.jsx";
 import Contacts from "./Contacts.jsx";
 import WarrantyTracker from "./WarrantyTracker.jsx";
 import MigrationTool from "./MigrationTool.jsx";
+import FieldMode from "./FieldMode.jsx";
 
 import {
   FB_URL, dbGet, readTracker, putSection, putScheduleDay,
@@ -43,7 +44,7 @@ export const TASK_CATEGORIES = [
   { id: "orders", label: "Orders & Submittals", icon: "📦" },
   { id: "scheduling", label: "Scheduling", icon: "📅" },
 ];
-export const EMPTY_PROJECT = { id: "", name: "", jobNumber: "", customer: "", contactName: "", contactPhone: "", contactEmail: "", siteAddress: "", projectTypes: [], phaseId: "awarded", type: "retrofit", scopeNotes: "", bidAmount: "", contractAmount: "", devices: [], cableRuns: [], tasks: [], documents: [], notes: [], teamMembers: [], laborHours: null, laborAdjustments: null, materials: [], invoices: [], dailyLogs: [], createdAt: "", updatedAt: "" };
+export const EMPTY_PROJECT = { id: "", name: "", jobNumber: "", customer: "", contactName: "", contactPhone: "", contactEmail: "", siteAddress: "", projectTypes: [], phaseId: "awarded", type: "retrofit", scopeNotes: "", bidAmount: "", contractAmount: "", devices: [], cableRuns: [], tasks: [], documents: [], notes: [], teamMembers: [], laborHours: null, laborAdjustments: null, siteInfo: null, materials: [], invoices: [], dailyLogs: [], createdAt: "", updatedAt: "" };
 
 export function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 
@@ -324,6 +325,24 @@ function Tracker({ user, userRecord }) {
     if (dragItem && dragItem.phaseId !== phaseId) updateProject(dragItem.id, { phaseId });
     setDragItem(null);
   }
+  // Field Mode: techs land here on mobile by default; admins opt in.
+  const [fieldMode, setFieldMode] = useState(null);
+  const fieldModeOn = fieldMode === null ? (!isAdmin && isMobile) : fieldMode;
+
+  /** Shared daily-log submit path — Field Mode and the classic My Daily Log
+      screen both go through here, so the data is identical either way. */
+  function submitDailyLogs(updatedPersonalLogs, projectLogs) {
+    const merged = { ...getMyPrivate(), dailyLogs: updatedPersonalLogs };
+    let nd = { ...latestData.current, memberPrivate: { ...(latestData.current.memberPrivate || {}), [user.uid]: merged } };
+    const writes = [putMemberPrivate(user.uid, merged)];
+    (projectLogs || []).forEach(({ pid, log }) => {
+      nd = { ...nd, projects: nd.projects.map(p => p.id === pid ? { ...p, dailyLogs: [log, ...(p.dailyLogs || [])], updatedAt: new Date().toISOString() } : p) };
+      writes.push(putProjectDailyLog(pid, log));
+    });
+    applyLocal(nd);
+    persist(Promise.all(writes));
+  }
+
   /* Private space is keyed by uid (stable) with a fallback read of the
      legacy display-name key so pre-migration data still appears. */
   function getMyPrivate() {
@@ -387,6 +406,19 @@ function Tracker({ user, userRecord }) {
     );
   }
 
+  if (fieldModeOn) {
+    return <FieldMode
+      projects={data.projects}
+      teamRoster={data.teamRoster || []}
+      schedule={data.schedule || {}}
+      myName={myName}
+      myLogs={getMyPrivate().dailyLogs || []}
+      onSubmit={submitDailyLogs}
+      onOpenFullApp={() => setFieldMode(false)}
+      isAdmin={isAdmin}
+    />;
+  }
+
   const filteredProjects = data.projects.filter(p =>
     !p.movedToWarranty &&
     (!searchTerm || p.name.toLowerCase().includes(searchTerm.toLowerCase()) || p.customer.toLowerCase().includes(searchTerm.toLowerCase()) || (p.jobNumber || "").toLowerCase().includes(searchTerm.toLowerCase()))
@@ -446,6 +478,9 @@ function Tracker({ user, userRecord }) {
           </button>
         ))}
 
+        <button onClick={() => setFieldMode(true)} style={{ display: "flex", alignItems: "center", gap: 10, width: "calc(100% - 16px)", margin: "12px 8px 0", padding: "11px 12px", borderRadius: 10, border: "1.5px solid #69BE28", background: "#69BE2815", color: "#82CC4A", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", minHeight: 44 }}>
+          <span>⚡</span> Field Mode
+        </button>
         <div style={{ padding: "16px 12px 6px", fontSize: 10, fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: "0.08em" }}>My Space</div>
         {mySpaceItems.map(item => (
           <button key={item.id} onClick={() => navigate("myspace", item.id)}
@@ -593,21 +628,7 @@ function Tracker({ user, userRecord }) {
             <DailyTracker data={getMyPrivate().dailyTracker} archivedDays={getMyPrivate().archivedDays || []} onSave={dt => saveMyPrivate({ dailyTracker: dt })} onArchive={archive => saveMyPrivate({ archivedDays: archive })} />
           ) : view === "myspace" && mySpaceTab === "dailylog" ? (
             <MyDailyLog dailyLogs={getMyPrivate().dailyLogs || []} projects={data.projects} teamRoster={data.teamRoster} myName={myName} myEmail={user.email} predefinedEmail={data.adminSettings?.predefinedEmail || ""}
-              onSubmit={(logs, projectLogs) => {
-                // Personal archive — one path write to my own private space.
-                const merged = { ...getMyPrivate(), dailyLogs: logs };
-                let nd = { ...latestData.current, memberPrivate: { ...(latestData.current.memberPrivate || {}), [user.uid]: merged } };
-                const writes = [putMemberPrivate(user.uid, merged)];
-                // Each project log is its own keyed record — two foremen
-                // submitting to the same job at once can no longer collide,
-                // and labor hours are computed from these (no deduction).
-                (projectLogs || []).forEach(({ pid, log }) => {
-                  nd = { ...nd, projects: nd.projects.map(p => p.id === pid ? { ...p, dailyLogs: [log, ...(p.dailyLogs || [])], updatedAt: new Date().toISOString() } : p) };
-                  writes.push(putProjectDailyLog(pid, log));
-                });
-                applyLocal(nd);
-                persist(Promise.all(writes));
-              }}
+              onSubmit={submitDailyLogs}
               onDeleteLog={logs => saveMyPrivate({ dailyLogs: logs })} />
           ) : view === "myspace" && mySpaceTab === "opportunities" ? (
             <Opportunities opportunities={getMyPrivate().opportunities || []} onSave={opps => saveMyPrivate({ opportunities: opps })} onConvert={opp => { addProject({ ...opp, phaseId: "awarded" }); const opps = (getMyPrivate().opportunities || []).filter(o => o.id !== opp.id); saveMyPrivate({ opportunities: opps }); }} />

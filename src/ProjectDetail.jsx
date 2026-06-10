@@ -328,6 +328,16 @@ function OverviewTab({ project, form, setForm, editMode, setEditMode, onUpdate, 
       <div><label style={lS}>Site Address</label><input style={iS} value={form.siteAddress} onChange={e => setForm({ ...form, siteAddress: e.target.value })} /></div>
       <div><label style={lS}>Type</label><select style={iS} value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}><option value="retrofit">Retrofit</option><option value="new-construction">New Construction</option></select></div>
       <div><label style={lS}>Systems</label><div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>{PROJECT_TYPES.map(pt => (<button key={pt} onClick={() => { const t = form.projectTypes || []; setForm({ ...form, projectTypes: t.includes(pt) ? t.filter(x => x !== pt) : [...t, pt] }); }} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #1A3050", fontSize: 11, cursor: "pointer", fontFamily: "inherit", background: (form.projectTypes || []).includes(pt) ? "#69BE28" : "transparent", color: (form.projectTypes || []).includes(pt) ? "#fff" : "#94a3b8" }}>{pt}</button>))}</div></div>
+      <div style={{ gridColumn: "1/-1", marginTop: 6 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: "#69BE28", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>⚡ Site Info — shows on techs' Field Mode home screen</div>
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 }}>
+          <div><label style={lS}>Gate Code</label><input style={iS} value={form.siteInfo?.gateCode || ""} onChange={e => setForm({ ...form, siteInfo: { ...(form.siteInfo || {}), gateCode: e.target.value } })} placeholder="#4482" /></div>
+          <div><label style={lS}>Lockbox</label><input style={iS} value={form.siteInfo?.lockbox || ""} onChange={e => setForm({ ...form, siteInfo: { ...(form.siteInfo || {}), lockbox: e.target.value } })} placeholder="2580 — N. office door" /></div>
+          <div><label style={lS}>Site Contact</label><input style={iS} value={form.siteInfo?.siteContact || ""} onChange={e => setForm({ ...form, siteInfo: { ...(form.siteInfo || {}), siteContact: e.target.value } })} placeholder="Mark R. · (425) 555-0142" /></div>
+          <div><label style={lS}>IDF / Head End Location</label><input style={iS} value={form.siteInfo?.idf || ""} onChange={e => setForm({ ...form, siteInfo: { ...(form.siteInfo || {}), idf: e.target.value } })} placeholder="Bldg C, 2nd flr closet" /></div>
+          <div style={{ gridColumn: "1/-1" }}><label style={lS}>Parking / Access Warning</label><input style={iS} value={form.siteInfo?.parking || ""} onChange={e => setForm({ ...form, siteInfo: { ...(form.siteInfo || {}), parking: e.target.value } })} placeholder="Behind Bldg D — towing enforced" /></div>
+        </div>
+      </div>
       <div><label style={lS}>Bid Amount</label><input style={iS} value={form.bidAmount} onChange={e => setForm({ ...form, bidAmount: e.target.value })} placeholder="$" /></div>
       <div><label style={lS}>Contract Amount</label><input style={iS} value={form.contractAmount} onChange={e => setForm({ ...form, contractAmount: e.target.value })} placeholder="$" /></div>
       <div style={{ gridColumn: "1/-1", display: "flex", gap: 8, justifyContent: "flex-end" }}><button onClick={() => setEditMode(false)} style={{ padding: "8px 20px", borderRadius: 8, border: "1px solid #1A3050", background: "transparent", color: "#94a3b8", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button><button onClick={() => { onUpdate(form); setEditMode(false); }} style={{ padding: "8px 20px", borderRadius: 8, border: "none", background: "#69BE28", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Save</button></div>
@@ -339,6 +349,18 @@ function OverviewTab({ project, form, setForm, editMode, setEditMode, onUpdate, 
       <IR icon={Phone} label="Phone" value={project.contactPhone} /><IR icon={Mail} label="Email" value={project.contactEmail} />
       <IR icon={MapPin} label="Site Address" value={project.siteAddress} /><IR icon={Layers} label="Type" value={project.type === "retrofit" ? "Retrofit" : "New Construction"} />
       <IR icon={DollarSign} label="Bid Amount" value={project.bidAmount} /><IR icon={DollarSign} label="Contract Amount" value={project.contractAmount} />
+      {project.siteInfo && (project.siteInfo.gateCode || project.siteInfo.lockbox || project.siteInfo.siteContact || project.siteInfo.idf || project.siteInfo.parking) && (
+        <div style={{ gridColumn: "1/-1", background: "#69BE2808", border: "1px solid #69BE2833", borderRadius: 10, padding: "12px 14px" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#69BE28", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>⚡ Site Info (Field Mode)</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 18px", fontSize: 12.5, color: "#94a3b8" }}>
+            {project.siteInfo.gateCode && <span>🔑 Gate <strong style={{ color: "#e2e8f0" }}>{project.siteInfo.gateCode}</strong></span>}
+            {project.siteInfo.lockbox && <span>🔒 <strong style={{ color: "#e2e8f0" }}>{project.siteInfo.lockbox}</strong></span>}
+            {project.siteInfo.siteContact && <span>📞 <strong style={{ color: "#e2e8f0" }}>{project.siteInfo.siteContact}</strong></span>}
+            {project.siteInfo.idf && <span>🖥 <strong style={{ color: "#e2e8f0" }}>{project.siteInfo.idf}</strong></span>}
+            {project.siteInfo.parking && <span style={{ color: "#f59e0b" }}>🚧 {project.siteInfo.parking}</span>}
+          </div>
+        </div>
+      )}
       <div style={{ gridColumn: "1/-1" }}><div style={lS}>Systems</div><div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{(project.projectTypes || []).map(t => <span key={t} style={{ fontSize: 12, padding: "4px 10px", borderRadius: 6, background: "#69BE2822", color: "#82CC4A" }}>{t}</span>)}{!project.projectTypes?.length && <span style={{ fontSize: 12, color: "#475569" }}>None</span>}</div></div>
       <div style={{ gridColumn: "1/-1" }}><div style={lS}>Team</div><div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>{(project.teamMembers || []).map(tm => (<span key={tm} style={{ fontSize: 12, padding: "4px 10px", borderRadius: 6, background: "#1A3050", color: "#94a3b8", display: "flex", alignItems: "center", gap: 4 }}><User size={11} /> {tm}<button onClick={() => onUpdate({ teamMembers: project.teamMembers.filter(m => m !== tm) })} style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer", padding: 0 }}><X size={11} /></button></span>))}</div>
       {teamRoster.length > 0 && <select style={{ ...iS, maxWidth: 200, marginTop: 8, fontSize: 12 }} value="" onChange={e => { if (e.target.value && !(project.teamMembers || []).includes(e.target.value)) onUpdate({ teamMembers: [...(project.teamMembers || []), e.target.value] }); }}><option value="">+ Assign</option>{teamRoster.filter(t => !(project.teamMembers || []).includes(t.name)).map(t => <option key={t.id} value={t.name}>{t.name}</option>)}</select>}</div>
@@ -588,6 +610,15 @@ function DailyLogTab({ project, onUpdate }) {
     {logs.map((l, i) => (<div key={l.id || i} style={{ padding: "12px 14px", background: "#0A192F", borderRadius: 10, border: "1px solid #1A3050", marginBottom: 6 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}><span style={{ fontSize: 12, fontWeight: 600, color: "#fff" }}>{l.date}</span>{l.member && <span style={{ fontSize: 11, color: "#64748b" }}>· {l.member}</span>}{l.hours > 0 && <span style={{ fontSize: 11, color: "#f59e0b", fontWeight: 600 }}>{l.hours}h</span>}<button onClick={() => onUpdate({ dailyLogs: logs.filter((_, idx) => idx !== i) })} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer", marginLeft: "auto" }}><X size={12} /></button></div>
       <div style={{ fontSize: 13, color: "#e2e8f0", whiteSpace: "pre-wrap" }}>{l.activities}</div>
+      {l.photos?.length > 0 && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+          {l.photos.map((url, pi) => (
+            <a key={pi} href={url} target="_blank" rel="noreferrer">
+              <img src={url} alt={`Log photo ${pi + 1}`} style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 8, border: "1px solid #1A3050" }} />
+            </a>
+          ))}
+        </div>
+      )}
     </div>))}
     {logs.length === 0 && <div style={{ textAlign: "center", padding: 20, color: "#334155", fontSize: 13 }}>No daily logs yet. Submit a log from My Space → Daily Log.</div>}
   </div>);
