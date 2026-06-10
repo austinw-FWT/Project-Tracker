@@ -415,6 +415,7 @@ function Tracker({ user, userRecord }) {
       myLogs={getMyPrivate().dailyLogs || []}
       onSubmit={submitDailyLogs}
       onOpenFullApp={() => setFieldMode(false)}
+      onUpdateProject={updateProject}
       isAdmin={isAdmin}
     />;
   }

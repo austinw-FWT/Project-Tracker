@@ -70,7 +70,7 @@ function compressImage(file) {
   });
 }
 
-export default function FieldMode({ projects, teamRoster, schedule, myName, myLogs, onSubmit, onOpenFullApp, isAdmin }) {
+export default function FieldMode({ projects, teamRoster, schedule, myName, myLogs, onSubmit, onOpenFullApp, onUpdateProject, isAdmin }) {
   const [themeKey, setThemeKey] = useState(() => { try { return localStorage.getItem(THEME_KEY) || "daylight"; } catch { return "daylight"; } });
   const T = THEMES[themeKey] || THEMES.daylight;
   const [tab, setTab] = useState("today");
@@ -85,6 +85,7 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
   const [photos, setPhotos] = useState([]); // File objects, compressed at submit
   const [submitting, setSubmitting] = useState(false);
   const [crewSheet, setCrewSheet] = useState(false);
+  const [detailId, setDetailId] = useState(null);
   const fileRef = useRef(null);
   const restored = useRef(false);
 
@@ -412,30 +413,157 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
   );
 
   /* ════════ PROJECTS ════════ */
-  const ScreenProjects = (
+  const detail = activeProjects.find(p => p.id === detailId);
+
+  const ProjectDetailScreen = detail && (() => {
+    const psi = detail.siteInfo || {};
+    const siteRows = [["Gate code", psi.gateCode], ["Lockbox", psi.lockbox], ["Site contact", psi.siteContact], ["IDF / Head end", psi.idf]].filter(([, v]) => v);
+    const myTasks = (detail.tasks || []).filter(t => !t.done && (!t.assignee || t.assignee === myName));
+    const docs = detail.documents || [];
+    const recentLogs = (detail.dailyLogs || []).slice(0, 3);
+    const mapsUrl = detail.siteAddress ? `https://maps.google.com/?q=${encodeURIComponent(detail.siteAddress)}` : null;
+    const telUrl = detail.contactPhone ? `tel:${detail.contactPhone.replace(/[^\d+]/g, "")}` : null;
+
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <button onClick={() => setDetailId(null)} style={{ alignSelf: "flex-start", display: "flex", alignItems: "center", gap: 6, padding: "9px 14px 9px 10px", borderRadius: 10, border: `1px solid ${T.line}`, background: T.card, color: T.inkSoft, fontSize: 13.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", minHeight: 42 }}>‹ All projects</button>
+
+        {/* Header */}
+        <div style={{ ...card, overflow: "hidden" }}>
+          <div style={{ background: T.navy, padding: "14px 16px" }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+              {detail.jobNumber && <span style={{ fontSize: 13, fontWeight: 800, color: "#69BE28" }}>#{detail.jobNumber}</span>}
+              <span style={{ fontFamily: "'Outfit',sans-serif", fontSize: 19, fontWeight: 800, color: "#fff" }}>{detail.name}</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: "#9FB1CC", marginTop: 2 }}>{detail.customer}{detail.type ? ` · ${detail.type === "retrofit" ? "Retrofit" : "New Construction"}` : ""}</div>
+          </div>
+          {(mapsUrl || telUrl) && (
+            <div style={{ display: "flex", gap: 8, padding: "10px 12px" }}>
+              {mapsUrl && <a href={mapsUrl} target="_blank" rel="noreferrer" style={{ flex: 1, minHeight: 46, borderRadius: 10, background: T.greenWash, border: `1px solid ${T.green}50`, color: T.green, fontSize: 13.5, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, textDecoration: "none" }}>🧭 Directions</a>}
+              {telUrl && <a href={telUrl} style={{ flex: 1, minHeight: 46, borderRadius: 10, background: T.cardAlt, border: `1px solid ${T.line}`, color: T.ink, fontSize: 13.5, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, textDecoration: "none" }}>📞 {detail.contactName ? detail.contactName.split(" ")[0] : "Call"}</a>}
+            </div>
+          )}
+          {detail.siteAddress && <div style={{ padding: "0 16px 12px", fontSize: 12.5, color: T.inkSoft }}>📍 {detail.siteAddress}</div>}
+        </div>
+
+        {/* Site brain */}
+        {(siteRows.length > 0 || psi.parking) && (
+          <div style={{ ...card, padding: "13px 16px" }}>
+            <div style={{ ...eyebrow, marginBottom: 8 }}>Site brain — tap to copy</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              {siteRows.map(([label, val]) => (
+                <button key={label} onClick={() => copySite(label, val)} style={{ background: copied === label ? T.greenWash : T.cardAlt, border: `1px solid ${copied === label ? T.green : T.line}`, borderRadius: 10, padding: "10px 12px", textAlign: "left", cursor: "pointer", fontFamily: "inherit", minHeight: 58 }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: T.inkFaint, textTransform: "uppercase" }}>{label}</div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: copied === label ? T.green : T.ink, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{copied === label ? "Copied ✓" : val}</div>
+                </button>
+              ))}
+            </div>
+            {psi.parking && <div style={{ marginTop: 8, padding: "9px 12px", borderRadius: 10, background: T.amberWash, border: `1px solid ${T.amber}30`, fontSize: 12.5, fontWeight: 600, color: T.amber }}>🚧 {psi.parking}</div>}
+          </div>
+        )}
+
+        {/* Scope */}
+        {detail.scopeNotes && (
+          <div style={{ ...card, padding: "13px 16px" }}>
+            <div style={{ ...eyebrow, marginBottom: 8 }}>Scope of work</div>
+            <div style={{ fontSize: 13.5, color: T.ink, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{detail.scopeNotes}</div>
+          </div>
+        )}
+
+        {/* My tasks */}
+        {myTasks.length > 0 && (
+          <div style={{ ...card, padding: "13px 16px" }}>
+            <div style={{ ...eyebrow, marginBottom: 8 }}>Open tasks{myTasks.some(t => t.assignee === myName) ? " (yours + unassigned)" : ""}</div>
+            {myTasks.map(t => (
+              <button key={t.id} onClick={() => { if (onUpdateProject && confirm(`Mark done: "${t.text}"?`)) { onUpdateProject(detail.id, { tasks: detail.tasks.map(x => x.id === t.id ? { ...x, done: true } : x) }); setToast("Task checked off ✓"); } }}
+                style={{ display: "flex", alignItems: "flex-start", gap: 10, width: "100%", padding: "10px 4px", border: "none", borderBottom: `1px solid ${T.line}`, background: "none", cursor: "pointer", fontFamily: "inherit", textAlign: "left", minHeight: 44 }}>
+                <span style={{ width: 22, height: 22, borderRadius: 7, border: `2px solid ${T.lineStrong}`, flexShrink: 0, marginTop: 1 }} />
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 600, color: T.ink }}>{t.text}</div>
+                  {t.assignee && <div style={{ fontSize: 11, color: t.assignee === myName ? T.green : T.inkFaint, fontWeight: 700 }}>{t.assignee === myName ? "Assigned to you" : t.assignee}</div>}
+                </div>
+              </button>
+            ))}
+            <div style={{ fontSize: 11, color: T.inkFaint, marginTop: 8 }}>Tap a task to check it off.</div>
+          </div>
+        )}
+
+        {/* Documents */}
+        {docs.length > 0 && (
+          <div style={{ ...card, padding: "13px 16px" }}>
+            <div style={{ ...eyebrow, marginBottom: 8 }}>Documents & drawings</div>
+            {docs.map((d, i) => d.fileUrl ? (
+              <a key={i} href={d.fileUrl} target="_blank" rel="noreferrer" style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 4px", borderBottom: `1px solid ${T.line}`, textDecoration: "none", minHeight: 48 }}>
+                <span style={{ fontSize: 17 }}>{/pdf/i.test(d.fileName || d.name) ? "📕" : /dwg|plan|drawing/i.test(d.type || "") ? "📐" : "📄"}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 700, color: T.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.name || d.fileName}</div>
+                  {d.type && <div style={{ fontSize: 11, color: T.inkFaint }}>{d.type}</div>}
+                </div>
+                <span style={{ color: T.green, fontWeight: 800, fontSize: 13 }}>Open ›</span>
+              </a>
+            ) : (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 4px", borderBottom: `1px solid ${T.line}`, opacity: 0.6, minHeight: 48 }}>
+                <span style={{ fontSize: 17 }}>📄</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 700, color: T.ink }}>{d.name}</div>
+                  <div style={{ fontSize: 11, color: T.inkFaint }}>No file attached — ask the office</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Recent logs */}
+        {recentLogs.length > 0 && (
+          <div style={{ ...card, padding: "13px 16px" }}>
+            <div style={{ ...eyebrow, marginBottom: 8 }}>Recent daily logs</div>
+            {recentLogs.map((l, i) => (
+              <div key={l.id || i} style={{ padding: "10px 0", borderBottom: `1px solid ${T.line}` }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 3 }}>
+                  <span style={{ fontSize: 12.5, fontWeight: 800, color: T.ink }}>{l.date}</span>
+                  {l.member && <span style={{ fontSize: 11.5, color: T.inkFaint }}>{l.member}</span>}
+                  {l.hours > 0 && <span style={{ fontSize: 11.5, fontWeight: 800, color: T.amber }}>{l.hours}h</span>}
+                </div>
+                <div style={{ fontSize: 12.5, color: T.inkSoft, lineHeight: 1.5, whiteSpace: "pre-wrap", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{l.activities}</div>
+                {l.photos?.length > 0 && (
+                  <div style={{ display: "flex", gap: 5, marginTop: 6 }}>
+                    {l.photos.slice(0, 4).map((u, pi) => <a key={pi} href={u} target="_blank" rel="noreferrer"><img src={u} alt="" style={{ width: 52, height: 52, objectFit: "cover", borderRadius: 8, border: `1px solid ${T.line}` }} /></a>)}
+                    {l.photos.length > 4 && <span style={{ fontSize: 11, color: T.inkFaint, alignSelf: "center" }}>+{l.photos.length - 4}</span>}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        <button onClick={() => startLog(detail.id)} style={{ width: "100%", minHeight: 52, borderRadius: 13, border: "none", background: T.green, color: "#fff", fontSize: 15.5, fontWeight: 800, fontFamily: "'Outfit',sans-serif", cursor: "pointer" }}>Log hours on this job</button>
+        <div style={{ height: 4 }} />
+      </div>
+    );
+  })();
+
+  const ScreenProjects = detail ? ProjectDetailScreen : (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <div style={{ fontFamily: "'Outfit',sans-serif", fontSize: 22, fontWeight: 800, color: T.ink, marginBottom: 2 }}>Projects</div>
       {activeProjects.map(p => {
         const psi = p.siteInfo || {};
-        const hasInfo = psi.gateCode || psi.lockbox || psi.siteContact || psi.parking || psi.idf;
+        const docCount = (p.documents || []).length;
+        const taskCount = (p.tasks || []).filter(t => !t.done && (!t.assignee || t.assignee === myName)).length;
         return (
-          <div key={p.id} style={{ ...card, padding: "14px 16px" }}>
+          <button key={p.id} onClick={() => setDetailId(p.id)} style={{ ...card, padding: "14px 16px", cursor: "pointer", fontFamily: "inherit", textAlign: "left", width: "100%" }}>
             <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
               {p.jobNumber && <span style={{ fontSize: 12.5, fontWeight: 800, color: T.green }}>#{p.jobNumber}</span>}
-              <span style={{ fontSize: 15.5, fontWeight: 800, color: T.ink, flex: 1 }}>{p.name}</span>
+              <span style={{ fontSize: 15.5, fontWeight: 800, color: T.ink, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+              <span style={{ color: T.inkFaint, fontWeight: 800 }}>›</span>
             </div>
             <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 2 }}>{p.customer}</div>
-            {hasInfo && (
-              <div style={{ marginTop: 8, fontSize: 12, color: T.inkSoft, lineHeight: 1.7 }}>
-                {psi.gateCode && <span style={{ marginRight: 12 }}>🔑 Gate {psi.gateCode}</span>}
-                {psi.lockbox && <span style={{ marginRight: 12 }}>🔒 {psi.lockbox}</span>}
-                {psi.siteContact && <span style={{ marginRight: 12 }}>📞 {psi.siteContact}</span>}
-                {psi.idf && <span>🖥 {psi.idf}</span>}
-                {psi.parking && <div style={{ color: T.amber, fontWeight: 600 }}>🚧 {psi.parking}</div>}
-              </div>
-            )}
-            <button onClick={() => startLog(p.id)} style={{ marginTop: 10, width: "100%", minHeight: 42, borderRadius: 10, border: "none", background: T.greenWash, color: T.green, fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>Log hours</button>
-          </div>
+            <div style={{ display: "flex", gap: 12, marginTop: 8, fontSize: 11.5, color: T.inkFaint, fontWeight: 600, flexWrap: "wrap" }}>
+              {p.siteAddress && <span>📍 {p.siteAddress.split(",")[0]}</span>}
+              {docCount > 0 && <span>📄 {docCount} doc{docCount > 1 ? "s" : ""}</span>}
+              {taskCount > 0 && <span style={{ color: T.amber }}>✓ {taskCount} task{taskCount > 1 ? "s" : ""}</span>}
+              {psi.gateCode && <span>🔑 Gate {psi.gateCode}</span>}
+            </div>
+          </button>
         );
       })}
     </div>
@@ -496,7 +624,7 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
 
       <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: T.card, borderTop: `1px solid ${T.line}`, display: "flex", paddingBottom: "max(8px, env(safe-area-inset-bottom))", zIndex: 30 }}>
         {TABS.map(t => (
-          <button key={t.id} onClick={() => { setTab(t.id); if (t.id === "log" && !projectId && todaysProject) startLog(todaysProject.id); }} style={{ flex: 1, minHeight: 58, border: "none", background: "transparent", cursor: "pointer", fontFamily: "inherit", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3 }}>
+          <button key={t.id} onClick={() => { if (t.id === "projects" && tab === "projects") setDetailId(null); setTab(t.id); if (t.id === "log" && !projectId && todaysProject) startLog(todaysProject.id); }} style={{ flex: 1, minHeight: 58, border: "none", background: "transparent", cursor: "pointer", fontFamily: "inherit", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3 }}>
             <span style={{ fontSize: 19, filter: tab === t.id ? "none" : "grayscale(1) opacity(0.55)" }}>{t.icon}</span>
             <span style={{ fontSize: 11, fontWeight: 800, color: tab === t.id ? T.green : T.inkFaint }}>{t.label}</span>
           </button>
