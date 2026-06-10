@@ -9,8 +9,16 @@ import TimesheetView from "./TimesheetView.jsx";
 import Dashboard from "./Dashboard.jsx";
 import Contacts from "./Contacts.jsx";
 import WarrantyTracker from "./WarrantyTracker.jsx";
+import MigrationTool from "./MigrationTool.jsx";
 
-const FB_URL = "https://fwt-lv-tracker-default-rtdb.firebaseio.com";
+import {
+  FB_URL, dbGet, readTracker, putSection, putScheduleDay,
+  putProject, patchProject, deleteProject as dbDeleteProject,
+  putProjectDailyLog, putMemberPrivate,
+  readUsers, putUser, deleteUser as dbDeleteUser,
+  normalizeTracker, denormalizeProjectUpdates,
+} from "./db.js";
+
 const DB_PATH = "/tracker";
 
 const DEFAULT_PHASES = [
@@ -35,7 +43,7 @@ export const TASK_CATEGORIES = [
   { id: "orders", label: "Orders & Submittals", icon: "📦" },
   { id: "scheduling", label: "Scheduling", icon: "📅" },
 ];
-export const EMPTY_PROJECT = { id: "", name: "", customer: "", contactName: "", contactPhone: "", contactEmail: "", siteAddress: "", projectTypes: [], phaseId: "awarded", type: "retrofit", scopeNotes: "", bidAmount: "", contractAmount: "", devices: [], cableRuns: [], tasks: [], documents: [], notes: [], teamMembers: [], laborHours: null, materials: [], invoices: [], dailyLogs: [], createdAt: "", updatedAt: "" };
+export const EMPTY_PROJECT = { id: "", name: "", jobNumber: "", customer: "", contactName: "", contactPhone: "", contactEmail: "", siteAddress: "", projectTypes: [], phaseId: "awarded", type: "retrofit", scopeNotes: "", bidAmount: "", contractAmount: "", devices: [], cableRuns: [], tasks: [], documents: [], notes: [], teamMembers: [], laborHours: null, laborAdjustments: null, materials: [], invoices: [], dailyLogs: [], createdAt: "", updatedAt: "" };
 
 export function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 
@@ -49,11 +57,12 @@ const PROJECT_TEMPLATES = [
 ];
 
 async function getToken() { if (!auth.currentUser) return null; return await auth.currentUser.getIdToken(); }
-async function fbRead() { const t = await getToken(); const r = await fetch(`${FB_URL}${DB_PATH}.json${t ? `?auth=${t}` : ""}`); if (!r.ok) throw new Error("Read failed"); return await r.json(); }
-async function fbWrite(data) { const t = await getToken(); const r = await fetch(`${FB_URL}${DB_PATH}.json${t ? `?auth=${t}` : ""}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) }); if (!r.ok) throw new Error("Write failed"); }
-async function fbReadUsers() { const t = await getToken(); const r = await fetch(`${FB_URL}/users.json${t ? `?auth=${t}` : ""}`); return await r.json() || {}; }
-async function fbWriteUser(uid, d) { const t = await getToken(); await fetch(`${FB_URL}/users/${uid}.json${t ? `?auth=${t}` : ""}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(d) }); }
-async function fbDeleteUser(uid) { const t = await getToken(); await fetch(`${FB_URL}/users/${uid}.json${t ? `?auth=${t}` : ""}`, { method: "DELETE" }); }
+// Reads/writes now go through db.js (path-level). These thin wrappers keep
+// the existing call sites readable.
+const fbRead = readTracker;
+const fbReadUsers = async () => (await readUsers()) || {};
+const fbWriteUser = putUser;
+const fbDeleteUser = dbDeleteUser;
 
 /* ═══ MOBILE HOOK ═══ */
 function useIsMobile() {
@@ -79,13 +88,22 @@ export default function App() {
       if (u) {
         setCheckingApproval(true);
         try {
-          const allUsers = await fbReadUsers();
-          const existing = allUsers?.[u.uid];
+          // Read only OUR record — security rules allow self-read but block
+          // unapproved users from listing everyone.
+          const existing = await dbGet(`/users/${u.uid}`);
           if (existing) { setUserRecord(existing); }
           else {
-            const hasAny = allUsers && Object.keys(allUsers).length > 0;
-            const nr = { email: u.email, displayName: u.displayName || u.email, status: hasAny ? "pending" : "approved", role: hasAny ? "member" : "admin", createdAt: new Date().toISOString() };
-            await fbWriteUser(u.uid, nr); setUserRecord(nr);
+            // Bootstrap: the rules permit an admin/approved self-write ONLY
+            // when /users is empty (first user ever). Try it; if the rules
+            // reject it, we're not first — create a pending record instead.
+            const base = { email: u.email, displayName: u.displayName || u.email, createdAt: new Date().toISOString() };
+            let nr = { ...base, status: "approved", role: "admin" };
+            try { await fbWriteUser(u.uid, nr); }
+            catch {
+              nr = { ...base, status: "pending", role: "member" };
+              await fbWriteUser(u.uid, nr);
+            }
+            setUserRecord(nr);
           }
         } catch { setUserRecord({ status: "error" }); }
         setCheckingApproval(false);
@@ -189,7 +207,6 @@ function Tracker({ user, userRecord }) {
   const [syncPulse, setSyncPulse] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const eventSourceRef = useRef(null);
-  const saveTimeout = useRef(null);
   const isSaving = useRef(false);
   const latestData = useRef(null);
   const hasCheckedRoster = useRef(false);
@@ -202,7 +219,7 @@ function Tracker({ user, userRecord }) {
     async function init() {
       try {
         const remote = await fbRead();
-        const d = remote ? { ...DEFAULTS, ...remote } : { ...DEFAULTS };
+        const d = normalizeTracker(remote, DEFAULTS);
         latestData.current = d;
         if (alive) {
           setData(d); setSyncStatus("synced"); setLastSync(new Date()); setLoading(false);
@@ -210,12 +227,14 @@ function Tracker({ user, userRecord }) {
             hasCheckedRoster.current = true;
             const roster = d.teamRoster || [];
             if (!roster.some(m => m.email === user.email || m.name === myName)) {
-              const updated = { ...d, teamRoster: [...roster, { id: genId(), name: myName, role: isAdmin ? "Admin / PM" : "Technician", email: user.email }] };
-              latestData.current = updated; setData(updated); fbWrite(updated).catch(() => {});
+              const newRoster = [...roster, { id: genId(), name: myName, role: isAdmin ? "Admin / PM" : "Technician", email: user.email }];
+              const updated = { ...d, teamRoster: newRoster };
+              latestData.current = updated; setData(updated);
+              putSection("teamRoster", newRoster).catch(() => {});
             }
           }
         }
-        if (!remote) await fbWrite(DEFAULTS);
+        if (!remote) await putSection("phases", DEFAULT_PHASES);
       } catch { if (alive) { setData(DEFAULTS); setSyncStatus("error"); setLoading(false); } }
       try {
         const token = await getToken();
@@ -226,7 +245,7 @@ function Tracker({ user, userRecord }) {
           if (!alive || isSaving.current) return;
           fbRead().then(full => {
             if (!alive || isSaving.current) return;
-            const nd = full ? { ...DEFAULTS, ...full } : { ...DEFAULTS };
+            const nd = normalizeTracker(full, DEFAULTS);
             latestData.current = nd; setData(nd);
             setSelectedProject(prev => prev ? nd.projects?.find(p => p.id === prev.id) || null : null);
             setSyncPulse(true); setTimeout(() => setSyncPulse(false), 1200); setLastSync(new Date());
@@ -249,7 +268,7 @@ function Tracker({ user, userRecord }) {
         const es = new EventSource(`${FB_URL}${DB_PATH}.json${token ? `?auth=${token}` : ""}`);
         eventSourceRef.current = es;
         es.onopen = () => setSyncStatus("synced");
-        const h = () => { if (isSaving.current) return; fbRead().then(full => { const nd = full ? { ...DEFAULTS, ...full } : { ...DEFAULTS }; latestData.current = nd; setData(nd); setSyncPulse(true); setTimeout(() => setSyncPulse(false), 1200); setLastSync(new Date()); }).catch(() => {}); };
+        const h = () => { if (isSaving.current) return; fbRead().then(full => { const nd = normalizeTracker(full, DEFAULTS); latestData.current = nd; setData(nd); setSyncPulse(true); setTimeout(() => setSyncPulse(false), 1200); setLastSync(new Date()); }).catch(() => {}); };
         es.addEventListener("put", h); es.addEventListener("patch", h);
         es.onerror = () => setSyncStatus("reconnecting");
       } catch {}
@@ -257,27 +276,42 @@ function Tracker({ user, userRecord }) {
     return () => clearInterval(interval);
   }, []);
 
-  const saveData = useCallback(newData => {
-    latestData.current = newData; setData(newData);
-    if (saveTimeout.current) clearTimeout(saveTimeout.current);
+  /* ── WRITE LAYER ──────────────────────────────────────────────
+     applyLocal: optimistic local state update (UI responds instantly).
+     persist:    fire the path-level write, drive the sync pill, and
+                 briefly suppress the SSE echo of our own write.
+     No call here ever PUTs the root — concurrent users can no longer
+     overwrite each other's data. */
+  const applyLocal = useCallback(newData => { latestData.current = newData; setData(newData); }, []);
+  const persist = useCallback(writePromise => {
     isSaving.current = true; setSyncStatus("saving");
-    saveTimeout.current = setTimeout(async () => {
-      try { await fbWrite(newData); setSyncStatus("synced"); setLastSync(new Date()); } catch { setSyncStatus("error"); }
-      setTimeout(() => { isSaving.current = false; }, 1000);
-    }, 300);
+    Promise.resolve(writePromise)
+      .then(() => { setSyncStatus("synced"); setLastSync(new Date()); })
+      .catch(() => setSyncStatus("error"))
+      .finally(() => setTimeout(() => { isSaving.current = false; }, 1000));
   }, []);
+  /** Small low-contention sections: phases, teamRoster, contacts, adminSettings. */
+  const saveSection = useCallback((section, value, newData) => { applyLocal(newData); persist(putSection(section, value)); }, [applyLocal, persist]);
 
   function updateProject(pid, updates) {
-    const nd = { ...data, projects: data.projects.map(p => p.id === pid ? { ...p, ...updates, updatedAt: new Date().toISOString() } : p) };
-    saveData(nd);
-    setSelectedProject(prev => prev?.id === pid ? { ...prev, ...updates, updatedAt: new Date().toISOString() } : prev);
+    const stamped = { ...updates, updatedAt: new Date().toISOString() };
+    const nd = { ...latestData.current, projects: latestData.current.projects.map(p => p.id === pid ? { ...p, ...stamped } : p) };
+    applyLocal(nd);
+    persist(patchProject(pid, denormalizeProjectUpdates(stamped)));
+    setSelectedProject(prev => prev?.id === pid ? { ...prev, ...stamped } : prev);
   }
   function addProject(project) {
     const now = new Date().toISOString();
     const np = { ...EMPTY_PROJECT, ...project, id: genId(), phaseId: project.phaseId || data.phases[0]?.id || "awarded", createdAt: now, updatedAt: now };
-    saveData({ ...data, projects: [...data.projects, np] }); setShowNewProject(false);
+    applyLocal({ ...latestData.current, projects: [...latestData.current.projects, np] });
+    persist(putProject(np.id, denormalizeProjectUpdates(np)));
+    setShowNewProject(false);
   }
-  function deleteProject(pid) { saveData({ ...data, projects: data.projects.filter(p => p.id !== pid) }); setSelectedProject(null); }
+  function deleteProject(pid) {
+    applyLocal({ ...latestData.current, projects: latestData.current.projects.filter(p => p.id !== pid) });
+    persist(dbDeleteProject(pid));
+    setSelectedProject(null);
+  }
   function handleDrop(phaseId, explicitProjectId) {
     // Two call patterns:
     //  - Drag-and-drop on desktop kanban: onDrop(phaseId), pulls from dragItem state
@@ -290,17 +324,33 @@ function Tracker({ user, userRecord }) {
     if (dragItem && dragItem.phaseId !== phaseId) updateProject(dragItem.id, { phaseId });
     setDragItem(null);
   }
-  function getMyPrivate() { return (data.memberPrivate || {})[myName] || {}; }
-  function saveMyPrivate(updates) { saveData({ ...data, memberPrivate: { ...(data.memberPrivate || {}), [myName]: { ...getMyPrivate(), ...updates } } }); }
+  /* Private space is keyed by uid (stable) with a fallback read of the
+     legacy display-name key so pre-migration data still appears. */
+  function getMyPrivate() {
+    const mp = latestData.current?.memberPrivate || {};
+    return mp[user.uid] || mp[myName] || {};
+  }
+  function saveMyPrivate(updates) {
+    const merged = { ...getMyPrivate(), ...updates };
+    const nd = { ...latestData.current, memberPrivate: { ...(latestData.current.memberPrivate || {}), [user.uid]: merged } };
+    applyLocal(nd);
+    persist(putMemberPrivate(user.uid, merged));
+  }
 
   function assignTaskToMember(taskText, memberName, category) {
-    const mp = (data.memberPrivate || {})[memberName] || {};
+    const mpAll = latestData.current.memberPrivate || {};
+    // Resolve the member's storage key: uid if they have an account, else legacy name key.
+    const rosterEntry = (latestData.current.teamRoster || []).find(t => t.name === memberName);
+    const uidKey = rosterEntry?.uid || Object.keys(mpAll).find(k => k === memberName) || memberName;
+    const mp = mpAll[uidKey] || mpAll[memberName] || {};
     const dt = mp.dailyTracker || {};
     const sections = dt.dailySections || [];
     const secIdx = sections.findIndex(s => s.id === (category || "projects"));
     if (secIdx >= 0) {
       const ns = sections.map((s, i) => i === secIdx ? { ...s, items: [...s.items, { id: genId(), text: taskText, done: false }] } : s);
-      saveData({ ...data, memberPrivate: { ...(data.memberPrivate || {}), [memberName]: { ...mp, dailyTracker: { ...dt, dailySections: ns } } } });
+      const merged = { ...mp, dailyTracker: { ...dt, dailySections: ns } };
+      applyLocal({ ...latestData.current, memberPrivate: { ...mpAll, [uidKey]: merged } });
+      persist(putMemberPrivate(uidKey, merged));
     }
   }
 
@@ -315,9 +365,31 @@ function Tracker({ user, userRecord }) {
   if (loading) return <LoadingScreen text="Connecting to Firebase..." />;
   if (!data) return null;
 
+  // Legacy data format detected: path-level writes would corrupt an
+  // array-shaped tree, so the app is gated until migration runs. Admins
+  // see the migration tool; everyone else sees a hold message.
+  if (data.legacyFormat) {
+    const reload = async () => {
+      try { const remote = await fbRead(); const d = normalizeTracker(remote, DEFAULTS); latestData.current = d; setData(d); } catch {}
+    };
+    return (
+      <div style={{ minHeight: "100vh", background: "#0A192F", padding: "48px 20px", fontFamily: "'DM Sans',sans-serif" }}>
+        {isAdmin ? (
+          <MigrationTool onDone={reload} />
+        ) : (
+          <div style={{ maxWidth: 480, margin: "80px auto", textAlign: "center" }}>
+            <div style={{ fontSize: 40, marginBottom: 14 }}>🔧</div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: "#fff", fontFamily: "'Outfit',sans-serif" }}>Quick maintenance in progress</div>
+            <div style={{ fontSize: 13, color: "#94a3b8", marginTop: 8, lineHeight: 1.6 }}>The system is being upgraded — check back in a few minutes. Nothing is lost.</div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   const filteredProjects = data.projects.filter(p =>
     !p.movedToWarranty &&
-    (!searchTerm || p.name.toLowerCase().includes(searchTerm.toLowerCase()) || p.customer.toLowerCase().includes(searchTerm.toLowerCase()))
+    (!searchTerm || p.name.toLowerCase().includes(searchTerm.toLowerCase()) || p.customer.toLowerCase().includes(searchTerm.toLowerCase()) || (p.jobNumber || "").toLowerCase().includes(searchTerm.toLowerCase()))
   );
   const phaseMap = {}; data.phases.forEach(ph => { phaseMap[ph.id] = ph; });
 
@@ -487,7 +559,7 @@ function Tracker({ user, userRecord }) {
             <>
               <div style={{ position: "relative", flex: 1, maxWidth: 320 }}>
                 <Search size={14} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#475569" }} />
-                <input value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search projects..." style={{ width: "100%", padding: "8px 12px 8px 32px", borderRadius: 8, border: "1px solid #1A3050", background: "#1A3050", color: "#e2e8f0", fontSize: 13, fontFamily: "inherit", outline: "none" }} />
+                <input value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search name, customer, job #..." style={{ width: "100%", padding: "8px 12px 8px 32px", borderRadius: 8, border: "1px solid #1A3050", background: "#1A3050", color: "#e2e8f0", fontSize: 13, fontFamily: "inherit", outline: "none" }} />
               </div>
               <button onClick={() => setShowNewProject(true)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, border: "none", background: "#69BE28", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}><Plus size={15} /> New Project</button>
             </>
@@ -514,19 +586,27 @@ function Tracker({ user, userRecord }) {
           ) : view === "board" ? (
             <KanbanBoard projects={filteredProjects} phases={data.phases} onSelectProject={p => { setSelectedProject(p); setDetailTab("overview"); }} onDragStart={setDragItem} onDrop={handleDrop} dragItem={dragItem} isMobile={isMobile} />
           ) : view === "contacts" ? (
-            <Contacts contacts={data.contacts || []} projects={data.projects} onSave={c => saveData({ ...data, contacts: c })} />
+            <Contacts contacts={data.contacts || []} projects={data.projects} onSave={c => saveSection("contacts", c, { ...latestData.current, contacts: c })} />
           ) : view === "warranties" ? (
             <WarrantyTracker projects={data.projects} onUpdateProject={(pid, u) => updateProject(pid, u)} />
           ) : view === "myspace" && mySpaceTab === "daily" ? (
             <DailyTracker data={getMyPrivate().dailyTracker} archivedDays={getMyPrivate().archivedDays || []} onSave={dt => saveMyPrivate({ dailyTracker: dt })} onArchive={archive => saveMyPrivate({ archivedDays: archive })} />
           ) : view === "myspace" && mySpaceTab === "dailylog" ? (
             <MyDailyLog dailyLogs={getMyPrivate().dailyLogs || []} projects={data.projects} teamRoster={data.teamRoster} myName={myName} myEmail={user.email} predefinedEmail={data.adminSettings?.predefinedEmail || ""}
-              onSubmit={(logs, projectUpdates) => {
-                let nd = { ...data, memberPrivate: { ...(data.memberPrivate || {}), [myName]: { ...getMyPrivate(), dailyLogs: logs } } };
-                (projectUpdates || []).forEach(({ pid, updates }) => {
-                  nd = { ...nd, projects: nd.projects.map(p => p.id === pid ? { ...p, ...updates, updatedAt: new Date().toISOString() } : p) };
+              onSubmit={(logs, projectLogs) => {
+                // Personal archive — one path write to my own private space.
+                const merged = { ...getMyPrivate(), dailyLogs: logs };
+                let nd = { ...latestData.current, memberPrivate: { ...(latestData.current.memberPrivate || {}), [user.uid]: merged } };
+                const writes = [putMemberPrivate(user.uid, merged)];
+                // Each project log is its own keyed record — two foremen
+                // submitting to the same job at once can no longer collide,
+                // and labor hours are computed from these (no deduction).
+                (projectLogs || []).forEach(({ pid, log }) => {
+                  nd = { ...nd, projects: nd.projects.map(p => p.id === pid ? { ...p, dailyLogs: [log, ...(p.dailyLogs || [])], updatedAt: new Date().toISOString() } : p) };
+                  writes.push(putProjectDailyLog(pid, log));
                 });
-                saveData(nd);
+                applyLocal(nd);
+                persist(Promise.all(writes));
               }}
               onDeleteLog={logs => saveMyPrivate({ dailyLogs: logs })} />
           ) : view === "myspace" && mySpaceTab === "opportunities" ? (
@@ -536,19 +616,19 @@ function Tracker({ user, userRecord }) {
               onAdd={entry => saveMyPrivate({ timesheets: [...(getMyPrivate().timesheets || []), { ...entry, id: genId(), member: myName, createdAt: new Date().toISOString() }] })}
               onRemove={id => saveMyPrivate({ timesheets: (getMyPrivate().timesheets || []).filter(t => t.id !== id) })} />
           ) : view === "schedule" ? (
-            <ScheduleView schedule={data.schedule || {}} teamRoster={data.teamRoster} projects={data.projects} onUpdate={s => saveData({ ...data, schedule: s })} />
+            <ScheduleView schedule={data.schedule || {}} teamRoster={data.teamRoster} projects={data.projects} onUpdate={(s, changedDate) => { applyLocal({ ...latestData.current, schedule: s }); persist(changedDate ? putScheduleDay(changedDate, s[changedDate] || null) : putSection("schedule", s)); }} />
           ) : view === "team" ? (
             <TeamView teamRoster={data.teamRoster} newTeamName={newTeamName} setNewTeamName={setNewTeamName} newTeamRole={newTeamRole} setNewTeamRole={setNewTeamRole}
-              onAdd={() => { if (!newTeamName.trim()) return; saveData({ ...data, teamRoster: [...data.teamRoster, { id: genId(), name: newTeamName.trim(), role: newTeamRole.trim() }] }); setNewTeamName(""); setNewTeamRole(""); }}
-              onRemove={id => saveData({ ...data, teamRoster: data.teamRoster.filter(t => t.id !== id) })} />
+              onAdd={() => { if (!newTeamName.trim()) return; const r = [...data.teamRoster, { id: genId(), name: newTeamName.trim(), role: newTeamRole.trim() }]; saveSection("teamRoster", r, { ...latestData.current, teamRoster: r }); setNewTeamName(""); setNewTeamRole(""); }}
+              onRemove={id => { const r = data.teamRoster.filter(t => t.id !== id); saveSection("teamRoster", r, { ...latestData.current, teamRoster: r }); }} />
           ) : view === "admin" && isAdmin ? (
             <UserAdminView />
           ) : (
             <PhaseSettings phases={data.phases} newPhaseName={newPhaseName} setNewPhaseName={setNewPhaseName} newPhaseColor={newPhaseColor} setNewPhaseColor={setNewPhaseColor}
-              onAdd={() => { if (!newPhaseName.trim()) return; saveData({ ...data, phases: [...data.phases, { id: genId(), name: newPhaseName.trim(), color: newPhaseColor }] }); setNewPhaseName(""); }}
-              onRemove={id => saveData({ ...data, phases: data.phases.filter(p => p.id !== id) })}
-              onMoveUp={i => { if (i === 0) return; const np = [...data.phases]; [np[i - 1], np[i]] = [np[i], np[i - 1]]; saveData({ ...data, phases: np }); }}
-              onMoveDown={i => { if (i === data.phases.length - 1) return; const np = [...data.phases]; [np[i], np[i + 1]] = [np[i + 1], np[i]]; saveData({ ...data, phases: np }); }} />
+              onAdd={() => { if (!newPhaseName.trim()) return; const ph = [...data.phases, { id: genId(), name: newPhaseName.trim(), color: newPhaseColor }]; saveSection("phases", ph, { ...latestData.current, phases: ph }); setNewPhaseName(""); }}
+              onRemove={id => { const ph = data.phases.filter(p => p.id !== id); saveSection("phases", ph, { ...latestData.current, phases: ph }); }}
+              onMoveUp={i => { if (i === 0) return; const np = [...data.phases]; [np[i - 1], np[i]] = [np[i], np[i - 1]]; saveSection("phases", np, { ...latestData.current, phases: np }); }}
+              onMoveDown={i => { if (i === data.phases.length - 1) return; const np = [...data.phases]; [np[i], np[i + 1]] = [np[i + 1], np[i]]; saveSection("phases", np, { ...latestData.current, phases: np }); }} />
           )}
         </div>
       </div>
@@ -604,7 +684,7 @@ function KanbanBoard({ projects, phases, onSelectProject, onDragStart, onDrop, d
           <div style={{ padding: "14px 14px 10px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid #1A3050" }}><div style={{ width: 10, height: 10, borderRadius: "50%", background: phase.color }} /><span style={{ fontSize: 13, fontWeight: 600, color: "#fff", flex: 1 }}>{phase.name}</span><span style={{ fontSize: 11, color: "#64748b", background: "#0A192F", borderRadius: 10, padding: "2px 8px" }}>{pp.length}</span></div>
           <div style={{ padding: 8, overflowY: "auto", flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
             {pp.map(p => (<div key={p.id} draggable onDragStart={() => onDragStart(p)} onClick={() => onSelectProject(p)} style={{ padding: 12, borderRadius: 8, background: "#0A192F", border: "1px solid #1A3050", cursor: "pointer" }} onMouseEnter={e => e.currentTarget.style.borderColor = phase.color} onMouseLeave={e => e.currentTarget.style.borderColor = "#1A3050"}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: "#fff", marginBottom: 4 }}>{p.name}</div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#fff", marginBottom: 4 }}>{p.jobNumber && <span style={{ color: "#69BE28", marginRight: 6 }}>#{p.jobNumber}</span>}{p.name}</div>
               <div style={{ fontSize: 11, color: "#64748b", marginBottom: 6 }}>{p.customer}</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>{p.projectTypes?.map(t => <span key={t} style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: "#1A3050", color: "#94a3b8" }}>{t}</span>)}</div>
               {p.tasks?.length > 0 && <div style={{ marginTop: 6, fontSize: 11, color: "#64748b" }}>✓ {p.tasks.filter(t => t.done).length}/{p.tasks.length} tasks</div>}
@@ -653,7 +733,7 @@ function KanbanListView({ projects, phases, orphaned, onSelectProject, onMovePha
       >
         <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: "#fff", lineHeight: 1.25, wordBreak: "break-word" }}>{p.name}</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "#fff", lineHeight: 1.25, wordBreak: "break-word" }}>{p.jobNumber && <span style={{ color: "#69BE28", marginRight: 6 }}>#{p.jobNumber}</span>}{p.name}</div>
             <div style={{ fontSize: 12, color: "#94a3b8", marginTop: 2 }}>{p.customer || "—"}</div>
           </div>
           <button
@@ -830,7 +910,7 @@ function ScheduleView({ schedule, teamRoster, projects, onUpdate }) {
         {dates.map(d => <div key={d} style={{ padding: "10px 8px", background: d === today ? "#69BE2822" : "#0F2444", textAlign: "center", fontSize: 11, fontWeight: 600, color: d === today ? "#82CC4A" : "#94a3b8" }}>{fmt(d)}</div>)}
         {teamRoster.map(member => (<>
           <div key={`n-${member.id}`} style={{ padding: "10px 12px", background: "#001528", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid #1A3050" }}><div style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0" }}>{member.name}</div></div>
-          {dates.map(d => <div key={`${member.id}-${d}`} style={{ padding: "6px 4px", background: d === today ? "#69BE2808" : "#0A192F", borderBottom: "1px solid #1A3050" }}><select style={iS} value={schedule[d]?.[member.name] || ""} onChange={e => { const dd = { ...(schedule[d] || {}) }; if (e.target.value) dd[member.name] = e.target.value; else delete dd[member.name]; onUpdate({ ...schedule, [d]: dd }); }}><option value="">— Off —</option>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>)}
+          {dates.map(d => <div key={`${member.id}-${d}`} style={{ padding: "6px 4px", background: d === today ? "#69BE2808" : "#0A192F", borderBottom: "1px solid #1A3050" }}><select style={iS} value={schedule[d]?.[member.name] || ""} onChange={e => { const dd = { ...(schedule[d] || {}) }; if (e.target.value) dd[member.name] = e.target.value; else delete dd[member.name]; onUpdate({ ...schedule, [d]: dd }, d); }}><option value="">— Off —</option>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>)}
         </>))}
       </div></div>
     )}
@@ -984,7 +1064,8 @@ function NewProjectModal({ phases, onSave, onClose, templates }) {
         )}
         <div style={{ display: "grid", gap: 14 }}>
           <div><label style={lS}>Project Name *</label><input style={iS} value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
-          <div style={{ display: "grid", gridTemplateColumns: cols, gap: 12 }}><div><label style={lS}>Customer *</label><input style={iS} value={form.customer} onChange={e => setForm({ ...form, customer: e.target.value })} /></div><div><label style={lS}>Contact</label><input style={iS} value={form.contactName} onChange={e => setForm({ ...form, contactName: e.target.value })} /></div></div>
+          <div style={{ display: "grid", gridTemplateColumns: cols, gap: 12 }}><div><label style={lS}>Job Number</label><input style={iS} value={form.jobNumber} onChange={e => setForm({ ...form, jobNumber: e.target.value })} placeholder="260300" /></div><div><label style={lS}>Customer *</label><input style={iS} value={form.customer} onChange={e => setForm({ ...form, customer: e.target.value })} /></div></div>
+          <div><label style={lS}>Contact</label><input style={iS} value={form.contactName} onChange={e => setForm({ ...form, contactName: e.target.value })} /></div>
           <div style={{ display: "grid", gridTemplateColumns: cols, gap: 12 }}><div><label style={lS}>Phone</label><input style={iS} type="tel" value={form.contactPhone} onChange={e => setForm({ ...form, contactPhone: e.target.value })} /></div><div><label style={lS}>Email</label><input style={iS} type="email" value={form.contactEmail} onChange={e => setForm({ ...form, contactEmail: e.target.value })} /></div></div>
           <div><label style={lS}>Site Address</label><input style={iS} value={form.siteAddress} onChange={e => setForm({ ...form, siteAddress: e.target.value })} /></div>
           <div style={{ display: "grid", gridTemplateColumns: cols, gap: 12 }}><div><label style={lS}>Phase</label><select style={iS} value={form.phaseId} onChange={e => setForm({ ...form, phaseId: e.target.value })}>{phases.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div><div><label style={lS}>Type</label><select style={iS} value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}><option value="retrofit">Retrofit</option><option value="new-construction">New Construction</option></select></div></div>

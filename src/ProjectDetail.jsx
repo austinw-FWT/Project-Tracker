@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Plus, X, Edit2, Trash2, ClipboardList, Clock, Cable, CheckCircle2, Circle, FileText, Camera, MapPin, Phone, Mail, DollarSign, Building2, User, Layers, Package, Receipt, BookOpen, AlertTriangle, Image, FileSearch, TrendingUp, ClipboardCheck, Upload, Download, ExternalLink, ChevronDown, ShieldCheck } from "lucide-react";
 import { PROJECT_TYPES, LABOR_PHASES, MATERIAL_STATUSES, TASK_CATEGORIES, genId } from "./App.jsx";
+import { bidHours, usedHours, loggedHours, adjustment, remainingHours, laborTotals } from "./laborMath.js";
 import { storage, storageRef, uploadBytes, getDownloadURL } from "./firebase.js";
 
 const iS = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1A3050", background: "#0F2444", color: "#e2e8f0", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none" };
@@ -62,7 +63,7 @@ export default function ProjectDetail({ project, phases, phaseMap, teamRoster, o
       <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", alignItems: isMobile ? "stretch" : "flex-start", justifyContent: "space-between", marginBottom: 16, gap: 12 }}>
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
-            <h1 style={{ fontSize: isMobile ? 20 : 22, fontWeight: 700, color: "#fff", fontFamily: "'Outfit',sans-serif", margin: 0, lineHeight: 1.2, wordBreak: "break-word" }}>{project.name}</h1>
+            <h1 style={{ fontSize: isMobile ? 20 : 22, fontWeight: 700, color: "#fff", fontFamily: "'Outfit',sans-serif", margin: 0, lineHeight: 1.2, wordBreak: "break-word" }}>{project.jobNumber && <span style={{ color: "#69BE28", marginRight: 8 }}>#{project.jobNumber}</span>}{project.name}</h1>
             {cp && <span style={{ fontSize: 12, padding: "4px 12px", borderRadius: 20, background: cp.color + "22", color: cp.color, fontWeight: 600, whiteSpace: "nowrap" }}>{cp.name}</span>}
           </div>
           <div style={{ fontSize: 14, color: "#94a3b8" }}>{project.customer}</div>
@@ -319,6 +320,7 @@ function OverviewTab({ project, form, setForm, editMode, setEditMode, onUpdate, 
   if (editMode) return (
     <div style={{ display: "grid", gridTemplateColumns: gridCols, gap: 16 }}>
       <div><label style={lS}>Project Name</label><input style={iS} value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
+      <div><label style={lS}>Job Number</label><input style={iS} value={form.jobNumber || ""} onChange={e => setForm({ ...form, jobNumber: e.target.value })} placeholder="260300" /></div>
       <div><label style={lS}>Customer</label><input style={iS} value={form.customer} onChange={e => setForm({ ...form, customer: e.target.value })} /></div>
       <div><label style={lS}>Contact</label><input style={iS} value={form.contactName} onChange={e => setForm({ ...form, contactName: e.target.value })} /></div>
       <div><label style={lS}>Phone</label><input style={iS} value={form.contactPhone} onChange={e => setForm({ ...form, contactPhone: e.target.value })} /></div>
@@ -346,19 +348,30 @@ function OverviewTab({ project, form, setForm, editMode, setEditMode, onUpdate, 
 
 /* ── HOURS ── */
 function HoursTab({ project, onUpdate }) {
+  /* Ledger model: `bid` is the only stored balance. `used` is computed from
+     the project's daily logs (laborMath.js) plus a manual adjustment for
+     office true-ups. Deleting or fixing a log self-corrects everything. */
   const lh = project.laborHours || {};
-  function upd(pid, f, v) { onUpdate({ laborHours: { ...lh, [pid]: { ...(lh[pid] || { bid: 0, remaining: 0 }), [f]: parseFloat(v) || 0 } } }); }
-  const tB = LABOR_PHASES.reduce((s, l) => s + (lh[l.id]?.bid || 0), 0), tR = LABOR_PHASES.reduce((s, l) => s + (lh[l.id]?.remaining || 0), 0), tU = tB - tR, tP = tB > 0 ? Math.round(tU / tB * 100) : 0;
+  const adj = project.laborAdjustments || {};
+  function updBid(pid, v) { onUpdate({ laborHours: { ...lh, [pid]: { ...(lh[pid] || {}), bid: parseFloat(v) || 0 } } }); }
+  function updAdj(pid, v) { onUpdate({ laborAdjustments: { ...adj, [pid]: parseFloat(v) || 0 } }); }
+  const t = laborTotals(project, LABOR_PHASES);
   const hS = { ...iS, background: "#0A192F", textAlign: "center" };
   return (<div>
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, marginBottom: 24 }}><SC label="Total Bid" value={`${tB.toFixed(1)}h`} color="#69BE28" /><SC label="Used" value={`${tU.toFixed(1)}h`} color="#f59e0b" /><SC label="Remaining" value={`${tR.toFixed(1)}h`} color="#10b981" /><SC label="Complete" value={`${tP}%`} color={tP > 90 ? "#ef4444" : tP > 70 ? "#f59e0b" : "#10b981"} /></div>
-    <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr", gap: 8, padding: "0 12px 10px", fontSize: 11, fontWeight: 600, color: "#64748b", textTransform: "uppercase" }}><span>Phase</span><span style={{ textAlign: "center" }}>Bid</span><span style={{ textAlign: "center" }}>Used</span><span style={{ textAlign: "center" }}>Remaining</span><span style={{ textAlign: "center" }}>%</span></div>
-    {LABOR_PHASES.map(lp => { const b = lh[lp.id]?.bid || 0, r = lh[lp.id]?.remaining || 0, u = b - r, p = b > 0 ? Math.round(u / b * 100) : 0, o = r < 0; return (
-      <div key={lp.id} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr", gap: 8, alignItems: "center", padding: "10px 12px", background: "#0A192F", borderRadius: 8, marginBottom: 4, border: o ? "1px solid #7f1d1d" : "1px solid transparent" }}>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, marginBottom: 24 }}><SC label="Total Bid" value={`${t.bid.toFixed(1)}h`} color="#69BE28" /><SC label="Used" value={`${t.used.toFixed(1)}h`} color="#f59e0b" /><SC label="Remaining" value={`${t.remaining.toFixed(1)}h`} color={t.remaining < 0 ? "#ef4444" : "#10b981"} /><SC label="Complete" value={`${t.pctUsed}%`} color={t.pctUsed > 90 ? "#ef4444" : t.pctUsed > 70 ? "#f59e0b" : "#10b981"} /></div>
+    <div style={{ fontSize: 11, color: "#64748b", marginBottom: 12 }}>Used hours come from submitted daily logs and self-correct when logs are edited or deleted. Use Adjust (±) for manual true-ups — it adds to Used.</div>
+    <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr 1fr", gap: 8, padding: "0 12px 10px", fontSize: 11, fontWeight: 600, color: "#64748b", textTransform: "uppercase" }}><span>Phase</span><span style={{ textAlign: "center" }}>Bid</span><span style={{ textAlign: "center" }}>Logged</span><span style={{ textAlign: "center" }}>Adjust ±</span><span style={{ textAlign: "center" }}>Remaining</span><span style={{ textAlign: "center" }}>%</span></div>
+    {LABOR_PHASES.map(lp => {
+      const b = bidHours(project, lp.id), lg = loggedHours(project, lp.id), a = adjustment(project, lp.id);
+      const u = usedHours(project, lp.id), r = remainingHours(project, lp.id);
+      const p = b > 0 ? Math.round(u / b * 100) : 0, o = r < 0;
+      return (
+      <div key={lp.id} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr 1fr", gap: 8, alignItems: "center", padding: "10px 12px", background: "#0A192F", borderRadius: 8, marginBottom: 4, border: o ? "1px solid #7f1d1d" : "1px solid transparent" }}>
         <span style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0" }}>{lp.name}</span>
-        <input type="number" step="0.5" min="0" style={hS} value={b || ""} onChange={e => upd(lp.id, "bid", e.target.value)} placeholder="0" />
-        <div style={{ textAlign: "center", fontSize: 13, color: o ? "#ef4444" : "#f59e0b", fontWeight: 600 }}>{u.toFixed(1)}h</div>
-        <input type="number" step="0.5" style={hS} value={r || ""} onChange={e => upd(lp.id, "remaining", e.target.value)} placeholder="0" />
+        <input type="number" step="0.5" min="0" style={hS} value={b || ""} onChange={e => updBid(lp.id, e.target.value)} placeholder="0" />
+        <div style={{ textAlign: "center", fontSize: 13, color: lg > 0 ? "#f59e0b" : "#475569", fontWeight: 600 }}>{lg.toFixed(1)}h</div>
+        <input type="number" step="0.5" style={hS} value={a || ""} onChange={e => updAdj(lp.id, e.target.value)} placeholder="0" />
+        <div style={{ textAlign: "center", fontSize: 13, color: o ? "#ef4444" : "#10b981", fontWeight: 700 }}>{r.toFixed(1)}h</div>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}><div style={{ flex: 1, height: 6, borderRadius: 3, background: "#1A3050", overflow: "hidden" }}><div style={{ width: `${Math.min(p, 100)}%`, height: "100%", borderRadius: 3, background: o ? "#ef4444" : p > 90 ? "#f59e0b" : "#10b981" }} /></div><span style={{ fontSize: 11, color: "#64748b", fontWeight: 600, minWidth: 28, textAlign: "right" }}>{p}%</span></div>
       </div>); })}
   </div>);
@@ -710,10 +723,10 @@ function ProfitTab({ project }) {
   const cos = (project.changeOrders || []).filter(c => c.status === "approved");
   const coTotal = cos.reduce((s, c) => s + (parseFloat(c.amount) || 0), 0);
   const adjustedContract = contract + coTotal;
-  const lh = project.laborHours || {};
-  const totalBid = Object.values(lh).reduce((s, v) => s + (v.bid || 0), 0);
-  const totalUsed = totalBid - Object.values(lh).reduce((s, v) => s + (v.remaining || 0), 0);
-  const laborRate = 75;
+  const t = laborTotals(project, LABOR_PHASES);
+  const totalBid = t.bid;
+  const totalUsed = t.used;
+  const laborRate = 75; // TODO: move to adminSettings in a later chunk
   const laborCost = totalUsed * laborRate;
   const materialCost = (project.materials || []).reduce((s, m) => s + (parseFloat(m.cost) || 0) * (parseInt(m.qtyNeeded) || 1), 0);
   const totalCost = laborCost + materialCost;

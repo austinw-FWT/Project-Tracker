@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { AlertCircle, Clock, DollarSign, CheckCircle2, Calendar, ArrowRight, TrendingUp, Package } from "lucide-react";
+import { laborTotals } from "./laborMath.js";
 
 export default function Dashboard({ data, myName, onSelectProject, onNavigate }) {
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768);
@@ -35,10 +36,8 @@ export default function Dashboard({ data, myName, onSelectProject, onNavigate })
 
   // Hours budget warnings
   const budgetWarnings = myProjects.filter(p => {
-    const lh = p.laborHours || {};
-    const totalBid = Object.values(lh).reduce((s, v) => s + (v.bid || 0), 0);
-    const totalRemaining = Object.values(lh).reduce((s, v) => s + (v.remaining || 0), 0);
-    return totalBid > 0 && totalRemaining / totalBid < 0.15;
+    const t = laborTotals(p);
+    return t.bid > 0 && t.remaining / t.bid < 0.15;
   });
 
   // Overdue invoices
@@ -122,10 +121,9 @@ export default function Dashboard({ data, myName, onSelectProject, onNavigate })
             <button onClick={() => onNavigate("board")} style={{ fontSize: 11, color: "#69BE28", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", fontWeight: 600 }}>View Board →</button>
           </div>
           {myProjects.slice(0, 6).map(p => {
-            const lh = p.laborHours || {};
-            const bid = Object.values(lh).reduce((s, v) => s + (v.bid || 0), 0);
-            const rem = Object.values(lh).reduce((s, v) => s + (v.remaining || 0), 0);
-            const pct = bid > 0 ? Math.round(((bid - rem) / bid) * 100) : 0;
+            const t = laborTotals(p);
+            const bid = t.bid, rem = t.remaining;
+            const pct = t.pctUsed;
             const openTasks = (p.tasks || []).filter(t => !t.done).length;
             return (
               <div key={p.id} onClick={() => onSelectProject(p)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid #0A192F", cursor: "pointer" }}>
@@ -161,9 +159,8 @@ export default function Dashboard({ data, myName, onSelectProject, onNavigate })
         <div style={{ ...iS, marginBottom: 16, borderLeft: "3px solid #ef4444" }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: "#ef4444", textTransform: "uppercase", marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}><AlertCircle size={14} /> Budget Alerts</div>
           {budgetWarnings.map(p => {
-            const lh = p.laborHours || {};
-            const bid = Object.values(lh).reduce((s, v) => s + (v.bid || 0), 0);
-            const rem = Object.values(lh).reduce((s, v) => s + (v.remaining || 0), 0);
+            const t = laborTotals(p);
+            const bid = t.bid, rem = t.remaining;
             return (
               <div key={p.id} onClick={() => onSelectProject(p)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: "1px solid #0A192F", cursor: "pointer" }}>
                 <span style={{ fontSize: 13, fontWeight: 600, color: "#fff", flex: 1 }}>{p.name}</span>

@@ -353,8 +353,9 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
 
   const allTimesheets = [];
   if (isAdmin && allMemberPrivate && viewMode === "team") {
-    Object.entries(allMemberPrivate).forEach(([name, mp]) => {
-      (mp.timesheets || []).forEach(t => allTimesheets.push({ ...t, member: name }));
+    Object.entries(allMemberPrivate).forEach(([key, mp]) => {
+      // Keys are uids after migration; each entry carries its own member name.
+      (mp.timesheets || []).forEach(t => allTimesheets.push({ ...t, member: t.member || key }));
     });
     allTimesheets.sort((a, b) => b.date.localeCompare(a.date));
   }

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Plus, X, Send, ChevronDown, ChevronUp, Clock, Users, Briefcase, Archive, Trash2 } from "lucide-react";
 import { LABOR_PHASES } from "./App.jsx";
+import { remainingHours } from "./laborMath.js";
 import { openOutlookCompose } from "./emailHelper.js";
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
@@ -153,8 +154,10 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
       createdAt: new Date().toISOString(),
     };
 
-    // Build project updates — append daily log entry AND deduct from laborHours.remaining per allocation
-    const projectUpdates = [];
+    // Each project gets one keyed log record. Labor hours are COMPUTED from
+    // these logs (see laborMath.js) — no balance is mutated here, so edits,
+    // deletes, and double-submits can no longer corrupt the remaining hours.
+    const projectLogs = [];
     validEntries.forEach(entry => {
       const proj = projects.find(p => p.id === entry.projectId);
       if (!proj) return;
@@ -170,43 +173,25 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
 
       const totalHours = entry.crewMembers.reduce((s, c) => s + totalCrewHours(c), 0);
 
-      const projectLog = {
-        id: genId(),
-        date,
-        member: myName,
-        hours: totalHours,
-        activities: entry.activities + (crewLines.length > 0 ? `\nCrew: ${crewLines.join("; ")}` : ""),
-        crewBreakdown: entry.crewMembers.map(c => ({
-          name: c.name,
-          allocations: getAllocations(c).filter(a => a.hours > 0).map(a => ({ hours: a.hours, category: a.category })),
-        })).filter(c => c.allocations.length > 0),
-        createdAt: new Date().toISOString(),
-      };
-
-      // Deduct hours from laborHours[category].remaining across all allocations
-      const newLaborHours = { ...(proj.laborHours || {}) };
-      entry.crewMembers.forEach(c => {
-        getAllocations(c).forEach(a => {
-          if (!a.hours || a.hours <= 0 || !a.category) return;
-          const existing = newLaborHours[a.category] || { bid: 0, remaining: 0 };
-          newLaborHours[a.category] = {
-            ...existing,
-            remaining: (parseFloat(existing.remaining) || 0) - a.hours,
-          };
-        });
-      });
-
-      projectUpdates.push({
+      projectLogs.push({
         pid: entry.projectId,
-        updates: {
-          dailyLogs: [projectLog, ...(proj.dailyLogs || [])],
-          laborHours: newLaborHours,
+        log: {
+          id: genId(),
+          date,
+          member: myName,
+          hours: totalHours,
+          activities: entry.activities + (crewLines.length > 0 ? `\nCrew: ${crewLines.join("; ")}` : ""),
+          crewBreakdown: entry.crewMembers.map(c => ({
+            name: c.name,
+            allocations: getAllocations(c).filter(a => a.hours > 0).map(a => ({ hours: a.hours, category: a.category })),
+          })).filter(c => c.allocations.length > 0),
+          createdAt: new Date().toISOString(),
         },
       });
     });
 
     const updatedLogs = [log, ...logs];
-    onSubmit(updatedLogs, projectUpdates);
+    onSubmit(updatedLogs, projectLogs);
 
     // Open email in default client with pre-filled body
     (async () => {
@@ -273,9 +258,10 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
         <div>
           {/* Date + Stats */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 20 }}>
-            <div style={{ background: "#0A192F", borderRadius: 10, padding: "14px 16px", borderLeft: "3px solid #69BE28" }}>
+            <div style={{ background: "#0A192F", borderRadius: 10, padding: "14px 16px", borderLeft: `3px solid ${logs.some(l => l.date === date) ? "#f59e0b" : "#69BE28"}` }}>
               <label style={lS}>Date</label>
               <input type="date" style={{ ...iS, background: "#0A192F" }} value={date} onChange={e => setDate(e.target.value)} />
+              {logs.some(l => l.date === date) && <div style={{ fontSize: 11, color: "#f59e0b", fontWeight: 600, marginTop: 6 }}>⚠ You already submitted a log for this date</div>}
             </div>
             <div style={{ background: "#0A192F", borderRadius: 10, padding: "14px 16px", borderLeft: "3px solid #f59e0b" }}>
               <div style={{ fontSize: 11, color: "#64748b", textTransform: "uppercase", marginBottom: 4 }}>Projects</div>
@@ -299,7 +285,6 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
           {/* Project Entries */}
           {entries.map(entry => {
             const proj = projects.find(p => p.id === entry.projectId);
-            const laborHours = proj?.laborHours || {};
             return (
               <div key={entry.id} style={{ background: "#0F2444", borderRadius: 12, border: "1px solid #1A3050", padding: 20, marginBottom: 12 }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
@@ -332,7 +317,7 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
 
                         {/* Allocations (category + hours pairs) */}
                         {allocs.map(alloc => {
-                          const remaining = parseFloat(laborHours[alloc.category]?.remaining) || 0;
+                          const remaining = proj ? remainingHours(proj, alloc.category) : 0;
                           const remainingAfter = remaining - (alloc.hours || 0);
                           const overrun = remainingAfter < 0 && (alloc.hours || 0) > 0;
                           return (
