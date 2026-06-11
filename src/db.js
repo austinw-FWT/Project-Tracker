@@ -77,6 +77,13 @@ export const deleteProjectDailyLog = (pid, logId) => dbDelete(`${ROOT}/projects/
 export const putMemberPrivate   = (uid, value)   => dbPut(`${ROOT}/memberPrivate/${uid}`, value);
 export const patchMemberPrivate = (uid, updates) => dbPatch(`${ROOT}/memberPrivate/${uid}`, updates);
 
+/* ── estimating: price book, assemblies, defaults ───────────────── */
+export const putCatalogItem    = (id, item) => dbPut(`${ROOT}/catalog/${id}`, item);
+export const deleteCatalogItem = (id)       => dbDelete(`${ROOT}/catalog/${id}`);
+export const putAssembly       = (id, asm)  => dbPut(`${ROOT}/assemblies/${id}`, asm);
+export const deleteAssembly    = (id)       => dbDelete(`${ROOT}/assemblies/${id}`);
+export const putEstimatingDefaults = (d)    => dbPut(`${ROOT}/estimatingDefaults`, d);
+
 /* ── users node ─────────────────────────────────────────────────── */
 export const readUsers  = ()         => dbGet("/users");
 export const putUser    = (uid, rec) => dbPut(`/users/${uid}`, rec);

@@ -13,7 +13,7 @@ const PROJECT_TYPES = ["Access Control", "Video Surveillance", "Intrusion Detect
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 
-export default function Opportunities({ opportunities, onSave, onConvert }) {
+export default function Opportunities({ opportunities, onSave, onConvert, catalog, assemblies, estDefaults, onSaveCatalogItem }) {
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState(null);
   const [form, setForm] = useState({ name: "", customer: "", contactName: "", contactPhone: "", contactEmail: "", siteAddress: "", projectTypes: [], type: "retrofit", stage: "lead", bidAmount: "", scopeNotes: "" });
@@ -224,7 +224,7 @@ export default function Opportunities({ opportunities, onSave, onConvert }) {
                               <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
                                 <span style={{ fontSize: 15 }}>📊</span> BOM — {sc.title || `Scope ${si + 1}`}
                               </div>
-                              <TakeoffBuilder takeoff={sc.takeoff} scopeTitle={`${opp.name || "Opportunity"} — ${sc.title || `Scope ${si + 1}`}`} onSave={tk => {
+                              <TakeoffBuilder catalog={catalog} assemblies={assemblies} estDefaults={estDefaults} onSaveCatalogItem={onSaveCatalogItem} takeoff={sc.takeoff} scopeTitle={`${opp.name || "Opportunity"} — ${sc.title || `Scope ${si + 1}`}`} onSave={tk => {
                                 const updatedScopes = [...(opp.proposal?.scopes || [])];
                                 updatedScopes[si] = { ...updatedScopes[si], takeoff: tk };
                                 onSave(opportunities.map(o => o.id === opp.id ? { ...o, proposal: { ...(o.proposal || {}), scopes: updatedScopes }, updatedAt: new Date().toISOString() } : o));
@@ -236,7 +236,7 @@ export default function Opportunities({ opportunities, onSave, onConvert }) {
                     );
                   })()}
                   {oppTab === "proposal" && (
-                    <ProposalBuilder opportunity={opp} proposal={opp.proposal} onSave={pr => onSave(opportunities.map(o => o.id === opp.id ? { ...o, proposal: pr, updatedAt: new Date().toISOString() } : o))} />
+                    <ProposalBuilder catalog={catalog} assemblies={assemblies} estDefaults={estDefaults} onSaveCatalogItem={onSaveCatalogItem} opportunity={opp} proposal={opp.proposal} onSave={pr => onSave(opportunities.map(o => o.id === opp.id ? { ...o, proposal: pr, updatedAt: new Date().toISOString() } : o))} />
                   )}
                 </div>
               </div>

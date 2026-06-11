@@ -47,6 +47,67 @@ function downloadBOMCsv(takeoffData, label) {
   const overheadPct = n(d.overheadPct);
 
   // Compute totals
+  /* ── Price book integration ────────────────────────────────── */
+  const catalogItems = Object.values(catalog || {});
+  const assemblyList = Object.values(assemblies || {}).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  const [catQ, setCatQ] = useState("");
+  const [asmId, setAsmId] = useState("");
+  const [asmQty, setAsmQty] = useState(1);
+  const catMatches = catQ.trim() ? catalogItems.filter(i => `${i.manf} ${i.partNum} ${i.desc}`.toLowerCase().includes(catQ.toLowerCase())).slice(0, 8) : [];
+
+  function rowFromCatalog(cat, qty) {
+    return { id: genId(), manf: cat.manf || "", partNum: cat.partNum || "", desc: cat.desc || "", qty: qty || 1, unit: cat.unit || "EA",
+      costPU: n(cat.costPU), markupPct: n(cat.markupPct), pricePU: Math.round(n(cat.costPU) * (1 + n(cat.markupPct) / 100) * 100) / 100,
+      laborHrs: 0, laborRate: 0, laborUnits: { lr: n(cat.laborUnits?.lr), lt: n(cat.laborUnits?.lt), lh: n(cat.laborUnits?.lh), lp: n(cat.laborUnits?.lp) } };
+  }
+  function insertCatalogItem(cat) {
+    // Reuse a fully-empty row if one exists, otherwise append
+    const blankIdx = materials.findIndex(r => !r.manf && !r.partNum && !r.desc && !n(r.qty) && !n(r.costPU));
+    const row = rowFromCatalog(cat, 1);
+    const updated = blankIdx >= 0 ? materials.map((r, i) => i === blankIdx ? row : r) : [...materials, row];
+    setMaterials(updated); save(updated, null, null, null); setCatQ("");
+  }
+  function insertAssembly() {
+    const asm = assemblyList.find(a => a.id === asmId);
+    const qty = n(asmQty) || 1;
+    if (!asm) return;
+    const newRows = [];
+    (asm.items || []).forEach(it => {
+      const cat = catalogItems.find(c => c.id === it.catalogId);
+      if (cat) newRows.push(rowFromCatalog(cat, Math.round(n(it.qtyPer) * qty * 100) / 100));
+    });
+    // assembly-level labor adders ride on a zero-cost marker row so suggestions stay accurate
+    const add = asm.laborAdders || {};
+    if (n(add.lr) + n(add.lt) + n(add.lh) + n(add.lp) > 0) {
+      newRows.push({ id: genId(), manf: "FWT", partNum: "ASSY", desc: `${asm.name} — assembly labor`, qty, unit: "EA", costPU: 0, markupPct: 0, pricePU: 0, laborHrs: 0, laborRate: 0,
+        laborUnits: { lr: n(add.lr), lt: n(add.lt), lh: n(add.lh), lp: n(add.lp) } });
+    }
+    if (!newRows.length) return;
+    const nonBlank = materials.filter(r => r.manf || r.partNum || r.desc || n(r.qty) || n(r.costPU));
+    const updated = [...nonBlank, ...newRows];
+    setMaterials(updated); save(updated, null, null, null); setAsmId(""); setAsmQty(1);
+  }
+  function saveRowToCatalog(row) {
+    if (!onSaveCatalogItem || (!row.partNum && !row.desc)) return;
+    const existing = catalogItems.find(c => c.partNum && row.partNum && c.partNum.toLowerCase() === row.partNum.toLowerCase() && (c.manf || "").toLowerCase() === (row.manf || "").toLowerCase());
+    onSaveCatalogItem({ id: existing?.id || genId(), manf: row.manf || "", partNum: row.partNum || "", desc: row.desc || "", unit: row.unit || "EA",
+      costPU: n(row.costPU), markupPct: n(row.markupPct), laborUnits: existing?.laborUnits || row.laborUnits || { lr: 0, lt: 0, lh: 0, lp: 0 } });
+    alert(`${existing ? "Updated" : "Saved"} "${row.partNum || row.desc}" in the catalog${existing ? " (cost/markup refreshed, labor units kept)" : ""}.`);
+  }
+
+  // Suggested phase hours from row labor units (qty × hrs/unit)
+  const PHASE_MAP = [["lr", "ROUGH IN"], ["lt", "TRIM"], ["lh", "HEAD END"], ["lp", "PROGRAMMING"]];
+  const suggested = { lr: 0, lt: 0, lh: 0, lp: 0 };
+  materials.forEach(r => { if (r.laborUnits) PHASE_MAP.forEach(([k]) => { suggested[k] += n(r.qty) * n(r.laborUnits[k]); }); });
+  const suggestedTotal = PHASE_MAP.reduce((t, [k]) => t + suggested[k], 0);
+  function applySuggested() {
+    const updated = labor.map(r => {
+      const hit = PHASE_MAP.find(([, label]) => (r.desc || "").toUpperCase().includes(label));
+      return hit ? { ...r, hours: Math.round(suggested[hit[0]] * 4) / 4 } : r;
+    });
+    setLabor(updated); save(null, updated, null, null);
+  }
+
   const matTotal = materials.reduce((s, r) => s + (n(r.qty) * n(r.pricePU)) + (n(r.laborHrs) * n(r.laborRate)), 0);
   const matExtPrice = materials.reduce((s, r) => s + (n(r.qty) * n(r.pricePU)), 0);
   const matExtLabor = materials.reduce((s, r) => s + (n(r.laborHrs) * n(r.laborRate)), 0);
@@ -363,8 +424,16 @@ async function downloadBOMToTemplate(takeoffData, label) {
   URL.revokeObjectURL(url);
 }
 
-export function TakeoffBuilder({ takeoff, onSave, scopeTitle }) {
-  const data = takeoff || { materials: Array(5).fill(null).map(() => emptyMaterialRow()), labor: DEFAULT_LABOR_ROWS.map(r => ({ ...r, id: genId() })), costs: DEFAULT_COST_ROWS.map(r => ({ ...r, id: genId() })), rmr: DEFAULT_RMR_ROWS.map(r => ({ ...r, id: genId() })), overheadPct: 0, notes: "" };
+export function TakeoffBuilder({ takeoff, onSave, scopeTitle, catalog, assemblies, estDefaults, onSaveCatalogItem }) {
+  const dft = estDefaults || {};
+  const newMatRow = () => ({ ...emptyMaterialRow(), markupPct: dft.defaultMarkupPct ?? 25 });
+  const data = takeoff || {
+    materials: Array(5).fill(null).map(newMatRow),
+    labor: DEFAULT_LABOR_ROWS.map(r => ({ ...r, id: genId(), costPerHr: dft.laborCostPerHr || 0, ratePerHr: dft.laborRatePerHr || 0 })),
+    costs: DEFAULT_COST_ROWS.map(r => ({ ...r, id: genId() })),
+    rmr: DEFAULT_RMR_ROWS.map(r => ({ ...r, id: genId() })),
+    overheadPct: dft.defaultOverheadPct || 0, notes: "",
+  };
   const [materials, setMaterials] = useState(data.materials);
   const [labor, setLabor] = useState(data.labor);
   const [costs, setCosts] = useState(data.costs);
@@ -378,6 +447,67 @@ export function TakeoffBuilder({ takeoff, onSave, scopeTitle }) {
   function removeLaborRow(idx) { const updated = labor.filter((_, i) => i !== idx); setLabor(updated); save(null, updated, null, null); }
   function addRow(arr, setArr, template, section) { const updated = [...arr, template()]; setArr(updated); if (section === "materials") save(updated, null, null, null); else if (section === "costs") save(null, null, updated, null); else if (section === "rmr") save(null, null, null, updated); }
   function removeRow(arr, setArr, idx, section) { const updated = arr.filter((_, i) => i !== idx); setArr(updated); if (section === "materials") save(updated, null, null, null); else if (section === "costs") save(null, null, updated, null); else if (section === "rmr") save(null, null, null, updated); }
+  /* ── Price book integration ────────────────────────────────── */
+  const catalogItems = Object.values(catalog || {});
+  const assemblyList = Object.values(assemblies || {}).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  const [catQ, setCatQ] = useState("");
+  const [asmId, setAsmId] = useState("");
+  const [asmQty, setAsmQty] = useState(1);
+  const catMatches = catQ.trim() ? catalogItems.filter(i => `${i.manf} ${i.partNum} ${i.desc}`.toLowerCase().includes(catQ.toLowerCase())).slice(0, 8) : [];
+
+  function rowFromCatalog(cat, qty) {
+    return { id: genId(), manf: cat.manf || "", partNum: cat.partNum || "", desc: cat.desc || "", qty: qty || 1, unit: cat.unit || "EA",
+      costPU: n(cat.costPU), markupPct: n(cat.markupPct), pricePU: Math.round(n(cat.costPU) * (1 + n(cat.markupPct) / 100) * 100) / 100,
+      laborHrs: 0, laborRate: 0, laborUnits: { lr: n(cat.laborUnits?.lr), lt: n(cat.laborUnits?.lt), lh: n(cat.laborUnits?.lh), lp: n(cat.laborUnits?.lp) } };
+  }
+  function insertCatalogItem(cat) {
+    // Reuse a fully-empty row if one exists, otherwise append
+    const blankIdx = materials.findIndex(r => !r.manf && !r.partNum && !r.desc && !n(r.qty) && !n(r.costPU));
+    const row = rowFromCatalog(cat, 1);
+    const updated = blankIdx >= 0 ? materials.map((r, i) => i === blankIdx ? row : r) : [...materials, row];
+    setMaterials(updated); save(updated, null, null, null); setCatQ("");
+  }
+  function insertAssembly() {
+    const asm = assemblyList.find(a => a.id === asmId);
+    const qty = n(asmQty) || 1;
+    if (!asm) return;
+    const newRows = [];
+    (asm.items || []).forEach(it => {
+      const cat = catalogItems.find(c => c.id === it.catalogId);
+      if (cat) newRows.push(rowFromCatalog(cat, Math.round(n(it.qtyPer) * qty * 100) / 100));
+    });
+    // assembly-level labor adders ride on a zero-cost marker row so suggestions stay accurate
+    const add = asm.laborAdders || {};
+    if (n(add.lr) + n(add.lt) + n(add.lh) + n(add.lp) > 0) {
+      newRows.push({ id: genId(), manf: "FWT", partNum: "ASSY", desc: `${asm.name} — assembly labor`, qty, unit: "EA", costPU: 0, markupPct: 0, pricePU: 0, laborHrs: 0, laborRate: 0,
+        laborUnits: { lr: n(add.lr), lt: n(add.lt), lh: n(add.lh), lp: n(add.lp) } });
+    }
+    if (!newRows.length) return;
+    const nonBlank = materials.filter(r => r.manf || r.partNum || r.desc || n(r.qty) || n(r.costPU));
+    const updated = [...nonBlank, ...newRows];
+    setMaterials(updated); save(updated, null, null, null); setAsmId(""); setAsmQty(1);
+  }
+  function saveRowToCatalog(row) {
+    if (!onSaveCatalogItem || (!row.partNum && !row.desc)) return;
+    const existing = catalogItems.find(c => c.partNum && row.partNum && c.partNum.toLowerCase() === row.partNum.toLowerCase() && (c.manf || "").toLowerCase() === (row.manf || "").toLowerCase());
+    onSaveCatalogItem({ id: existing?.id || genId(), manf: row.manf || "", partNum: row.partNum || "", desc: row.desc || "", unit: row.unit || "EA",
+      costPU: n(row.costPU), markupPct: n(row.markupPct), laborUnits: existing?.laborUnits || row.laborUnits || { lr: 0, lt: 0, lh: 0, lp: 0 } });
+    alert(`${existing ? "Updated" : "Saved"} "${row.partNum || row.desc}" in the catalog${existing ? " (cost/markup refreshed, labor units kept)" : ""}.`);
+  }
+
+  // Suggested phase hours from row labor units (qty × hrs/unit)
+  const PHASE_MAP = [["lr", "ROUGH IN"], ["lt", "TRIM"], ["lh", "HEAD END"], ["lp", "PROGRAMMING"]];
+  const suggested = { lr: 0, lt: 0, lh: 0, lp: 0 };
+  materials.forEach(r => { if (r.laborUnits) PHASE_MAP.forEach(([k]) => { suggested[k] += n(r.qty) * n(r.laborUnits[k]); }); });
+  const suggestedTotal = PHASE_MAP.reduce((t, [k]) => t + suggested[k], 0);
+  function applySuggested() {
+    const updated = labor.map(r => {
+      const hit = PHASE_MAP.find(([, label]) => (r.desc || "").toUpperCase().includes(label));
+      return hit ? { ...r, hours: Math.round(suggested[hit[0]] * 4) / 4 } : r;
+    });
+    setLabor(updated); save(null, updated, null, null);
+  }
+
   const matTotal = materials.reduce((s, r) => s + (n(r.qty) * n(r.pricePU)) + (n(r.laborHrs) * n(r.laborRate)), 0);
   const laborPrice = labor.reduce((s, r) => s + (n(r.hours) * n(r.ratePerHr)), 0);
   const laborCostTotal = labor.reduce((s, r) => s + (n(r.hours) * n(r.costPerHr)), 0);
@@ -391,12 +521,48 @@ export function TakeoffBuilder({ takeoff, onSave, scopeTitle }) {
   const costsCost = costs.reduce((s, r) => s + (n(r.qty) * n(r.costPU)), 0);
   const totalCost = matCost + laborCostTotal + costsCost;
   const margin = grandTotal > 0 ? Math.round(((grandTotal - totalCost) / grandTotal) * 100) : 0;
-  function renderSection(title, color, rows, setRows, section, addFn, hideMarkup) { return (<div style={{ marginBottom: 16 }}><div style={{ fontSize: 12, fontWeight: 700, color, textTransform: "uppercase", marginBottom: 8 }}>{title}</div>{rows.map((row, idx) => (<div key={row.id} style={{ display: "grid", gridTemplateColumns: hideMarkup ? "80px 90px 1fr 50px 40px 80px 80px 80px 50px 60px 80px 24px" : "80px 90px 1fr 50px 40px 80px 55px 80px 80px 50px 60px 80px 24px", gap: 4, marginBottom: 3, alignItems: "center" }}><input style={iS} value={row.manf} onChange={e => updRow(rows, setRows, idx, "manf", e.target.value, section)} placeholder="Manf" /><input style={iS} value={row.partNum} onChange={e => updRow(rows, setRows, idx, "partNum", e.target.value, section)} placeholder="Part #" /><input style={iS} value={row.desc} onChange={e => updRow(rows, setRows, idx, "desc", e.target.value, section)} placeholder="Description" /><input type="number" style={nS} value={row.qty || ""} onChange={e => updRow(rows, setRows, idx, "qty", e.target.value, section)} placeholder="0" /><input style={iS} value={row.unit} onChange={e => updRow(rows, setRows, idx, "unit", e.target.value, section)} placeholder="EA" /><input type="number" step="0.01" style={nS} value={row.costPU || ""} onChange={e => updRow(rows, setRows, idx, "costPU", e.target.value, section)} placeholder="Cost" />{!hideMarkup && <input type="number" step="1" style={{ ...nS, color: "#f59e0b" }} value={row.markupPct ?? ""} onChange={e => updRow(rows, setRows, idx, "markupPct", e.target.value, section)} placeholder="%" />}{hideMarkup ? (<input type="number" step="0.01" style={nS} value={row.pricePU || ""} onChange={e => updRow(rows, setRows, idx, "pricePU", e.target.value, section)} placeholder="Rate" />) : (<div style={{ fontSize: 12, color: "#10b981", textAlign: "right", fontWeight: 600 }}>${n(row.pricePU).toFixed(2)}</div>)}<div style={{ fontSize: 12, color: "#e2e8f0", textAlign: "right", fontWeight: 600 }}>${(n(row.qty) * n(row.pricePU)).toFixed(2)}</div><input type="number" step="0.5" style={nS} value={row.laborHrs || ""} onChange={e => updRow(rows, setRows, idx, "laborHrs", e.target.value, section)} placeholder="Hrs" /><input type="number" step="0.01" style={nS} value={row.laborRate || ""} onChange={e => updRow(rows, setRows, idx, "laborRate", e.target.value, section)} placeholder="Rate" /><div style={{ fontSize: 12, color: "#f59e0b", textAlign: "right", fontWeight: 600 }}>${(n(row.laborHrs) * n(row.laborRate)).toFixed(2)}</div><button onClick={() => removeRow(rows, setRows, idx, section)} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer" }}><X size={12} /></button></div>))}<button onClick={() => addFn()} style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 6, background: "none", border: "none", color: "#69BE28", fontSize: 11, cursor: "pointer", fontFamily: "inherit", fontWeight: 600, padding: "4px 0" }}><Plus size={12} /> Add Row</button></div>); }
+  function renderSection(title, color, rows, setRows, section, addFn, hideMarkup) { const lastCol = section === "materials" ? "44px" : "24px"; return (<div style={{ marginBottom: 16 }}><div style={{ fontSize: 12, fontWeight: 700, color, textTransform: "uppercase", marginBottom: 8 }}>{title}</div>{rows.map((row, idx) => (<div key={row.id} style={{ display: "grid", gridTemplateColumns: hideMarkup ? `80px 90px 1fr 50px 40px 80px 80px 80px 50px 60px 80px ${lastCol}` : `80px 90px 1fr 50px 40px 80px 55px 80px 80px 50px 60px 80px ${lastCol}`, gap: 4, marginBottom: 3, alignItems: "center" }}><input style={iS} value={row.manf} onChange={e => updRow(rows, setRows, idx, "manf", e.target.value, section)} placeholder="Manf" /><input style={iS} value={row.partNum} onChange={e => updRow(rows, setRows, idx, "partNum", e.target.value, section)} placeholder="Part #" /><input style={iS} value={row.desc} onChange={e => updRow(rows, setRows, idx, "desc", e.target.value, section)} placeholder="Description" /><input type="number" style={nS} value={row.qty || ""} onChange={e => updRow(rows, setRows, idx, "qty", e.target.value, section)} placeholder="0" /><input style={iS} value={row.unit} onChange={e => updRow(rows, setRows, idx, "unit", e.target.value, section)} placeholder="EA" /><input type="number" step="0.01" style={nS} value={row.costPU || ""} onChange={e => updRow(rows, setRows, idx, "costPU", e.target.value, section)} placeholder="Cost" />{!hideMarkup && <input type="number" step="1" style={{ ...nS, color: "#f59e0b" }} value={row.markupPct ?? ""} onChange={e => updRow(rows, setRows, idx, "markupPct", e.target.value, section)} placeholder="%" />}{hideMarkup ? (<input type="number" step="0.01" style={nS} value={row.pricePU || ""} onChange={e => updRow(rows, setRows, idx, "pricePU", e.target.value, section)} placeholder="Rate" />) : (<div style={{ fontSize: 12, color: "#10b981", textAlign: "right", fontWeight: 600 }}>${n(row.pricePU).toFixed(2)}</div>)}<div style={{ fontSize: 12, color: "#e2e8f0", textAlign: "right", fontWeight: 600 }}>${(n(row.qty) * n(row.pricePU)).toFixed(2)}</div><input type="number" step="0.5" style={nS} value={row.laborHrs || ""} onChange={e => updRow(rows, setRows, idx, "laborHrs", e.target.value, section)} placeholder="Hrs" /><input type="number" step="0.01" style={nS} value={row.laborRate || ""} onChange={e => updRow(rows, setRows, idx, "laborRate", e.target.value, section)} placeholder="Rate" /><div style={{ fontSize: 12, color: "#f59e0b", textAlign: "right", fontWeight: 600 }}>${(n(row.laborHrs) * n(row.laborRate)).toFixed(2)}</div><div style={{ display: "flex", gap: 2, justifyContent: "flex-end" }}>{section === "materials" && onSaveCatalogItem && (row.partNum || row.desc) ? <button title="Save to price book" onClick={() => saveRowToCatalog(row)} style={{ background: "none", border: "none", color: "#69BE28", cursor: "pointer", padding: 1, fontSize: 11 }}>💾</button> : null}<button onClick={() => removeRow(rows, setRows, idx, section)} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer", padding: 1 }}><X size={12} /></button></div></div>))}<button onClick={() => addFn()} style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 6, background: "none", border: "none", color: "#69BE28", fontSize: 11, cursor: "pointer", fontFamily: "inherit", fontWeight: 600, padding: "4px 0" }}><Plus size={12} /> Add Row</button></div>); }
   return (<div>
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr 1fr", gap: 10, marginBottom: 20 }}><div style={{ background: "#0A192F", borderRadius: 10, padding: "12px 14px", borderLeft: "3px solid #69BE28" }}><div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", marginBottom: 2 }}>Material Price</div><div style={{ fontSize: 18, fontWeight: 700, color: "#69BE28", fontFamily: "'Outfit',sans-serif" }}>${matTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div></div><div style={{ background: "#0A192F", borderRadius: 10, padding: "12px 14px", borderLeft: "3px solid #f59e0b" }}><div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", marginBottom: 2 }}>Labor ({totalLaborHrs}h)</div><div style={{ fontSize: 18, fontWeight: 700, color: "#f59e0b", fontFamily: "'Outfit',sans-serif" }}>${laborPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div></div><div style={{ background: "#0A192F", borderRadius: 10, padding: "12px 14px", borderLeft: "3px solid #10b981" }}><div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", marginBottom: 2 }}>Total Cost</div><div style={{ fontSize: 18, fontWeight: 700, color: "#10b981", fontFamily: "'Outfit',sans-serif" }}>${totalCost.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div></div><div style={{ background: "#0A192F", borderRadius: 10, padding: "12px 14px", borderLeft: "3px solid #3b82f6" }}><div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", marginBottom: 2 }}>Quoted Price</div><div style={{ fontSize: 18, fontWeight: 700, color: "#3b82f6", fontFamily: "'Outfit',sans-serif" }}>${grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div></div><div style={{ background: "#0A192F", borderRadius: 10, padding: "12px 14px", borderLeft: `3px solid ${margin >= 20 ? "#10b981" : margin >= 10 ? "#f59e0b" : "#ef4444"}` }}><div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", marginBottom: 2 }}>Margin</div><div style={{ fontSize: 18, fontWeight: 700, color: margin >= 20 ? "#10b981" : margin >= 10 ? "#f59e0b" : "#ef4444", fontFamily: "'Outfit',sans-serif" }}>{margin}%</div></div></div>
-    <div style={{ display: "grid", gridTemplateColumns: "80px 90px 1fr 50px 40px 80px 55px 80px 80px 50px 60px 80px 24px", gap: 4, marginBottom: 8, padding: "0 0 6px", borderBottom: "1px solid #1A3050" }}>{["Manf", "Part #", "Description", "Qty", "Unit", "Cost/U", "Mkup%", "Price/U", "Ext Price", "Hrs", "Rate", "Ext Labor", ""].map(h => (<div key={h} style={{ fontSize: 10, fontWeight: 700, color: "#475569", textTransform: "uppercase" }}>{h}</div>))}</div>
-    {renderSection("Materials", "#69BE28", materials, setMaterials, "materials", () => addRow(materials, setMaterials, emptyMaterialRow, "materials"))}
-    <div style={{ marginBottom: 16 }}><div style={{ fontSize: 12, fontWeight: 700, color: "#f59e0b", textTransform: "uppercase", marginBottom: 8 }}>FWT Labor</div><div style={{ display: "grid", gridTemplateColumns: "1fr 70px 80px 90px 80px 90px 24px", gap: 4, marginBottom: 6, padding: "0 0 6px", borderBottom: "1px solid #1A3050" }}>{["Description", "Hours", "Cost/Hr", "Labor Cost", "Rate/Hr", "Labor Price", ""].map(h => (<div key={h} style={{ fontSize: 10, fontWeight: 700, color: "#475569", textTransform: "uppercase" }}>{h}</div>))}</div>{labor.map((row, idx) => (<div key={row.id} style={{ display: "grid", gridTemplateColumns: "1fr 70px 80px 90px 80px 90px 24px", gap: 4, marginBottom: 3, alignItems: "center" }}><input style={iS} value={row.desc} onChange={e => updLaborRow(idx, "desc", e.target.value)} placeholder="Labor description" /><input type="number" step="0.5" style={nS} value={row.hours || ""} onChange={e => updLaborRow(idx, "hours", e.target.value)} placeholder="0" /><input type="number" step="0.01" style={nS} value={row.costPerHr || ""} onChange={e => updLaborRow(idx, "costPerHr", e.target.value)} placeholder="$/hr" /><div style={{ fontSize: 12, color: "#ef4444", textAlign: "right", fontWeight: 600 }}>${(n(row.hours) * n(row.costPerHr)).toFixed(2)}</div><input type="number" step="0.01" style={nS} value={row.ratePerHr || ""} onChange={e => updLaborRow(idx, "ratePerHr", e.target.value)} placeholder="$/hr" /><div style={{ fontSize: 12, color: "#10b981", textAlign: "right", fontWeight: 600 }}>${(n(row.hours) * n(row.ratePerHr)).toFixed(2)}</div><button onClick={() => removeLaborRow(idx)} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer" }}><X size={12} /></button></div>))}<div style={{ display: "grid", gridTemplateColumns: "1fr 70px 80px 90px 80px 90px 24px", gap: 4, marginTop: 6, padding: "8px 0 0", borderTop: "1px solid #1A3050" }}><div style={{ fontSize: 12, fontWeight: 700, color: "#f59e0b" }}>LABOR TOTALS</div><div style={{ fontSize: 12, fontWeight: 700, color: "#fff", textAlign: "right" }}>{totalLaborHrs}h</div><div></div><div style={{ fontSize: 12, fontWeight: 700, color: "#ef4444", textAlign: "right" }}>${laborCostTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div><div></div><div style={{ fontSize: 12, fontWeight: 700, color: "#10b981", textAlign: "right" }}>${laborPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div><div></div></div><button onClick={addLaborRow} style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 8, background: "none", border: "none", color: "#f59e0b", fontSize: 11, cursor: "pointer", fontFamily: "inherit", fontWeight: 600, padding: "4px 0" }}><Plus size={12} /> Add Labor Row</button></div>
+    {(catalogItems.length > 0 || assemblyList.length > 0) && (
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap", alignItems: "flex-start" }}>
+        <div style={{ position: "relative", flex: 2, minWidth: 240 }}>
+          <input style={{ ...iS, padding: "8px 12px" }} value={catQ} onChange={e => setCatQ(e.target.value)} placeholder="🔎 Search price book — type part #, manf, or description to insert…" />
+          {catMatches.length > 0 && (
+            <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: "#13294d", border: "1px solid #1A3050", borderRadius: 8, zIndex: 20, maxHeight: 240, overflowY: "auto", boxShadow: "0 8px 24px rgba(0,0,0,0.4)" }}>
+              {catMatches.map(m => (
+                <button key={m.id} onClick={() => insertCatalogItem(m)} style={{ display: "flex", gap: 8, width: "100%", textAlign: "left", padding: "9px 12px", background: "none", border: "none", borderBottom: "1px solid #1A3050", color: "#e2e8f0", fontSize: 12.5, cursor: "pointer", fontFamily: "inherit", alignItems: "baseline" }}>
+                  <strong style={{ color: "#69BE28" }}>{m.partNum}</strong>
+                  <span style={{ flex: 1, color: "#94a3b8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.manf} — {m.desc}</span>
+                  <span style={{ color: "#10b981", fontWeight: 600 }}>${(n(m.costPU) * (1 + n(m.markupPct) / 100)).toFixed(2)}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        {assemblyList.length > 0 && (
+          <div style={{ display: "flex", gap: 6, alignItems: "center", flex: 1, minWidth: 260 }}>
+            <select style={{ ...iS, flex: 1, padding: "8px 10px" }} value={asmId} onChange={e => setAsmId(e.target.value)}>
+              <option value="">+ Insert assembly…</option>
+              {assemblyList.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+            <input type="number" min="1" style={{ ...nS, width: 64, padding: "8px 8px" }} value={asmQty} onChange={e => setAsmQty(e.target.value)} title="Quantity of assemblies" />
+            <button onClick={insertAssembly} disabled={!asmId} style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: asmId ? "#8b5cf6" : "#1A3050", color: asmId ? "#fff" : "#475569", fontSize: 12.5, fontWeight: 700, cursor: asmId ? "pointer" : "default", fontFamily: "inherit" }}>Insert</button>
+          </div>
+        )}
+      </div>
+    )}
+    <div style={{ display: "grid", gridTemplateColumns: "80px 90px 1fr 50px 40px 80px 55px 80px 80px 50px 60px 80px 44px", gap: 4, marginBottom: 8, padding: "0 0 6px", borderBottom: "1px solid #1A3050" }}>{["Manf", "Part #", "Description", "Qty", "Unit", "Cost/U", "Mkup%", "Price/U", "Ext Price", "Hrs", "Rate", "Ext Labor", ""].map(h => (<div key={h} style={{ fontSize: 10, fontWeight: 700, color: "#475569", textTransform: "uppercase" }}>{h}</div>))}</div>
+    {renderSection("Materials", "#69BE28", materials, setMaterials, "materials", () => addRow(materials, setMaterials, newMatRow, "materials"))}
+    <div style={{ marginBottom: 16 }}><div style={{ fontSize: 12, fontWeight: 700, color: "#f59e0b", textTransform: "uppercase", marginBottom: 8 }}>FWT Labor</div>
+    {suggestedTotal > 0 && (
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", background: "#f59e0b11", border: "1px solid #f59e0b33", borderRadius: 8, padding: "8px 12px", marginBottom: 10 }}>
+        <span style={{ fontSize: 11.5, fontWeight: 700, color: "#f59e0b" }}>⚡ Suggested from takeoff labor units:</span>
+        {PHASE_MAP.map(([k, label]) => <span key={k} style={{ fontSize: 11.5, color: suggested[k] > 0 ? "#e2e8f0" : "#475569" }}>{label.charAt(0) + label.slice(1).toLowerCase()}: <strong>{(Math.round(suggested[k] * 4) / 4)}h</strong></span>)}
+        <span style={{ fontSize: 11.5, color: "#94a3b8" }}>· Total <strong style={{ color: "#fff" }}>{Math.round(suggestedTotal * 4) / 4}h</strong></span>
+        <button onClick={applySuggested} style={{ marginLeft: "auto", padding: "5px 12px", borderRadius: 6, border: "none", background: "#f59e0b", color: "#0A192F", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>Apply to labor rows</button>
+      </div>
+    )}<div style={{ display: "grid", gridTemplateColumns: "1fr 70px 80px 90px 80px 90px 24px", gap: 4, marginBottom: 6, padding: "0 0 6px", borderBottom: "1px solid #1A3050" }}>{["Description", "Hours", "Cost/Hr", "Labor Cost", "Rate/Hr", "Labor Price", ""].map(h => (<div key={h} style={{ fontSize: 10, fontWeight: 700, color: "#475569", textTransform: "uppercase" }}>{h}</div>))}</div>{labor.map((row, idx) => (<div key={row.id} style={{ display: "grid", gridTemplateColumns: "1fr 70px 80px 90px 80px 90px 24px", gap: 4, marginBottom: 3, alignItems: "center" }}><input style={iS} value={row.desc} onChange={e => updLaborRow(idx, "desc", e.target.value)} placeholder="Labor description" /><input type="number" step="0.5" style={nS} value={row.hours || ""} onChange={e => updLaborRow(idx, "hours", e.target.value)} placeholder="0" /><input type="number" step="0.01" style={nS} value={row.costPerHr || ""} onChange={e => updLaborRow(idx, "costPerHr", e.target.value)} placeholder="$/hr" /><div style={{ fontSize: 12, color: "#ef4444", textAlign: "right", fontWeight: 600 }}>${(n(row.hours) * n(row.costPerHr)).toFixed(2)}</div><input type="number" step="0.01" style={nS} value={row.ratePerHr || ""} onChange={e => updLaborRow(idx, "ratePerHr", e.target.value)} placeholder="$/hr" /><div style={{ fontSize: 12, color: "#10b981", textAlign: "right", fontWeight: 600 }}>${(n(row.hours) * n(row.ratePerHr)).toFixed(2)}</div><button onClick={() => removeLaborRow(idx)} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer" }}><X size={12} /></button></div>))}<div style={{ display: "grid", gridTemplateColumns: "1fr 70px 80px 90px 80px 90px 24px", gap: 4, marginTop: 6, padding: "8px 0 0", borderTop: "1px solid #1A3050" }}><div style={{ fontSize: 12, fontWeight: 700, color: "#f59e0b" }}>LABOR TOTALS</div><div style={{ fontSize: 12, fontWeight: 700, color: "#fff", textAlign: "right" }}>{totalLaborHrs}h</div><div></div><div style={{ fontSize: 12, fontWeight: 700, color: "#ef4444", textAlign: "right" }}>${laborCostTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div><div></div><div style={{ fontSize: 12, fontWeight: 700, color: "#10b981", textAlign: "right" }}>${laborPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div><div></div></div><button onClick={addLaborRow} style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 8, background: "none", border: "none", color: "#f59e0b", fontSize: 11, cursor: "pointer", fontFamily: "inherit", fontWeight: 600, padding: "4px 0" }}><Plus size={12} /> Add Labor Row</button></div>
     {renderSection("Project Costs", "#ef4444", costs, setCosts, "costs", () => addRow(costs, setCosts, () => ({ id: genId(), manf: "FWT", partNum: "FWT", desc: "", qty: 1, unit: "EA", costPU: 0, markupPct: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isCost: true }), "costs"))}
     {renderSection("RMR \u2014 First Month Included", "#8b5cf6", rmr, setRmr, "rmr", () => addRow(rmr, setRmr, () => ({ id: genId(), manf: "FWT", partNum: "FWT-RMR", desc: "", qty: 1, unit: "MO", costPU: 0, markupPct: 0, pricePU: 0, laborHrs: 0, laborRate: 0, isRmr: true }), "rmr"))}
     <div style={{ display: "flex", gap: 16, alignItems: "center", padding: "16px 0", borderTop: "2px solid #1A3050", marginTop: 8, flexWrap: "wrap" }}><div style={{ display: "flex", alignItems: "center", gap: 8 }}><span style={{ fontSize: 12, color: "#64748b" }}>Overhead %:</span><input type="number" step="0.5" style={{ ...nS, width: 70 }} value={overheadPct || ""} onChange={e => { const v = parseFloat(e.target.value) || 0; setOverheadPct(v); save(null, null, null, null, v); }} placeholder="0" /><span style={{ fontSize: 12, color: "#94a3b8" }}>(${overhead.toFixed(2)})</span></div><button onClick={() => downloadBOMCsv({ materials, labor, costs, rmr, overheadPct, notes }, scopeTitle)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, border: "1px solid #10b981", background: "#10b98122", color: "#10b981", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }} title="Export BOM as CSV — opens in Excel"><Download size={14} /> Export CSV</button><button onClick={() => downloadBOMToTemplate({ materials, labor, costs, rmr, overheadPct, notes }, scopeTitle)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, border: "1px solid #3b82f6", background: "#3b82f622", color: "#3b82f6", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }} title="Fill your Takeoff_2026 template and download as .xlsx"><Download size={14} /> Export to Template</button><div style={{ marginLeft: "auto", fontSize: 18, fontWeight: 700, color: "#fff", fontFamily: "'Outfit',sans-serif" }}>TOTAL: ${grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div></div>
@@ -553,7 +719,7 @@ async function generateProposalDocx(d, opp) {
 /* ═══════════════════════════════════════
    PROPOSAL BUILDER COMPONENT
    ═══════════════════════════════════════ */
-export function ProposalBuilder({ opportunity, proposal, onSave }) {
+export function ProposalBuilder({ opportunity, proposal, onSave, catalog, assemblies, estDefaults, onSaveCatalogItem }) {
   const SYSTEM_TYPES = ["Access Control", "Intrusion Alarm", "Security Cameras", "Sound Masking"];
   const data = proposal || { date: new Date().toISOString().split("T")[0], expiration: 30, pmName: "Austin Wright", pmTitle: "Project Manager", pmPhone: "239.565.9270", pmEmail: "austinw@farwesttechnologies.com", projectInfo: "", scopes: [{ id: genId(), title: "", description: "", fieldDevices: "", headendDevices: "", price: "" }], exclusions: DEFAULT_EXCLUSIONS.map((e, i) => ({ id: "ex" + i, text: e, included: true })), terms: DEFAULT_TERMS.map((t, i) => ({ id: "tm" + i, text: t, included: true })), systemTypes: { "Access Control": false, "Intrusion Alarm": false, "Security Cameras": false, "Sound Masking": false } };
   const [d, setD] = useState(data);
@@ -594,7 +760,7 @@ export function ProposalBuilder({ opportunity, proposal, onSave }) {
               </div>
               {(d._expandedBOMs || {})[si] && (
                 <div style={{ background: "#001528", borderRadius: 10, border: "1px solid #1A3050", padding: 16 }}>
-                  <TakeoffBuilder takeoff={scope.takeoff} onSave={tk => upd({ scopes: d.scopes.map((s, i) => i === si ? { ...s, takeoff: tk } : s) })} />
+                  <TakeoffBuilder takeoff={scope.takeoff} catalog={catalog} assemblies={assemblies} estDefaults={estDefaults} onSaveCatalogItem={onSaveCatalogItem} onSave={tk => upd({ scopes: d.scopes.map((s, i) => i === si ? { ...s, takeoff: tk } : s) })} />
                 </div>
               )}
             </div>

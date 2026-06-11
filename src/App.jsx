@@ -11,11 +11,13 @@ import Contacts from "./Contacts.jsx";
 import WarrantyTracker from "./WarrantyTracker.jsx";
 import MigrationTool from "./MigrationTool.jsx";
 import FieldMode from "./FieldMode.jsx";
+import PriceBook from "./PriceBook.jsx";
 
 import {
   FB_URL, dbGet, readTracker, putSection, putScheduleDay,
   putProject, patchProject, deleteProject as dbDeleteProject,
   putProjectDailyLog, putMemberPrivate,
+  putCatalogItem, deleteCatalogItem, putAssembly, deleteAssembly, putEstimatingDefaults,
   readUsers, putUser, deleteUser as dbDeleteUser,
   normalizeTracker, denormalizeProjectUpdates,
 } from "./db.js";
@@ -443,11 +445,12 @@ function Tracker({ user, userRecord }) {
     { id: "daily", label: "Daily Task Board", icon: "📋" },
     { id: "dailylog", label: "Daily Log", icon: "📝" },
     { id: "opportunities", label: "Opportunities", icon: "🎯" },
+    { id: "pricebook", label: "Price Book", icon: "💲" },
     { id: "timesheets", label: "My Timesheets", icon: "⏱️" },
   ];
 
   const currentPageTitle = selectedProject ? selectedProject.name
-    : view === "myspace" ? (mySpaceTab === "daily" ? "Daily Task Board" : mySpaceTab === "dailylog" ? "Daily Log" : mySpaceTab === "opportunities" ? "Opportunities" : "My Timesheets")
+    : view === "myspace" ? (mySpaceTab === "daily" ? "Daily Task Board" : mySpaceTab === "dailylog" ? "Daily Log" : mySpaceTab === "opportunities" ? "Opportunities" : mySpaceTab === "pricebook" ? "Price Book" : "My Timesheets")
     : view === "team" ? "Team Roster" : view === "schedule" ? "Team Schedule" : view === "admin" ? "User Admin"
     : view === "contacts" ? "Contacts" : view === "warranties" ? "Warranties" : view === "dashboard" ? "Dashboard"
     : view === "board" ? "Project Board" : "Phase Settings";
@@ -631,8 +634,15 @@ function Tracker({ user, userRecord }) {
             <MyDailyLog dailyLogs={getMyPrivate().dailyLogs || []} projects={data.projects} teamRoster={data.teamRoster} myName={myName} myEmail={user.email} predefinedEmail={data.adminSettings?.predefinedEmail || ""}
               onSubmit={submitDailyLogs}
               onDeleteLog={logs => saveMyPrivate({ dailyLogs: logs })} />
+          ) : view === "myspace" && mySpaceTab === "pricebook" ? (
+            <PriceBook catalog={data.catalog || {}} assemblies={data.assemblies || {}} defaults={data.estimatingDefaults || {}} isMobile={isMobile}
+              onSaveItem={item => { applyLocal({ ...latestData.current, catalog: { ...(latestData.current.catalog || {}), [item.id]: item } }); persist(putCatalogItem(item.id, item)); }}
+              onDeleteItem={id => { const c = { ...(latestData.current.catalog || {}) }; delete c[id]; applyLocal({ ...latestData.current, catalog: c }); persist(deleteCatalogItem(id)); }}
+              onSaveAssembly={a => { applyLocal({ ...latestData.current, assemblies: { ...(latestData.current.assemblies || {}), [a.id]: a } }); persist(putAssembly(a.id, a)); }}
+              onDeleteAssembly={id => { const a = { ...(latestData.current.assemblies || {}) }; delete a[id]; applyLocal({ ...latestData.current, assemblies: a }); persist(deleteAssembly(id)); }}
+              onSaveDefaults={d => { applyLocal({ ...latestData.current, estimatingDefaults: d }); persist(putEstimatingDefaults(d)); }} />
           ) : view === "myspace" && mySpaceTab === "opportunities" ? (
-            <Opportunities opportunities={getMyPrivate().opportunities || []} onSave={opps => saveMyPrivate({ opportunities: opps })} onConvert={opp => { addProject({ ...opp, phaseId: "awarded" }); const opps = (getMyPrivate().opportunities || []).filter(o => o.id !== opp.id); saveMyPrivate({ opportunities: opps }); }} />
+            <Opportunities catalog={data.catalog || {}} assemblies={data.assemblies || {}} estDefaults={data.estimatingDefaults || {}} onSaveCatalogItem={item => { applyLocal({ ...latestData.current, catalog: { ...(latestData.current.catalog || {}), [item.id]: item } }); persist(putCatalogItem(item.id, item)); }} opportunities={getMyPrivate().opportunities || []} onSave={opps => saveMyPrivate({ opportunities: opps })} onConvert={opp => { addProject({ ...opp, phaseId: "awarded" }); const opps = (getMyPrivate().opportunities || []).filter(o => o.id !== opp.id); saveMyPrivate({ opportunities: opps }); }} />
           ) : view === "myspace" && mySpaceTab === "timesheets" ? (
             <TimesheetView timesheets={getMyPrivate().timesheets || []} projects={data.projects} myName={myName} myEmail={user.email} predefinedEmail={data.adminSettings?.predefinedEmail || ""} isAdmin={isAdmin} allMemberPrivate={isAdmin ? (data.memberPrivate || {}) : null} teamRoster={data.teamRoster}
               onAdd={entry => saveMyPrivate({ timesheets: [...(getMyPrivate().timesheets || []), { ...entry, id: genId(), member: myName, createdAt: new Date().toISOString() }] })}
