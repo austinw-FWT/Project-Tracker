@@ -11,12 +11,36 @@ const STAGES = [
 ];
 const PROJECT_TYPES = ["Access Control", "Video Surveillance", "Intrusion Detection", "Structured Cabling", "Network Infrastructure"];
 
+const CLOSED_STAGES = {
+  "won":    { name: "Won",    color: "#10b981", icon: "🏆" },
+  "lost":   { name: "Lost",   color: "#ef4444", icon: "❌" },
+  "no-bid": { name: "No Bid", color: "#64748b", icon: "🚫" },
+};
+const LOST_REASONS = ["Price too high", "Lost to competitor", "Went with incumbent", "Project cancelled / postponed", "Timing / schedule conflict", "No response / went dark", "Other"];
+const NOBID_REASONS = ["Too busy / no capacity", "Outside our wheelhouse", "Bad fit / too much risk", "Couldn't meet schedule", "Customer / payment concerns", "Other"];
+const money = v => parseFloat(String(v || "").replace(/[^0-9.]/g, "")) || 0;
+const fmtMoney = v => "$" + Math.round(v).toLocaleString();
+function dueBadge(opp) {
+  if (!opp.bidDueDate) return null;
+  const today = new Date(); today.setHours(0,0,0,0);
+  const due = new Date(opp.bidDueDate + "T00:00:00");
+  const days = Math.round((due - today) / 86400000);
+  if (days < 0) return { text: `${Math.abs(days)}d overdue`, color: "#ef4444" };
+  if (days === 0) return { text: "Due today", color: "#ef4444" };
+  if (days <= 3) return { text: `Due in ${days}d`, color: "#f59e0b" };
+  return { text: `Due ${due.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`, color: "#64748b" };
+}
+
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
 
 export default function Opportunities({ opportunities, onSave, onConvert, catalog, assemblies, estDefaults, onSaveCatalogItem }) {
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState(null);
-  const [form, setForm] = useState({ name: "", customer: "", contactName: "", contactPhone: "", contactEmail: "", siteAddress: "", projectTypes: [], type: "retrofit", stage: "lead", bidAmount: "", scopeNotes: "" });
+  const EMPTY_FORM = { name: "", customer: "", contactName: "", contactPhone: "", contactEmail: "", siteAddress: "", projectTypes: [], type: "retrofit", stage: "lead", bidAmount: "", bidDueDate: "", scopeNotes: "" };
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [viewTab, setViewTab] = useState("pipeline");
+  const [outcomeModal, setOutcomeModal] = useState(null); // { opp, type: "lost"|"no-bid" }
+  const [convertJobNum, setConvertJobNum] = useState("");
   const [filterStage, setFilterStage] = useState("all");
   const [confirmConvert, setConfirmConvert] = useState(null);
   const [expandedOpp, setExpandedOpp] = useState(null);
@@ -45,10 +69,35 @@ export default function Opportunities({ opportunities, onSave, onConvert, catalo
     }
   }
 
-  const filtered = filterStage === "all" ? opportunities : opportunities.filter(o => o.stage === filterStage);
+  const openOpps = opportunities.filter(o => !CLOSED_STAGES[o.stage]);
+  const closedOpps = opportunities.filter(o => CLOSED_STAGES[o.stage]).sort((a, b) => (b.closedAt || "").localeCompare(a.closedAt || ""));
+  const filtered = filterStage === "all" ? openOpps : openOpps.filter(o => o.stage === filterStage);
+
+  function closeOut(opp, type, details) {
+    onSave(opportunities.map(o => o.id === opp.id ? { ...o, stage: type, closedAt: new Date().toISOString(), outcome: details, updatedAt: new Date().toISOString() } : o));
+    setOutcomeModal(null);
+  }
+  const tabBar = (
+    <div style={{ display: "flex", gap: 6, marginBottom: 18, borderBottom: "1px solid #1A3050" }}>
+      {[{ id: "pipeline", label: `Pipeline (${openOpps.length})` }, { id: "bidlog", label: `Bid Log & Stats (${closedOpps.length})` }].map(t => (
+        <button key={t.id} onClick={() => setViewTab(t.id)} style={{ padding: "10px 16px", background: "none", border: "none", borderBottom: viewTab === t.id ? "2px solid #69BE28" : "2px solid transparent", color: viewTab === t.id ? "#69BE28" : "#64748b", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{t.label}</button>
+      ))}
+    </div>
+  );
+
+  if (viewTab === "bidlog") return (
+    <div style={{ maxWidth: 900, margin: "0 auto", padding: 24 }}>
+      {tabBar}
+      <BidLogView closed={closedOpps}
+        onReopen={opp => onSave(opportunities.map(o => o.id === opp.id ? { ...o, stage: "bid", closedAt: null, outcome: null, updatedAt: new Date().toISOString() } : o))}
+        onDelete={opp => { if (confirm(`Permanently delete the bid record for "${opp.name}"?`)) onSave(opportunities.filter(o => o.id !== opp.id)); }} />
+    </div>
+  );
 
   return (
     <div style={{ maxWidth: 800, margin: "0 auto", padding: 24 }}>
+      {tabBar}
+      {outcomeModal && <OutcomeModal modal={outcomeModal} onClose={() => setOutcomeModal(null)} onSave={closeOut} />}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
         <p style={{ fontSize: 13, color: "#64748b", margin: 0 }}>Track leads, site walks, designs, and bids. Convert to projects when awarded.</p>
         <button onClick={() => { setShowForm(true); setEditId(null); setForm({ name: "", customer: "", contactName: "", contactPhone: "", contactEmail: "", siteAddress: "", projectTypes: [], type: "retrofit", stage: "lead", bidAmount: "", scopeNotes: "" }); }}
@@ -57,7 +106,7 @@ export default function Opportunities({ opportunities, onSave, onConvert, catalo
 
       {/* Stage summary */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 20 }}>
-        {STAGES.map(s => { const c = opportunities.filter(o => o.stage === s.id).length; return (
+        {STAGES.map(s => { const c = openOpps.filter(o => o.stage === s.id).length; return (
           <button key={s.id} onClick={() => setFilterStage(filterStage === s.id ? "all" : s.id)}
             style={{ padding: "14px 16px", borderRadius: 10, border: filterStage === s.id ? `2px solid ${s.color}` : "1px solid #1A3050", background: "#0F2444", cursor: "pointer", textAlign: "left", fontFamily: "inherit" }}>
             <div style={{ fontSize: 18, marginBottom: 4 }}>{s.icon}</div>
@@ -81,6 +130,7 @@ export default function Opportunities({ opportunities, onSave, onConvert, catalo
                   <div style={{ fontSize: 14, fontWeight: 600, color: "#fff" }}>{opp.name}</div>
                   <div style={{ fontSize: 12, color: "#64748b" }}>{opp.customer}{opp.bidAmount ? ` · ${opp.bidAmount}` : ""}</div>
                 </div>
+                {(() => { const b = dueBadge(opp); return b ? <span style={{ fontSize: 10.5, padding: "3px 9px", borderRadius: 20, background: b.color + "22", color: b.color, fontWeight: 700 }}>⏰ {b.text}</span> : null; })()}
                 <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: (stage?.color || "#6b7280") + "22", color: stage?.color, fontWeight: 600 }}>{stage?.name}</span>
                 {stageIdx < STAGES.length - 1 && (
                   <button onClick={() => advanceStage(opp)} title={`Move to ${STAGES[stageIdx + 1]?.name}`}
@@ -89,14 +139,25 @@ export default function Opportunities({ opportunities, onSave, onConvert, catalo
                 {opp.stage === "bid" && (
                   confirmConvert === opp.id ? (
                     <div style={{ display: "flex", gap: 4 }}>
-                      <button onClick={() => { onConvert(opp); setConfirmConvert(null); }} style={{ padding: "5px 12px", borderRadius: 8, border: "none", background: "#10b981", color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Confirm Award</button>
+                      <input value={convertJobNum} onChange={e => setConvertJobNum(e.target.value)} placeholder="Job # (260300)" style={{ width: 110, padding: "5px 8px", borderRadius: 8, border: "1px solid #10b981", background: "#0A192F", color: "#fff", fontSize: 11, fontFamily: "inherit", outline: "none" }} />
+                      <button onClick={() => {
+                        onConvert({ ...opp, jobNumber: convertJobNum.trim() });
+                        onSave(opportunities.map(o => o.id === opp.id ? { ...o, stage: "won", closedAt: new Date().toISOString(), wonAmount: money(o.bidAmount), updatedAt: new Date().toISOString() } : o));
+                        setConfirmConvert(null); setConvertJobNum("");
+                      }} style={{ padding: "5px 12px", borderRadius: 8, border: "none", background: "#10b981", color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Confirm</button>
                       <button onClick={() => setConfirmConvert(null)} style={{ padding: "5px 8px", borderRadius: 8, border: "1px solid #1A3050", background: "transparent", color: "#64748b", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
                     </div>
                   ) : (
                     <button onClick={() => setConfirmConvert(opp.id)} style={{ padding: "5px 12px", borderRadius: 8, border: "none", background: "#10b981", color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>🏆 Award</button>
                   )
                 )}
-                <button onClick={() => { setForm(opp); setEditId(opp.id); setShowForm(true); }} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer" }}><Edit2 size={13} /></button>
+                {opp.stage === "bid" && confirmConvert !== opp.id && (
+                  <button onClick={() => setOutcomeModal({ opp, type: "lost" })} style={{ padding: "5px 10px", borderRadius: 8, border: "1px solid #7f1d1d", background: "transparent", color: "#f87171", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Lost</button>
+                )}
+                {confirmConvert !== opp.id && (
+                  <button title="No Bid" onClick={() => setOutcomeModal({ opp, type: "no-bid" })} style={{ padding: "5px 8px", borderRadius: 8, border: "1px solid #1A3050", background: "transparent", color: "#64748b", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>🚫</button>
+                )}
+                <button onClick={() => { setForm({ ...EMPTY_FORM, ...opp }); setEditId(opp.id); setShowForm(true); }} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer" }}><Edit2 size={13} /></button>
                 <button onClick={() => onSave(opportunities.filter(o => o.id !== opp.id))} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer" }}><X size={13} /></button>
               </div>
               {opp.scopeNotes && !isExpanded && <div style={{ marginTop: 8, fontSize: 12, color: "#94a3b8", paddingLeft: 28 }}>{opp.scopeNotes}</div>}
@@ -260,6 +321,7 @@ export default function Opportunities({ opportunities, onSave, onConvert, catalo
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div><label style={lS}>Contact</label><input style={iS} value={form.contactName} onChange={e => setForm({ ...form, contactName: e.target.value })} /></div>
                 <div><label style={lS}>Bid Amount</label><input style={iS} value={form.bidAmount} onChange={e => setForm({ ...form, bidAmount: e.target.value })} placeholder="$" /></div>
+              <div><label style={lS}>Bid Due Date</label><input type="date" style={iS} value={form.bidDueDate || ""} onChange={e => setForm({ ...form, bidDueDate: e.target.value })} /></div>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
                 <div><label style={lS}>Phone</label><input style={iS} value={form.contactPhone} onChange={e => setForm({ ...form, contactPhone: e.target.value })} /></div>
@@ -296,6 +358,145 @@ export default function Opportunities({ opportunities, onSave, onConvert, catalo
           />
         );
       })()}
+    </div>
+  );
+}
+
+
+/* ════════ OUTCOME MODAL ════════ */
+function OutcomeModal({ modal, onClose, onSave }) {
+  const { opp, type } = modal;
+  const reasons = type === "lost" ? LOST_REASONS : NOBID_REASONS;
+  const [reason, setReason] = useState(reasons[0]);
+  const [competitor, setCompetitor] = useState("");
+  const [winningPrice, setWinningPrice] = useState("");
+  const [notes, setNotes] = useState("");
+  const iS2 = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1A3050", background: "#0A192F", color: "#e2e8f0", fontSize: 13, fontFamily: "inherit", outline: "none", boxSizing: "border-box" };
+  const lS2 = { fontSize: 11, fontWeight: 600, color: "#64748b", marginBottom: 4, display: "block", textTransform: "uppercase" };
+  const cs = CLOSED_STAGES[type];
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#0F2444", borderRadius: 14, border: "1px solid #1A3050", padding: 22, width: "100%", maxWidth: 480 }}>
+        <div style={{ fontSize: 16, fontWeight: 800, color: cs.color, fontFamily: "'Outfit',sans-serif", marginBottom: 4 }}>{cs.icon} Mark as {cs.name}</div>
+        <div style={{ fontSize: 13, color: "#94a3b8", marginBottom: 16 }}>{opp.name} · {opp.customer}{opp.bidAmount ? ` · ${opp.bidAmount}` : ""}</div>
+        <div style={{ marginBottom: 12 }}>
+          <label style={lS2}>Reason</label>
+          <select style={iS2} value={reason} onChange={e => setReason(e.target.value)}>{reasons.map(r => <option key={r} value={r}>{r}</option>)}</select>
+        </div>
+        {type === "lost" && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+            <div><label style={lS2}>Who won? (if known)</label><input style={iS2} value={competitor} onChange={e => setCompetitor(e.target.value)} placeholder="Competitor name" /></div>
+            <div><label style={lS2}>Winning price (if known)</label><input style={iS2} value={winningPrice} onChange={e => setWinningPrice(e.target.value)} placeholder="$" /></div>
+          </div>
+        )}
+        <div style={{ marginBottom: 16 }}>
+          <label style={lS2}>Notes — future-you will thank you</label>
+          <textarea style={{ ...iS2, minHeight: 64, resize: "vertical" }} value={notes} onChange={e => setNotes(e.target.value)} placeholder={type === "lost" ? "GC said we were 12% high; they value price over local service…" : "Why we passed…"} />
+        </div>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <button onClick={onClose} style={{ padding: "8px 16px", borderRadius: 8, border: "1px solid #1A3050", background: "transparent", color: "#94a3b8", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+          <button onClick={() => onSave(opp, type, { reason, competitor, winningPrice, notes })} style={{ padding: "8px 18px", borderRadius: 8, border: "none", background: cs.color, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Save outcome</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ════════ BID LOG & STATS ════════ */
+function BidLogView({ closed, onReopen, onDelete }) {
+  const won = closed.filter(o => o.stage === "won");
+  const lost = closed.filter(o => o.stage === "lost");
+  const nobid = closed.filter(o => o.stage === "no-bid");
+  const decided = won.length + lost.length;
+  const hitRate = decided > 0 ? Math.round((won.length / decided) * 100) : null;
+  const wonDollars = won.reduce((s, o) => s + (o.wonAmount || money(o.bidAmount)), 0);
+  const lostDollars = lost.reduce((s, o) => s + money(o.bidAmount), 0);
+  const dollarRate = (wonDollars + lostDollars) > 0 ? Math.round((wonDollars / (wonDollars + lostDollars)) * 100) : null;
+
+  // hit rate by system type
+  const byType = {};
+  [...won, ...lost].forEach(o => (o.projectTypes || []).forEach(t => {
+    byType[t] = byType[t] || { won: 0, lost: 0 };
+    byType[t][o.stage === "won" ? "won" : "lost"]++;
+  }));
+
+  // top loss reasons
+  const lossReasons = {};
+  lost.forEach(o => { const r = o.outcome?.reason || "Unrecorded"; lossReasons[r] = (lossReasons[r] || 0) + 1; });
+  const topLoss = Object.entries(lossReasons).sort((a, b) => b[1] - a[1]).slice(0, 3);
+
+  const SC2 = ({ label, value, sub, color }) => (
+    <div style={{ background: "#0F2444", border: "1px solid #1A3050", borderRadius: 10, padding: "14px 16px", borderLeft: `3px solid ${color}` }}>
+      <div style={{ fontSize: 10, color: "#64748b", textTransform: "uppercase", marginBottom: 4 }}>{label}</div>
+      <div style={{ fontSize: 22, fontWeight: 700, color, fontFamily: "'Outfit',sans-serif" }}>{value}</div>
+      {sub && <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>{sub}</div>}
+    </div>
+  );
+
+  return (
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, marginBottom: 20 }}>
+        <SC2 label="Hit Rate (count)" value={hitRate === null ? "—" : hitRate + "%"} sub={`${won.length}W / ${lost.length}L${nobid.length ? ` · ${nobid.length} no-bid` : ""}`} color={hitRate === null ? "#64748b" : hitRate >= 40 ? "#10b981" : hitRate >= 25 ? "#f59e0b" : "#ef4444"} />
+        <SC2 label="Hit Rate ($)" value={dollarRate === null ? "—" : dollarRate + "%"} sub={`${fmtMoney(wonDollars)} won`} color="#3b82f6" />
+        <SC2 label="$ Won" value={fmtMoney(wonDollars)} sub={won.length + " jobs"} color="#10b981" />
+        <SC2 label="$ Lost" value={fmtMoney(lostDollars)} sub={lost.length + " bids"} color="#ef4444" />
+      </div>
+
+      {(Object.keys(byType).length > 0 || topLoss.length > 0) && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
+          {Object.keys(byType).length > 0 && (
+            <div style={{ background: "#0F2444", border: "1px solid #1A3050", borderRadius: 10, padding: "14px 16px" }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase", marginBottom: 10 }}>Hit rate by system</div>
+              {Object.entries(byType).map(([t, v]) => {
+                const r = Math.round((v.won / (v.won + v.lost)) * 100);
+                return (
+                  <div key={t} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 7 }}>
+                    <span style={{ fontSize: 12, color: "#94a3b8", flex: 1 }}>{t}</span>
+                    <div style={{ flex: 1, height: 6, borderRadius: 3, background: "#1A3050", overflow: "hidden" }}><div style={{ width: r + "%", height: "100%", background: r >= 40 ? "#10b981" : r >= 25 ? "#f59e0b" : "#ef4444" }} /></div>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "#e2e8f0", width: 70, textAlign: "right" }}>{r}% ({v.won}/{v.won + v.lost})</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {topLoss.length > 0 && (
+            <div style={{ background: "#0F2444", border: "1px solid #1A3050", borderRadius: 10, padding: "14px 16px" }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase", marginBottom: 10 }}>Why we lose</div>
+              {topLoss.map(([r, c]) => (
+                <div key={r} style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 7 }}>
+                  <span style={{ color: "#94a3b8" }}>{r}</span><span style={{ color: "#ef4444", fontWeight: 700 }}>{c}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {closed.length === 0 && (
+        <div style={{ textAlign: "center", padding: "40px 20px", color: "#475569", fontSize: 13, background: "#0F2444", borderRadius: 12, border: "1px dashed #1A3050" }}>
+          <div style={{ fontSize: 26, marginBottom: 10 }}>📊</div>
+          <div style={{ fontWeight: 700, color: "#94a3b8", marginBottom: 4 }}>No closed bids yet</div>
+          <div>Award, Lost, and No-Bid outcomes land here — and your hit rate builds itself.</div>
+        </div>
+      )}
+
+      {closed.map(o => {
+        const cs = CLOSED_STAGES[o.stage];
+        return (
+          <div key={o.id} style={{ background: "#0F2444", border: "1px solid #1A3050", borderRadius: 10, padding: "12px 16px", marginBottom: 6, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 16 }}>{cs.icon}</span>
+            <div style={{ flex: 1, minWidth: 180 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: "#fff" }}>{o.name}</div>
+              <div style={{ fontSize: 11.5, color: "#64748b" }}>{o.customer}{o.closedAt ? ` · ${new Date(o.closedAt).toLocaleDateString()}` : ""}{o.outcome?.reason ? ` · ${o.outcome.reason}` : ""}{o.outcome?.competitor ? ` → ${o.outcome.competitor}` : ""}</div>
+              {o.outcome?.notes && <div style={{ fontSize: 11.5, color: "#94a3b8", marginTop: 3, fontStyle: "italic" }}>"{o.outcome.notes}"</div>}
+            </div>
+            {money(o.bidAmount) > 0 && <span style={{ fontSize: 13, fontWeight: 700, color: cs.color }}>{fmtMoney(money(o.bidAmount))}</span>}
+            <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 20, background: cs.color + "22", color: cs.color, fontWeight: 700 }}>{cs.name}</span>
+            {o.stage !== "won" && <button onClick={() => onReopen(o)} style={{ padding: "4px 10px", borderRadius: 7, border: "1px solid #1A3050", background: "transparent", color: "#94a3b8", fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>Reopen</button>}
+            <button onClick={() => onDelete(o)} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer" }}><X size={13} /></button>
+          </div>
+        );
+      })}
     </div>
   );
 }
