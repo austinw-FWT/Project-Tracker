@@ -56,7 +56,7 @@ export default function PriceBook({ catalog, assemblies, defaults, onSaveItem, o
           </button>
         ))}
       </div>
-      {tab === "catalog" && <CatalogTab items={items} onSave={onSaveItem} onDelete={onDeleteItem} isMobile={isMobile} />}
+      {tab === "catalog" && <CatalogTab items={items} onSave={onSaveItem} onDelete={onDeleteItem} isMobile={isMobile} defaults={defaults} />}
       {tab === "assemblies" && <AssembliesTab asms={asms} items={items} onSave={onSaveAssembly} onDelete={onDeleteAssembly} />}
       {tab === "defaults" && <DefaultsTab defaults={defaults} onSave={onSaveDefaults} />}
     </div>
@@ -64,7 +64,7 @@ export default function PriceBook({ catalog, assemblies, defaults, onSaveItem, o
 }
 
 /* ════════ CATALOG ════════ */
-function CatalogTab({ items, onSave, onDelete, isMobile }) {
+function CatalogTab({ items, onSave, onDelete, isMobile, defaults }) {
   const [q, setQ] = useState("");
   const [editing, setEditing] = useState(null); // item object being edited (or new)
   const fileRef = useRef(null);
@@ -78,45 +78,98 @@ function CatalogTab({ items, onSave, onDelete, isMobile }) {
     setEditing({ id: genId(), manf: "", partNum: "", desc: "", unit: "EA", costPU: 0, markupPct: 25, laborUnits: emptyLaborUnits() });
   }
 
-  /** CSV import — flexible header matching. Expected-ish columns:
-      manufacturer, part number, description, unit, cost, markup. Extra
-      columns ignored; labor units default to 0 (edit later). */
-  function importCsv(e) {
+  /** Import vendor price files — CSV or Excel (.xlsx / .xls).
+      Vendor exports are messy: logos, title rows, blank columns, headers
+      buried partway down. This scans the first 15 rows for the real header
+      row, maps columns by fuzzy name match, and ignores everything else.
+      Labor units default to 0 — fill them in as parts get used. */
+  const COL_DEFS = {
+    manf:   ["manufacturer", "manf", "mfr", "mfg", "brand", "vendor"],
+    part:   ["part number", "part #", "part#", "partnum", "part no", "model", "sku", "item number", "item #", "item#", "catalog", "cat no", "cat #", "product code", "part"],
+    desc:   ["description", "desc", "product name", "item description", "name", "title"],
+    unit:   ["unit", "uom", "u/m", "per"],
+    cost:   ["dealer cost", "dealer price", "your cost", "your price", "net price", "net cost", "unit cost", "cost", "dealer", "net", "wholesale", "price"],
+    markup: ["markup", "margin"],
+  };
+  function detectHeader(rows) {
+    for (let r = 0; r < Math.min(rows.length, 15); r++) {
+      const cells = (rows[r] || []).map(c => String(c ?? "").trim().toLowerCase());
+      const find = names => {
+        // exact-ish first, then contains
+        let idx = cells.findIndex(c => names.includes(c));
+        if (idx < 0) idx = cells.findIndex(c => c && names.some(nm => c.includes(nm)));
+        return idx;
+      };
+      const ci = { manf: find(COL_DEFS.manf), part: find(COL_DEFS.part), desc: find(COL_DEFS.desc), unit: find(COL_DEFS.unit), cost: find(COL_DEFS.cost), markup: find(COL_DEFS.markup) };
+      // a real header row has at least (part or desc) AND cost
+      if ((ci.part >= 0 || ci.desc >= 0) && ci.cost >= 0) return { headerRow: r, ci };
+      // tolerate price lists with no cost column (part + desc both present)
+      if (ci.part >= 0 && ci.desc >= 0 && ci.part !== ci.desc) return { headerRow: r, ci };
+    }
+    return null;
+  }
+  function rowsToItems(rows, ci, headerRow) {
+    const items = [];
+    for (let r = headerRow + 1; r < rows.length; r++) {
+      const c = rows[r] || [];
+      const cell = i => (i >= 0 && c[i] !== undefined && c[i] !== null) ? String(c[i]).trim() : "";
+      const partNum = cell(ci.part);
+      const desc = cell(ci.desc);
+      if (!partNum && !desc) continue;
+      const costRaw = cell(ci.cost).replace(/[$,\s]/g, "");
+      items.push({
+        id: genId(),
+        manf: cell(ci.manf),
+        partNum, desc,
+        unit: cell(ci.unit) || "EA",
+        costPU: ci.cost >= 0 ? n(costRaw) : 0,
+        markupPct: ci.markup >= 0 ? n(cell(ci.markup)) : (defaults?.defaultMarkupPct ?? 25),
+        laborUnits: emptyLaborUnits(),
+      });
+    }
+    return items;
+  }
+  async function importFile(e) {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const text = String(reader.result);
-        const rows = text.split(/\r?\n/).filter(r => r.trim());
-        const header = rows[0].split(",").map(h => h.trim().toLowerCase().replace(/['"]/g, ""));
-        const col = names => header.findIndex(h => names.some(nm => h.includes(nm)));
-        const ci = { manf: col(["manf", "manufacturer", "brand"]), part: col(["part", "model", "sku", "item #", "item#"]), desc: col(["desc", "description", "name"]), unit: col(["unit", "uom"]), cost: col(["cost", "price", "dealer"]) , markup: col(["markup", "margin"]) };
-        if (ci.part < 0 && ci.desc < 0) { setImportMsg("Couldn't find a part number or description column in that file."); return; }
-        // naive CSV split that respects simple quotes
-        const split = line => { const out = []; let cur = "", inQ = false; for (const ch of line) { if (ch === '"') inQ = !inQ; else if (ch === "," && !inQ) { out.push(cur); cur = ""; } else cur += ch; } out.push(cur); return out.map(c => c.trim()); };
-        let added = 0;
-        for (let r = 1; r < rows.length; r++) {
-          const c = split(rows[r]);
-          const partNum = ci.part >= 0 ? c[ci.part] : "";
-          const desc = ci.desc >= 0 ? c[ci.desc] : "";
-          if (!partNum && !desc) continue;
-          const item = {
-            id: genId(),
-            manf: ci.manf >= 0 ? c[ci.manf] || "" : "",
-            partNum, desc,
-            unit: (ci.unit >= 0 && c[ci.unit]) || "EA",
-            costPU: ci.cost >= 0 ? n(c[ci.cost].replace(/[$,]/g, "")) : 0,
-            markupPct: ci.markup >= 0 ? n(c[ci.markup]) : 25,
-            laborUnits: emptyLaborUnits(),
-          };
-          onSave(item); added++;
+    setImportMsg("Reading file…");
+    try {
+      let rows = [];
+      let sheetNote = "";
+      if (/\.(xlsx|xls|xlsm)$/i.test(file.name)) {
+        const XLSX = await import("xlsx");                       // lazy-loaded; doesn't weigh down app start
+        const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+        // find the first sheet whose contents look like a price list
+        let best = null;
+        for (const name of wb.SheetNames) {
+          const sheetRows = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: false, defval: "" });
+          const det = detectHeader(sheetRows);
+          if (det) { best = { rows: sheetRows, det, name }; break; }
         }
-        setImportMsg(`✓ Imported ${added} items. Labor units default to 0 — fill them in as you go.`);
-      } catch { setImportMsg("Import failed — is that a CSV file?"); }
-      e.target.value = "";
-    };
-    reader.readAsText(file);
+        if (!best) { setImportMsg(`Couldn't find a header row (part #/description/cost) in any sheet of ${file.name}. Check the file has a normal column header row.`); e.target.value = ""; return; }
+        rows = best.rows;
+        var det = best.det;
+        if (wb.SheetNames.length > 1) sheetNote = ` from sheet "${best.name}"`;
+      } else {
+        const text = await file.text();
+        const lines = text.split(/\r?\n/).filter(r => r.trim());
+        const split = line => { const out = []; let cur = "", inQ = false; for (const ch of line) { if (ch === '"') inQ = !inQ; else if (ch === "," && !inQ) { out.push(cur); cur = ""; } else cur += ch; } out.push(cur); return out.map(c => c.trim()); };
+        rows = lines.map(split);
+        var det = detectHeader(rows);
+        if (!det) { setImportMsg("Couldn't find a header row (part #/description/cost) in that CSV."); e.target.value = ""; return; }
+      }
+      const newItems = rowsToItems(rows, det.ci, det.headerRow);
+      if (!newItems.length) { setImportMsg("Found the header but no data rows under it."); e.target.value = ""; return; }
+      // de-dupe against existing catalog by manf+part#: update cost, keep labor units
+      let added = 0, updated = 0;
+      newItems.forEach(item => {
+        const existing = items.find(c => c.partNum && item.partNum && c.partNum.toLowerCase() === item.partNum.toLowerCase() && (c.manf || "").toLowerCase() === (item.manf || "").toLowerCase());
+        if (existing) { onSave({ ...existing, costPU: item.costPU || existing.costPU, unit: item.unit || existing.unit, desc: item.desc || existing.desc }); updated++; }
+        else { onSave(item); added++; }
+      });
+      setImportMsg(`✓ Imported ${added} new part${added !== 1 ? "s" : ""}${updated ? `, updated cost on ${updated} existing` : ""}${sheetNote}. Labor units on new parts default to 0 — fill them in as you go.`);
+    } catch (err) { setImportMsg("Import failed: " + (err?.message || "unrecognized file format")); }
+    e.target.value = "";
   }
 
   return (
@@ -126,8 +179,8 @@ function CatalogTab({ items, onSave, onDelete, isMobile }) {
           <Search size={13} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#475569" }} />
           <input style={{ ...iS, paddingLeft: 30 }} value={q} onChange={e => setQ(e.target.value)} placeholder="Search manufacturer, part #, description…" />
         </div>
-        <input ref={fileRef} type="file" accept=".csv,text/csv" style={{ display: "none" }} onChange={importCsv} />
-        <button onClick={() => fileRef.current?.click()} style={{ ...btnG, background: "#1A3050", color: "#94a3b8" }}><Upload size={13} /> Import CSV</button>
+        <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls,.xlsm,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" style={{ display: "none" }} onChange={importFile} />
+        <button onClick={() => fileRef.current?.click()} style={{ ...btnG, background: "#1A3050", color: "#94a3b8" }}><Upload size={13} /> Import CSV / Excel</button>
         <button onClick={newItem} style={btnG}><Plus size={14} /> Add Part</button>
       </div>
       {importMsg && <div style={{ fontSize: 12, color: importMsg.startsWith("✓") ? "#69BE28" : "#f59e0b", marginBottom: 10 }}>{importMsg}</div>}
