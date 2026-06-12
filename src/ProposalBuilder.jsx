@@ -53,7 +53,7 @@ function downloadBOMCsv(takeoffData, label) {
   const [catQ, setCatQ] = useState("");
   const [asmId, setAsmId] = useState("");
   const [asmQty, setAsmQty] = useState(1);
-  const catMatches = catQ.trim() ? catalogItems.filter(i => `${i.manf} ${i.partNum} ${i.desc}`.toLowerCase().includes(catQ.toLowerCase())).slice(0, 8) : [];
+  const catMatches = catQ.trim() ? catalogItems.filter(i => `${i.manf} ${i.partNum} ${i.desc} ${i.category || ""}`.toLowerCase().includes(catQ.toLowerCase())).slice(0, 8) : [];
 
   function rowFromCatalog(cat, qty) {
     return { id: genId(), manf: cat.manf || "", partNum: cat.partNum || "", desc: cat.desc || "", qty: qty || 1, unit: cat.unit || "EA",
@@ -453,7 +453,7 @@ export function TakeoffBuilder({ takeoff, onSave, scopeTitle, catalog, assemblie
   const [catQ, setCatQ] = useState("");
   const [asmId, setAsmId] = useState("");
   const [asmQty, setAsmQty] = useState(1);
-  const catMatches = catQ.trim() ? catalogItems.filter(i => `${i.manf} ${i.partNum} ${i.desc}`.toLowerCase().includes(catQ.toLowerCase())).slice(0, 8) : [];
+  const catMatches = catQ.trim() ? catalogItems.filter(i => `${i.manf} ${i.partNum} ${i.desc} ${i.category || ""}`.toLowerCase().includes(catQ.toLowerCase())).slice(0, 8) : [];
 
   function rowFromCatalog(cat, qty) {
     return { id: genId(), manf: cat.manf || "", partNum: cat.partNum || "", desc: cat.desc || "", qty: qty || 1, unit: cat.unit || "EA",
@@ -534,6 +534,7 @@ export function TakeoffBuilder({ takeoff, onSave, scopeTitle, catalog, assemblie
                 <button key={m.id} onClick={() => insertCatalogItem(m)} style={{ display: "flex", gap: 8, width: "100%", textAlign: "left", padding: "9px 12px", background: "none", border: "none", borderBottom: "1px solid #1A3050", color: "#e2e8f0", fontSize: 12.5, cursor: "pointer", fontFamily: "inherit", alignItems: "baseline" }}>
                   <strong style={{ color: "#69BE28" }}>{m.partNum}</strong>
                   <span style={{ flex: 1, color: "#94a3b8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.manf} — {m.desc}</span>
+                  {m.category && <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 10, background: "#69BE2818", color: "#69BE28", fontWeight: 700, whiteSpace: "nowrap" }}>{m.category}</span>}
                   <span style={{ color: "#10b981", fontWeight: 600 }}>${(n(m.costPU) * (1 + n(m.markupPct) / 100)).toFixed(2)}</span>
                 </button>
               ))}

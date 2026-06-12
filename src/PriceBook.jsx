@@ -20,6 +20,15 @@ import { genId } from "./App.jsx";
  * takeoff row has a "save to catalog" action.
  */
 
+export const STARTER_CATEGORIES = [
+  "IP Dome Cameras", "IP Bullet Cameras", "PTZ Cameras", "Camera Mounts & Accessories",
+  "NVRs & Servers", "Access Control Panels", "Card Readers", "Credentials",
+  "Door Hardware & Locks", "Power Supplies", "Intrusion Panels", "Intrusion Sensors",
+  "Keypads", "Network Switches", "Network & Wireless", "Racks & Enclosures",
+  "Cable — Category", "Cable — Fiber", "Cable — Misc LV", "Connectors & Jacks",
+  "Faceplates & Boxes", "Conduit & Pathway", "Audio / Intercom", "Tools & Consumables", "Misc",
+];
+
 export const LABOR_UNIT_PHASES = [
   { key: "lr", label: "Rough In" },
   { key: "lt", label: "Trim" },
@@ -28,6 +37,14 @@ export const LABOR_UNIT_PHASES = [
 ];
 
 export function emptyLaborUnits() { return { lr: 0, lt: 0, lh: 0, lp: 0 }; }
+
+export const SUGGESTED_CATEGORIES = [
+  "IP Dome Cameras", "IP Bullet Cameras", "IP PTZ Cameras", "Camera Mounts & Accessories", "NVRs & Storage",
+  "Access Control Boards", "Card Readers", "Credentials", "Door Hardware & Strikes", "REX & Door Position",
+  "Intrusion Panels", "Keypads", "Motion & Glassbreak Sensors", "Door/Window Contacts",
+  "Cable - Category", "Cable - Fiber", "Cable - Composite/Other", "Connectors & Jacks", "Patch Panels & Racks",
+  "Network Switches", "Power Supplies & Batteries", "Enclosures", "Intercom & Entry", "Misc Hardware",
+];
 const n = v => parseFloat(v) || 0;
 
 const iS = { width: "100%", padding: "7px 10px", borderRadius: 7, border: "1px solid #1A3050", background: "#0A192F", color: "#e2e8f0", fontSize: 12.5, fontFamily: "'DM Sans',sans-serif", outline: "none", boxSizing: "border-box" };
@@ -66,16 +83,29 @@ export default function PriceBook({ catalog, assemblies, defaults, onSaveItem, o
 /* ════════ CATALOG ════════ */
 function CatalogTab({ items, onSave, onDelete, isMobile, defaults }) {
   const [q, setQ] = useState("");
+  const [catFilter, setCatFilter] = useState("all");
+  const [bulkCat, setBulkCat] = useState("");
   const [editing, setEditing] = useState(null); // item object being edited (or new)
   const fileRef = useRef(null);
   const [importMsg, setImportMsg] = useState("");
 
-  const filtered = q.trim()
-    ? items.filter(i => `${i.manf} ${i.partNum} ${i.desc}`.toLowerCase().includes(q.toLowerCase()))
+  const presentCats = [...new Set(items.map(i => i.category).filter(Boolean))].sort();
+  const allCats = [...new Set([...presentCats, ...STARTER_CATEGORIES])];
+  const uncatCount = items.filter(i => !i.category).length;
+  let filtered = q.trim()
+    ? items.filter(i => `${i.manf} ${i.partNum} ${i.desc} ${i.category || ""}`.toLowerCase().includes(q.toLowerCase()))
     : items;
+  if (catFilter === "uncat") filtered = filtered.filter(i => !i.category);
+  else if (catFilter !== "all") filtered = filtered.filter(i => i.category === catFilter);
+  function bulkAssign() {
+    if (!bulkCat || !filtered.length) return;
+    if (!confirm(`Set category "${bulkCat}" on all ${filtered.length} parts currently shown?`)) return;
+    filtered.forEach(i => onSave({ ...i, category: bulkCat }));
+    setBulkCat("");
+  }
 
   function newItem() {
-    setEditing({ id: genId(), manf: "", partNum: "", desc: "", unit: "EA", costPU: 0, markupPct: 25, laborUnits: emptyLaborUnits() });
+    setEditing({ id: genId(), manf: "", partNum: "", desc: "", unit: "EA", costPU: 0, markupPct: defaults?.defaultMarkupPct ?? 25, category: "", laborUnits: emptyLaborUnits() });
   }
 
   /** Import vendor price files — CSV or Excel (.xlsx / .xls).
@@ -97,6 +127,7 @@ function CatalogTab({ items, onSave, onDelete, isMobile, defaults }) {
     unit:   ["unit of measure", "uom", "u/m", "unit", "per", "ea/ft"],
     cost:   ["dealer cost", "dealer price", "dealer net", "your cost", "your price", "net price", "net cost", "unit cost", "cost ea", "cost each", "dlr cost", "dlr price", "dlr", "wholesale", "dealer", "net", "cost", "unit price", "price ea", "price each", "sell price", "price"],
     markup: ["markup %", "markup", "margin %", "margin"],
+    category: ["category", "product type", "product family", "family", "product line", "group", "subcategory", "class", "type"],
   };
   const AVOID_COST = ["msrp", "list price", "retail", "srp", "map", "list"];
   const normCell = c => String(c ?? "").toLowerCase().replace(/[\r\n]+/g, " ").replace(/[^a-z0-9#/% ]/g, " ").replace(/\s+/g, " ").trim();
@@ -104,7 +135,7 @@ function CatalogTab({ items, onSave, onDelete, isMobile, defaults }) {
 
   function matchColumns(rawCells) {
     const cells = rawCells.map(normCell);
-    const ci = { manf: -1, part: -1, desc: -1, unit: -1, cost: -1, markup: -1 };
+    const ci = { manf: -1, part: -1, desc: -1, unit: -1, cost: -1, markup: -1, category: -1 };
     const taken = new Set();
     const findFor = (key, avoid) => {
       for (const syn of COL_DEFS[key]) {
@@ -125,6 +156,7 @@ function CatalogTab({ items, onSave, onDelete, isMobile, defaults }) {
     ci.manf = findFor("manf"); if (ci.manf >= 0) taken.add(ci.manf);
     ci.unit = findFor("unit"); if (ci.unit >= 0) taken.add(ci.unit);
     ci.markup = findFor("markup");
+    ci.category = findFor("category");
     return ci;
   }
   function detectHeader(rows) {
@@ -139,7 +171,7 @@ function CatalogTab({ items, onSave, onDelete, isMobile, defaults }) {
     }
     return best;
   }
-  function rowsToItems(rows, ci, headerRow) {
+  function rowsToItems(rows, ci, headerRow, fallbackCategory) {
     const items = [];
     for (let r = headerRow + 1; r < rows.length; r++) {
       const c = rows[r] || [];
@@ -155,6 +187,7 @@ function CatalogTab({ items, onSave, onDelete, isMobile, defaults }) {
         unit: cell(ci.unit) || "EA",
         costPU: ci.cost >= 0 ? n(costRaw) : 0,
         markupPct: ci.markup >= 0 ? n(cell(ci.markup)) : (defaults?.defaultMarkupPct ?? 25),
+        category: cell(ci.category) || fallbackCategory || "",
         laborUnits: emptyLaborUnits(),
       });
     }
@@ -174,7 +207,7 @@ function CatalogTab({ items, onSave, onDelete, isMobile, defaults }) {
         for (const name of wb.SheetNames) {
           const sheetRows = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: false, defval: "" });
           const det = detectHeader(sheetRows);
-          if (det) sheetResults.push({ name, items: rowsToItems(sheetRows, det.ci, det.headerRow) });
+          if (det) { const generic = /^(sheet ?\d*|pricing|price list|prices|data)$/i.test(name.trim()); sheetResults.push({ name, items: rowsToItems(sheetRows, det.ci, det.headerRow, generic ? "" : name.trim()) }); }
         }
         if (!sheetResults.length) { setImportMsg(`Couldn't find a header row (part #/description/cost) in any of the ${wb.SheetNames.length} sheet(s) of ${file.name}. Send me a screenshot of the first few rows and I'll add that vendor's format.`); e.target.value = ""; return; }
         var allItems = sheetResults.flatMap(r => r.items);
@@ -188,7 +221,7 @@ function CatalogTab({ items, onSave, onDelete, isMobile, defaults }) {
         const rows = lines.map(split);
         const det = detectHeader(rows);
         if (!det) { setImportMsg("Couldn't find a header row (part #/description/cost) in that CSV."); e.target.value = ""; return; }
-        var allItems = rowsToItems(rows, det.ci, det.headerRow);
+        var allItems = rowsToItems(rows, det.ci, det.headerRow, "");
         var sheetNote = "";
       }
       const newItems = allItems;
@@ -197,7 +230,7 @@ function CatalogTab({ items, onSave, onDelete, isMobile, defaults }) {
       let added = 0, updated = 0;
       newItems.forEach(item => {
         const existing = items.find(c => c.partNum && item.partNum && c.partNum.toLowerCase() === item.partNum.toLowerCase() && (c.manf || "").toLowerCase() === (item.manf || "").toLowerCase());
-        if (existing) { onSave({ ...existing, costPU: item.costPU || existing.costPU, unit: item.unit || existing.unit, desc: item.desc || existing.desc }); updated++; }
+        if (existing) { onSave({ ...existing, costPU: item.costPU || existing.costPU, unit: item.unit || existing.unit, desc: item.desc || existing.desc, category: existing.category || item.category || "" }); updated++; }
         else { onSave(item); added++; }
       });
       setImportMsg(`✓ Imported ${added} new part${added !== 1 ? "s" : ""}${updated ? `, updated cost on ${updated} existing` : ""}${sheetNote}. Labor units on new parts default to 0 — fill them in as you go.`);
@@ -212,11 +245,35 @@ function CatalogTab({ items, onSave, onDelete, isMobile, defaults }) {
           <Search size={13} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#475569" }} />
           <input style={{ ...iS, paddingLeft: 30 }} value={q} onChange={e => setQ(e.target.value)} placeholder="Search manufacturer, part #, description…" />
         </div>
+        <select value={catFilter} onChange={e => setCatFilter(e.target.value)} style={{ ...iS, width: "auto", minWidth: 160, padding: "8px 10px" }}>
+          <option value="all">All categories ({items.length})</option>
+          {categories.map(c => <option key={c} value={c}>{c} ({items.filter(i => i.category === c).length})</option>)}
+          {uncategorized > 0 && <option value="__none">Uncategorized ({uncategorized})</option>}
+        </select>
         <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls,.xlsm,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" style={{ display: "none" }} onChange={importFile} />
         <button onClick={() => fileRef.current?.click()} style={{ ...btnG, background: "#1A3050", color: "#94a3b8" }}><Upload size={13} /> Import CSV / Excel</button>
         <button onClick={newItem} style={btnG}><Plus size={14} /> Add Part</button>
       </div>
       {importMsg && <div style={{ fontSize: 12, color: importMsg.startsWith("✓") ? "#69BE28" : "#f59e0b", marginBottom: 10 }}>{importMsg}</div>}
+      {items.length > 0 && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+          <select style={{ ...iS, width: "auto", minWidth: 200 }} value={catFilter} onChange={e => setCatFilter(e.target.value)}>
+            <option value="all">All categories ({items.length})</option>
+            {uncatCount > 0 && <option value="uncat">⚠ Uncategorized ({uncatCount})</option>}
+            {presentCats.map(c => <option key={c} value={c}>{c} ({items.filter(i => i.category === c).length})</option>)}
+          </select>
+          {(q.trim() || catFilter !== "all") && filtered.length > 0 && (
+            <div style={{ display: "flex", gap: 6, alignItems: "center", marginLeft: "auto" }}>
+              <span style={{ fontSize: 11.5, color: "#64748b" }}>Set category on {filtered.length} shown:</span>
+              <select style={{ ...iS, width: "auto", minWidth: 160 }} value={bulkCat} onChange={e => setBulkCat(e.target.value)}>
+                <option value="">choose…</option>
+                {allCats.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <button onClick={bulkAssign} disabled={!bulkCat} style={{ padding: "7px 14px", borderRadius: 7, border: "none", background: bulkCat ? "#8b5cf6" : "#1A3050", color: bulkCat ? "#fff" : "#475569", fontSize: 12, fontWeight: 700, cursor: bulkCat ? "pointer" : "default", fontFamily: "inherit" }}>Apply</button>
+            </div>
+          )}
+        </div>
+      )}
 
       {items.length === 0 && (
         <div style={{ textAlign: "center", padding: "40px 20px", color: "#475569", fontSize: 13, background: "#0F2444", borderRadius: 12, border: "1px dashed #1A3050" }}>
@@ -232,7 +289,13 @@ function CatalogTab({ items, onSave, onDelete, isMobile, defaults }) {
           {["Manf", "Part #", "Description", "Unit", "Cost/U", "Mk%", "Price/U", ...LABOR_UNIT_PHASES.map(p => p.label.split(" ")[0]), ""].map((h, i) => <div key={i} style={{ fontSize: 10, fontWeight: 700, color: "#475569", textTransform: "uppercase" }}>{h}</div>)}
         </div>
       )}
-      {filtered.slice(0, 200).map(item => (
+      {groups.map(g => (<div key={g.name || "_flat"}>
+      {g.name && <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "16px 0 6px" }}>
+        <span style={{ fontSize: 12, fontWeight: 800, color: "#69BE28", textTransform: "uppercase", letterSpacing: "0.05em" }}>{g.name}</span>
+        <span style={{ fontSize: 11, color: "#475569" }}>{g.rows.length}</span>
+        <div style={{ flex: 1, height: 1, background: "#1A3050" }} />
+      </div>}
+      {g.rows.slice(0, 200).map(item => (
         <div key={item.id} style={isMobile
           ? { background: "#0F2444", border: "1px solid #1A3050", borderRadius: 10, padding: "10px 12px", marginBottom: 6 }
           : { display: "grid", gridTemplateColumns: "90px 110px 1fr 44px 70px 50px 70px repeat(4, 52px) 56px", gap: 5, alignItems: "center", padding: "6px 0", borderBottom: "1px solid #13294d" }}>
@@ -243,7 +306,8 @@ function CatalogTab({ items, onSave, onDelete, isMobile, defaults }) {
                 <span style={{ fontSize: 12.5, color: "#fff", fontWeight: 700, flex: 1 }}>{item.partNum}</span>
                 <span style={{ fontSize: 12.5, color: "#10b981", fontWeight: 700 }}>${(n(item.costPU) * (1 + n(item.markupPct) / 100)).toFixed(2)}</span>
               </div>
-              <div style={{ fontSize: 12, color: "#94a3b8", margin: "2px 0 6px" }}>{item.desc}</div>
+              <div style={{ fontSize: 12, color: "#94a3b8", margin: "2px 0 2px" }}>{item.desc}</div>
+              {item.category && <div style={{ fontSize: 10.5, color: "#8b5cf6", fontWeight: 700, marginBottom: 6 }}>{item.category}</div>}
               <div style={{ display: "flex", gap: 8 }}>
                 <button onClick={() => setEditing({ ...item, laborUnits: { ...emptyLaborUnits(), ...(item.laborUnits || {}) } })} style={{ ...btnG, padding: "6px 12px", fontSize: 12, background: "#1A3050", color: "#94a3b8" }}>Edit</button>
               </div>
@@ -252,7 +316,7 @@ function CatalogTab({ items, onSave, onDelete, isMobile, defaults }) {
             <>
               <div style={{ fontSize: 12, color: "#94a3b8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.manf}</div>
               <div style={{ fontSize: 12, color: "#fff", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.partNum}</div>
-              <div style={{ fontSize: 12, color: "#94a3b8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.desc}</div>
+              <div style={{ overflow: "hidden" }}><div style={{ fontSize: 12, color: "#94a3b8", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.desc}</div>{item.category && <div style={{ fontSize: 10, color: "#8b5cf6", fontWeight: 700 }}>{item.category}</div>}</div>
               <div style={{ fontSize: 11.5, color: "#64748b" }}>{item.unit || "EA"}</div>
               <div style={{ fontSize: 12, color: "#e2e8f0", textAlign: "right" }}>${n(item.costPU).toFixed(2)}</div>
               <div style={{ fontSize: 12, color: "#f59e0b", textAlign: "right" }}>{n(item.markupPct)}%</div>
@@ -266,7 +330,8 @@ function CatalogTab({ items, onSave, onDelete, isMobile, defaults }) {
           )}
         </div>
       ))}
-      {filtered.length > 200 && <div style={{ fontSize: 12, color: "#64748b", padding: 10 }}>Showing first 200 — narrow the search.</div>}
+      </div>))}
+      {filtered.length > 200 && <div style={{ fontSize: 12, color: "#64748b", padding: 10 }}>Showing first 200 per group — narrow the search.</div>}
 
       {editing && <ItemEditor item={editing} onClose={() => setEditing(null)} onSave={it => { onSave(it); setEditing(null); }} />}
     </div>
@@ -283,7 +348,11 @@ function ItemEditor({ item, onSave, onClose }) {
           <div><label style={lS}>Manufacturer</label><input style={iS} value={f.manf} onChange={e => setF({ ...f, manf: e.target.value })} placeholder="Axis" /></div>
           <div><label style={lS}>Part Number</label><input style={iS} value={f.partNum} onChange={e => setF({ ...f, partNum: e.target.value })} placeholder="P3265-LV" /></div>
         </div>
-        <div style={{ marginBottom: 12 }}><label style={lS}>Description</label><input style={iS} value={f.desc} onChange={e => setF({ ...f, desc: e.target.value })} placeholder="2MP Indoor Dome, IR, vandal" /></div>
+        <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 12, marginBottom: 12 }}>
+          <div><label style={lS}>Description</label><input style={iS} value={f.desc} onChange={e => setF({ ...f, desc: e.target.value })} placeholder="2MP Indoor Dome, IR, vandal" /></div>
+          <div><label style={lS}>Category</label><input list="pb-cats" style={iS} value={f.category || ""} onChange={e => setF({ ...f, category: e.target.value })} placeholder="IP Dome Cameras" />
+            <datalist id="pb-cats">{STARTER_CATEGORIES.map(c => <option key={c} value={c} />)}</datalist></div>
+        </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 14 }}>
           <div><label style={lS}>Unit</label><input style={iS} value={f.unit} onChange={e => setF({ ...f, unit: e.target.value })} /></div>
           <div><label style={lS}>Cost / Unit</label><input type="number" step="0.01" style={nS} value={f.costPU || ""} onChange={e => setF({ ...f, costPU: n(e.target.value) })} /></div>
