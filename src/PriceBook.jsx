@@ -139,6 +139,28 @@ function CatalogTab({ items, onSave, onDelete, isMobile, defaults }) {
     }
     return best;
   }
+  function rowsToItems(rows, ci, headerRow) {
+    const items = [];
+    for (let r = headerRow + 1; r < rows.length; r++) {
+      const c = rows[r] || [];
+      const cell = i => (i >= 0 && c[i] !== undefined && c[i] !== null) ? String(c[i]).trim() : "";
+      const partNum = cell(ci.part);
+      const desc = cell(ci.desc);
+      if (!partNum && !desc) continue;
+      const costRaw = cell(ci.cost).replace(/[$,\s]/g, "");
+      items.push({
+        id: genId(),
+        manf: cell(ci.manf),
+        partNum, desc,
+        unit: cell(ci.unit) || "EA",
+        costPU: ci.cost >= 0 ? n(costRaw) : 0,
+        markupPct: ci.markup >= 0 ? n(cell(ci.markup)) : (defaults?.defaultMarkupPct ?? 25),
+        laborUnits: emptyLaborUnits(),
+      });
+    }
+    return items;
+  }
+
   async function importFile(e) {
     const file = e.target.files?.[0];
     if (!file) return;
