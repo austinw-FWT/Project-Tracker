@@ -603,10 +603,15 @@ function TasksTab({ project, onUpdate, teamRoster, assignTaskToMember }) {
 /* ── DAILY LOG ── */
 function DailyLogTab({ project, onUpdate }) {
   const logs = project.dailyLogs || [];
+  const [showRecap, setShowRecap] = useState(false);
   return (<div>
-    <div style={{ padding: "12px 14px", background: "#0A192F66", borderRadius: 10, border: "1px solid #1A3050", marginBottom: 16 }}>
-      <div style={{ fontSize: 13, color: "#94a3b8" }}>Daily logs are now submitted from <strong style={{ color: "#82CC4A" }}>My Space → Daily Log</strong>. Entries that include this project will appear here automatically.</div>
+    <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 16, flexWrap: "wrap" }}>
+      <div style={{ flex: 1, minWidth: 240, padding: "12px 14px", background: "#0A192F66", borderRadius: 10, border: "1px solid #1A3050" }}>
+        <div style={{ fontSize: 13, color: "#94a3b8" }}>Daily logs are submitted from <strong style={{ color: "#82CC4A" }}>Field Mode</strong> or <strong style={{ color: "#82CC4A" }}>My Space → Daily Log</strong>.</div>
+      </div>
+      <button onClick={() => setShowRecap(true)} disabled={logs.length === 0} style={{ display: "flex", alignItems: "center", gap: 7, padding: "12px 18px", borderRadius: 10, border: "none", background: logs.length ? "#69BE28" : "#1A3050", color: logs.length ? "#fff" : "#475569", fontSize: 13.5, fontWeight: 700, cursor: logs.length ? "pointer" : "default", fontFamily: "inherit" }}>📄 Customer Recap</button>
     </div>
+    {showRecap && <RecapModal project={project} onClose={() => setShowRecap(false)} />}
     {logs.map((l, i) => (<div key={l.id || i} style={{ padding: "12px 14px", background: "#0A192F", borderRadius: 10, border: "1px solid #1A3050", marginBottom: 6 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}><span style={{ fontSize: 12, fontWeight: 600, color: "#fff" }}>{l.date}</span>{l.member && <span style={{ fontSize: 11, color: "#64748b" }}>· {l.member}</span>}{l.hours > 0 && <span style={{ fontSize: 11, color: "#f59e0b", fontWeight: 600 }}>{l.hours}h</span>}<button onClick={() => onUpdate({ dailyLogs: logs.filter((_, idx) => idx !== i) })} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer", marginLeft: "auto" }}><X size={12} /></button></div>
       <div style={{ fontSize: 13, color: "#e2e8f0", whiteSpace: "pre-wrap" }}>{l.activities}</div>
@@ -923,3 +928,116 @@ function NotesTab({ project, onUpdate }) {
   </div>);
 }
 
+
+
+/* ════════ CUSTOMER RECAP GENERATOR ════════ */
+function RecapModal({ project, onClose }) {
+  const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 6);
+  const [from, setFrom] = useState(iso(weekAgo));
+  const [to, setTo] = useState(iso(new Date()));
+  const [intro, setIntro] = useState(`Work continues to progress on schedule at ${project.name}. Below is a summary of activities completed this week, along with photos from the field.`);
+  const [withPhotos, setWithPhotos] = useState(true);
+  const [withCrew, setWithCrew] = useState(true);
+
+  const inRange = (project.dailyLogs || [])
+    .filter(l => l.date >= from && l.date <= to)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  // merge multiple logs on the same date into one day section
+  const days = [];
+  inRange.forEach(l => {
+    let d = days.find(x => x.date === l.date);
+    if (!d) { d = { date: l.date, activities: [], crew: new Set(), photos: [] }; days.push(d); }
+    // Strip the internal "Crew: Dennis: 8h [Trim Out]..." suffix — hours are not customer-facing
+    const clean = (l.activities || "").split("\n").filter(line => !/^\s*crew:/i.test(line)).join("\n").trim();
+    if (clean) d.activities.push(clean);
+    (l.crewBreakdown || []).forEach(c => d.crew.add(c.name.split(" ")[0]));
+    if (l.photos) d.photos.push(...l.photos);
+  });
+  const totalPhotos = days.reduce((s, d) => s + d.photos.length, 0);
+
+  function fmtDate(ds) { return new Date(ds + "T12:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }); }
+  function esc(t) { return String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+
+  function buildHtml() {
+    const G = "#4BA53C", N = "#0F1E3C";
+    const range = `${new Date(from + "T12:00:00").toLocaleDateString(undefined, { month: "long", day: "numeric" })} – ${new Date(to + "T12:00:00").toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })}`;
+    const daysHtml = days.map(d => `
+      <div style="margin-bottom:28px;">
+        <div style="display:flex;align-items:baseline;gap:10px;border-bottom:2px solid ${G};padding-bottom:6px;margin-bottom:10px;">
+          <span style="font-size:16px;font-weight:700;color:${N};">${fmtDate(d.date)}</span>
+          ${withCrew && d.crew.size ? `<span style="font-size:12px;color:#6b7a90;">Crew on site: ${[...d.crew].join(", ")}</span>` : ""}
+        </div>
+        <div style="font-size:14px;line-height:1.7;color:#2a3442;white-space:pre-wrap;">${esc(d.activities.join("\n\n"))}</div>
+        ${withPhotos && d.photos.length ? `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">${d.photos.map(u => `<a href="${u}" target="_blank"><img src="${u}" style="width:170px;height:128px;object-fit:cover;border-radius:8px;border:1px solid #d8dee8;" /></a>`).join("")}</div>` : ""}
+      </div>`).join("");
+
+    return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${esc(project.name)} — Progress Update</title></head>
+<body style="margin:0;background:#eef1f5;font-family:'Segoe UI',Arial,sans-serif;">
+<div style="max-width:760px;margin:0 auto;background:#ffffff;">
+  <div style="background:${N};padding:26px 34px;">
+    <table style="width:100%;border-collapse:collapse;"><tr>
+      <td><div style="display:inline-block;background:${G};color:#fff;font-weight:800;font-size:15px;padding:9px 13px;border-radius:8px;letter-spacing:0.5px;">FWT</div>
+          <span style="color:#fff;font-size:15px;font-weight:700;margin-left:12px;">Far West Technologies</span></td>
+      <td style="text-align:right;color:#9fb1cc;font-size:12px;">Weekly Progress Update<br>${range}</td>
+    </tr></table>
+  </div>
+  <div style="padding:30px 34px 12px;">
+    <div style="font-size:22px;font-weight:800;color:${N};">${project.jobNumber ? `<span style="color:${G};">#${esc(project.jobNumber)}</span> ` : ""}${esc(project.name)}</div>
+    <div style="font-size:13px;color:#6b7a90;margin-top:3px;">Prepared for ${esc(project.customer || "our customer")}${project.siteAddress ? ` · ${esc(project.siteAddress)}` : ""}</div>
+    <div style="display:flex;gap:24px;margin:18px 0 6px;padding:14px 18px;background:#f3f7f0;border-left:4px solid ${G};border-radius:0 8px 8px 0;">
+      <div><div style="font-size:20px;font-weight:800;color:${N};">${days.length}</div><div style="font-size:11px;color:#6b7a90;text-transform:uppercase;">Days on site</div></div>
+      ${withPhotos ? `<div><div style="font-size:20px;font-weight:800;color:${N};">${totalPhotos}</div><div style="font-size:11px;color:#6b7a90;text-transform:uppercase;">Field photos</div></div>` : ""}
+    </div>
+    <div style="font-size:14px;line-height:1.7;color:#2a3442;margin:14px 0 26px;">${esc(intro)}</div>
+    ${daysHtml}
+  </div>
+  <div style="background:${N};padding:18px 34px;margin-top:10px;">
+    <div style="color:#9fb1cc;font-size:12px;">Questions about this update? Contact your FWT project manager any time.<br>
+    <span style="color:#fff;font-weight:600;">Far West Technologies</span> · Low Voltage Security &amp; Structured Cabling</div>
+  </div>
+</div></body></html>`;
+  }
+
+  function preview() { const w = window.open("", "_blank"); if (w) { w.document.write(buildHtml()); w.document.close(); } }
+  function download() {
+    const blob = new Blob([buildHtml()], { type: "text/html" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${project.jobNumber ? project.jobNumber + "_" : ""}${(project.name || "project").replace(/[^a-z0-9]+/gi, "-")}_recap_${to}.html`;
+    a.click(); URL.revokeObjectURL(a.href);
+  }
+
+  const iS2 = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1A3050", background: "#0A192F", color: "#e2e8f0", fontSize: 13, fontFamily: "inherit", outline: "none", boxSizing: "border-box" };
+  const lS2 = { fontSize: 11, fontWeight: 600, color: "#64748b", marginBottom: 4, display: "block", textTransform: "uppercase" };
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#0F2444", borderRadius: 14, border: "1px solid #1A3050", padding: 22, width: "100%", maxWidth: 560, maxHeight: "88vh", overflowY: "auto" }}>
+        <div style={{ fontSize: 16, fontWeight: 800, color: "#fff", fontFamily: "'Outfit',sans-serif", marginBottom: 4 }}>📄 Customer Progress Recap</div>
+        <div style={{ fontSize: 12.5, color: "#94a3b8", marginBottom: 16 }}>Builds an FWT-branded update from the field logs — no internal hours or costs included.</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+          <div><label style={lS2}>From</label><input type="date" style={iS2} value={from} onChange={e => setFrom(e.target.value)} /></div>
+          <div><label style={lS2}>Through</label><input type="date" style={iS2} value={to} onChange={e => setTo(e.target.value)} /></div>
+        </div>
+        <div style={{ marginBottom: 12 }}>
+          <label style={lS2}>Intro paragraph — edit to fit the week</label>
+          <textarea style={{ ...iS2, minHeight: 76, resize: "vertical" }} value={intro} onChange={e => setIntro(e.target.value)} />
+        </div>
+        <div style={{ display: "flex", gap: 18, marginBottom: 14 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13, color: "#e2e8f0", cursor: "pointer" }}><input type="checkbox" checked={withPhotos} onChange={e => setWithPhotos(e.target.checked)} /> Include photos</label>
+          <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13, color: "#e2e8f0", cursor: "pointer" }}><input type="checkbox" checked={withCrew} onChange={e => setWithCrew(e.target.checked)} /> Show crew first names</label>
+        </div>
+        <div style={{ padding: "10px 14px", borderRadius: 10, background: days.length ? "#69BE2812" : "#7f1d1d22", border: `1px solid ${days.length ? "#69BE2840" : "#7f1d1d"}`, fontSize: 12.5, color: days.length ? "#82CC4A" : "#fca5a5", marginBottom: 16 }}>
+          {days.length ? `${days.length} day${days.length > 1 ? "s" : ""} of logs in range · ${totalPhotos} photo${totalPhotos !== 1 ? "s" : ""}` : "No logs in this date range."}
+        </div>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <button onClick={onClose} style={{ padding: "9px 16px", borderRadius: 8, border: "1px solid #1A3050", background: "transparent", color: "#94a3b8", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Close</button>
+          <button onClick={preview} disabled={!days.length} style={{ padding: "9px 16px", borderRadius: 8, border: "1px solid #69BE28", background: "transparent", color: days.length ? "#82CC4A" : "#475569", fontSize: 13, fontWeight: 700, cursor: days.length ? "pointer" : "default", fontFamily: "inherit" }}>Preview</button>
+          <button onClick={download} disabled={!days.length} style={{ padding: "9px 18px", borderRadius: 8, border: "none", background: days.length ? "#69BE28" : "#1A3050", color: days.length ? "#fff" : "#475569", fontSize: 13, fontWeight: 700, cursor: days.length ? "pointer" : "default", fontFamily: "inherit" }}>Download HTML</button>
+        </div>
+        <div style={{ fontSize: 11, color: "#64748b", marginTop: 10 }}>Tip: Preview → print → "Save as PDF" if the customer prefers a PDF attachment. Photos load from secure FWT links.</div>
+      </div>
+    </div>
+  );
+}

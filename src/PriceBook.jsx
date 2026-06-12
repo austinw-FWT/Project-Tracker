@@ -83,82 +83,93 @@ function CatalogTab({ items, onSave, onDelete, isMobile, defaults }) {
       buried partway down. This scans the first 15 rows for the real header
       row, maps columns by fuzzy name match, and ignores everything else.
       Labor units default to 0 — fill them in as parts get used. */
+  /* Column matching, rebuilt for real vendor files:
+     - normalizes headers (case, punctuation, line breaks inside cells)
+     - two-way fuzzy match, so bare "Product" still hits the description list
+     - cost matching prefers dealer/net columns and actively avoids
+       MSRP / List / Retail unless nothing better exists
+     - header row chosen by SCORE across the first 20 rows, not first weak
+       match — title rows like "Dealer Price List 2026" can't hijack it   */
   const COL_DEFS = {
-    manf:   ["manufacturer", "manf", "mfr", "mfg", "brand", "vendor"],
-    part:   ["part number", "part #", "part#", "partnum", "part no", "model", "sku", "item number", "item #", "item#", "catalog", "cat no", "cat #", "product code", "part"],
-    desc:   ["description", "desc", "product name", "item description", "name", "title"],
-    unit:   ["unit", "uom", "u/m", "per"],
-    cost:   ["dealer cost", "dealer price", "your cost", "your price", "net price", "net cost", "unit cost", "cost", "dealer", "net", "wholesale", "price"],
-    markup: ["markup", "margin"],
+    manf:   ["manufacturer", "manf", "mfr", "mfg", "brand", "vendor", "make"],
+    part:   ["part number", "part #", "part#", "partnum", "part no", "model number", "model #", "model", "sku", "item number", "item #", "item#", "item no", "catalog number", "cat no", "cat #", "product code", "stock number", "part", "item code"],
+    desc:   ["product description", "item description", "long description", "description", "desc", "product name", "item name", "product", "item", "name", "title", "details"],
+    unit:   ["unit of measure", "uom", "u/m", "unit", "per", "ea/ft"],
+    cost:   ["dealer cost", "dealer price", "dealer net", "your cost", "your price", "net price", "net cost", "unit cost", "cost ea", "cost each", "dlr cost", "dlr price", "dlr", "wholesale", "dealer", "net", "cost", "unit price", "price ea", "price each", "sell price", "price"],
+    markup: ["markup %", "markup", "margin %", "margin"],
   };
-  function detectHeader(rows) {
-    for (let r = 0; r < Math.min(rows.length, 15); r++) {
-      const cells = (rows[r] || []).map(c => String(c ?? "").trim().toLowerCase());
-      const find = names => {
-        // exact-ish first, then contains
-        let idx = cells.findIndex(c => names.includes(c));
-        if (idx < 0) idx = cells.findIndex(c => c && names.some(nm => c.includes(nm)));
-        return idx;
-      };
-      const ci = { manf: find(COL_DEFS.manf), part: find(COL_DEFS.part), desc: find(COL_DEFS.desc), unit: find(COL_DEFS.unit), cost: find(COL_DEFS.cost), markup: find(COL_DEFS.markup) };
-      // a real header row has at least (part or desc) AND cost
-      if ((ci.part >= 0 || ci.desc >= 0) && ci.cost >= 0) return { headerRow: r, ci };
-      // tolerate price lists with no cost column (part + desc both present)
-      if (ci.part >= 0 && ci.desc >= 0 && ci.part !== ci.desc) return { headerRow: r, ci };
-    }
-    return null;
+  const AVOID_COST = ["msrp", "list price", "retail", "srp", "map", "list"];
+  const normCell = c => String(c ?? "").toLowerCase().replace(/[\r\n]+/g, " ").replace(/[^a-z0-9#/% ]/g, " ").replace(/\s+/g, " ").trim();
+  const fuzzy = (cell, syn) => cell === syn || (cell.length >= 3 && syn.length >= 3 && (cell.includes(syn) || syn.includes(cell)));
+
+  function matchColumns(rawCells) {
+    const cells = rawCells.map(normCell);
+    const ci = { manf: -1, part: -1, desc: -1, unit: -1, cost: -1, markup: -1 };
+    const taken = new Set();
+    const findFor = (key, avoid) => {
+      for (const syn of COL_DEFS[key]) {
+        for (let i = 0; i < cells.length; i++) {
+          if (taken.has(i) || !cells[i]) continue;
+          if (avoid && avoid.some(a => cells[i].includes(a))) continue;
+          if (fuzzy(cells[i], syn)) return i;
+        }
+      }
+      return -1;
+    };
+    // order matters: lock down the strong identities first
+    ci.part = findFor("part"); if (ci.part >= 0) taken.add(ci.part);
+    ci.cost = findFor("cost", AVOID_COST);
+    if (ci.cost < 0) ci.cost = findFor("cost"); // fall back to MSRP-ish if it's all there is
+    if (ci.cost >= 0) taken.add(ci.cost);
+    ci.desc = findFor("desc"); if (ci.desc >= 0) taken.add(ci.desc);
+    ci.manf = findFor("manf"); if (ci.manf >= 0) taken.add(ci.manf);
+    ci.unit = findFor("unit"); if (ci.unit >= 0) taken.add(ci.unit);
+    ci.markup = findFor("markup");
+    return ci;
   }
-  function rowsToItems(rows, ci, headerRow) {
-    const items = [];
-    for (let r = headerRow + 1; r < rows.length; r++) {
-      const c = rows[r] || [];
-      const cell = i => (i >= 0 && c[i] !== undefined && c[i] !== null) ? String(c[i]).trim() : "";
-      const partNum = cell(ci.part);
-      const desc = cell(ci.desc);
-      if (!partNum && !desc) continue;
-      const costRaw = cell(ci.cost).replace(/[$,\s]/g, "");
-      items.push({
-        id: genId(),
-        manf: cell(ci.manf),
-        partNum, desc,
-        unit: cell(ci.unit) || "EA",
-        costPU: ci.cost >= 0 ? n(costRaw) : 0,
-        markupPct: ci.markup >= 0 ? n(cell(ci.markup)) : (defaults?.defaultMarkupPct ?? 25),
-        laborUnits: emptyLaborUnits(),
-      });
+  function detectHeader(rows) {
+    let best = null;
+    for (let r = 0; r < Math.min(rows.length, 20); r++) {
+      const raw = rows[r] || [];
+      if (raw.filter(c => String(c ?? "").trim()).length < 2) continue; // title/blank rows
+      const ci = matchColumns(raw);
+      const score = (ci.part >= 0 ? 3 : 0) + (ci.desc >= 0 ? 3 : 0) + (ci.cost >= 0 ? 3 : 0) + (ci.manf >= 0 ? 1 : 0) + (ci.unit >= 0 ? 1 : 0) + (ci.markup >= 0 ? 1 : 0);
+      const viable = (ci.part >= 0 || ci.desc >= 0) && score >= 6;
+      if (viable && (!best || score > best.score)) best = { headerRow: r, ci, score };
     }
-    return items;
+    return best;
   }
   async function importFile(e) {
     const file = e.target.files?.[0];
     if (!file) return;
     setImportMsg("Reading file…");
     try {
-      let rows = [];
-      let sheetNote = "";
       if (/\.(xlsx|xls|xlsm)$/i.test(file.name)) {
         const XLSX = await import("xlsx");                       // lazy-loaded; doesn't weigh down app start
         const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
-        // find the first sheet whose contents look like a price list
-        let best = null;
+        // Read EVERY sheet that looks like a price list (vendors split by category)
+        const sheetResults = [];
         for (const name of wb.SheetNames) {
           const sheetRows = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: false, defval: "" });
           const det = detectHeader(sheetRows);
-          if (det) { best = { rows: sheetRows, det, name }; break; }
+          if (det) sheetResults.push({ name, items: rowsToItems(sheetRows, det.ci, det.headerRow) });
         }
-        if (!best) { setImportMsg(`Couldn't find a header row (part #/description/cost) in any sheet of ${file.name}. Check the file has a normal column header row.`); e.target.value = ""; return; }
-        rows = best.rows;
-        var det = best.det;
-        if (wb.SheetNames.length > 1) sheetNote = ` from sheet "${best.name}"`;
+        if (!sheetResults.length) { setImportMsg(`Couldn't find a header row (part #/description/cost) in any of the ${wb.SheetNames.length} sheet(s) of ${file.name}. Send me a screenshot of the first few rows and I'll add that vendor's format.`); e.target.value = ""; return; }
+        var allItems = sheetResults.flatMap(r => r.items);
+        var sheetNote = sheetResults.length > 1
+          ? ` across ${sheetResults.length} tabs (${sheetResults.map(r => `${r.name}: ${r.items.length}`).join(", ")})`
+          : (wb.SheetNames.length > 1 ? ` from tab "${sheetResults[0].name}"` : "");
       } else {
         const text = await file.text();
         const lines = text.split(/\r?\n/).filter(r => r.trim());
         const split = line => { const out = []; let cur = "", inQ = false; for (const ch of line) { if (ch === '"') inQ = !inQ; else if (ch === "," && !inQ) { out.push(cur); cur = ""; } else cur += ch; } out.push(cur); return out.map(c => c.trim()); };
-        rows = lines.map(split);
-        var det = detectHeader(rows);
+        const rows = lines.map(split);
+        const det = detectHeader(rows);
         if (!det) { setImportMsg("Couldn't find a header row (part #/description/cost) in that CSV."); e.target.value = ""; return; }
+        var allItems = rowsToItems(rows, det.ci, det.headerRow);
+        var sheetNote = "";
       }
-      const newItems = rowsToItems(rows, det.ci, det.headerRow);
+      const newItems = allItems;
       if (!newItems.length) { setImportMsg("Found the header but no data rows under it."); e.target.value = ""; return; }
       // de-dupe against existing catalog by manf+part#: update cost, keep labor units
       let added = 0, updated = 0;
