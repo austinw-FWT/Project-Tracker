@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { LABOR_PHASES, genId } from "./App.jsx";
 import { remainingHours } from "./laborMath.js";
 import { storage, storageRef, uploadBytes, getDownloadURL } from "./firebase.js";
+import { scheduleEntries } from "./db.js";
 
 /**
  * FieldMode — the technician's home screen.
@@ -92,8 +93,13 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
   const activeProjects = (projects || []).filter(p => !p.movedToWarranty);
   const proj = activeProjects.find(p => p.id === projectId);
   const today = todayIso();
-  const todaysProjectId = (schedule || {})[today]?.[myName] || "";
-  const todaysProject = activeProjects.find(p => p.id === todaysProjectId);
+  const todayEntries = scheduleEntries((schedule || {})[today]?.[myName]);
+  const todayProjEntries = todayEntries.filter(e => e.type === "project" && activeProjects.some(p => p.id === e.id));
+  const todayNotes = todayEntries.filter(e => e.type === "note");
+  const loggedFor = (pid, iso) => (myLogs || []).some(l => l.date === (iso || today) && (l.entries || []).some(en => en.projectId === pid));
+  const unloggedToday = todayProjEntries.filter(e => !loggedFor(e.id));
+  // primary project: first unlogged assignment, else first assignment — drives the banner & site brain
+  const todaysProject = activeProjects.find(p => p.id === (unloggedToday[0]?.id || todayProjEntries[0]?.id));
 
   /* draft restore / persist — a dead zone or killed tab never eats an entry */
   useEffect(() => {
@@ -150,7 +156,6 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
 
   const dupPersonal = (myLogs || []).some(l => l.date === date && (l.entries || []).some(e => e.projectId === projectId));
   const dupOnProject = proj && (proj.dailyLogs || []).some(l => l.date === date && l.member === myName);
-  const loggedTodayForAssigned = todaysProjectId && (myLogs || []).some(l => l.date === today && (l.entries || []).some(e => e.projectId === todaysProjectId));
 
   /* ── submit ── */
   async function submit() {
@@ -214,10 +219,16 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
   /* ════════ TODAY ════════ */
   const week = [0, 1, 2, 3, 4].map(o => {
     const iso = isoFor(o);
-    const pid = (schedule || {})[iso]?.[myName];
-    const p = activeProjects.find(x => x.id === pid);
+    const entries = scheduleEntries((schedule || {})[iso]?.[myName]);
+    const projEntries = entries.filter(e => e.type === "project");
+    const labels = entries.map(e => {
+      if (e.type === "note") return "✏ " + e.text;
+      const p = activeProjects.find(x => x.id === e.id);
+      return p ? `${p.jobNumber ? "#" + p.jobNumber + " " : ""}${p.name}` : null;
+    }).filter(Boolean);
+    const loggedCount = projEntries.filter(e => loggedFor(e.id, iso)).length;
     const d = new Date(iso + "T12:00:00");
-    return { iso, day: d.toLocaleDateString(undefined, { weekday: "short" }), date: d.toLocaleDateString(undefined, { month: "short", day: "numeric" }), proj: p, today: iso === today, logged: (myLogs || []).some(l => l.date === iso && (l.entries || []).some(e => e.projectId === pid)) };
+    return { iso, day: d.toLocaleDateString(undefined, { weekday: "short" }), date: d.toLocaleDateString(undefined, { month: "short", day: "numeric" }), labels, projCount: projEntries.length, loggedCount, today: iso === today };
   });
 
   const si = todaysProject?.siteInfo || {};
@@ -232,24 +243,39 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
         <div style={{ fontSize: 13, color: T.inkSoft, marginTop: 3 }}>{new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</div>
       </div>
 
-      {todaysProject ? (!loggedTodayForAssigned ? (
-        <button onClick={() => startLog(todaysProject.id)} style={{ ...card, border: `1.5px solid ${T.green}`, padding: "14px 16px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 12, fontFamily: "inherit" }}>
+      {todaysProject && unloggedToday.length > 0 ? (
+        <button onClick={() => startLog(unloggedToday[0].id)} style={{ ...card, border: `1.5px solid ${T.green}`, padding: "14px 16px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 12, fontFamily: "inherit" }}>
           <div style={{ width: 40, height: 40, borderRadius: 12, background: T.greenWash, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 19, flexShrink: 0 }}>📋</div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 14.5, fontWeight: 700, color: T.ink }}>You're scheduled at {todaysProject.name}</div>
-            <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 1 }}>No log yet for today</div>
+            <div style={{ fontSize: 14.5, fontWeight: 700, color: T.ink }}>You're scheduled at {activeProjects.find(p => p.id === unloggedToday[0].id)?.name}</div>
+            <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 1 }}>
+              {todayProjEntries.length > 1 ? `${todayProjEntries.length - unloggedToday.length}/${todayProjEntries.length} jobs logged today` : "No log yet for today"}
+            </div>
           </div>
           <div style={{ padding: "10px 14px", borderRadius: 10, background: T.green, color: "#fff", fontSize: 13, fontWeight: 800, whiteSpace: "nowrap" }}>Start log</div>
         </button>
-      ) : (
+      ) : todayProjEntries.length > 0 ? (
         <div style={{ ...card, padding: "14px 16px", display: "flex", alignItems: "center", gap: 12, borderLeft: `4px solid ${T.green}` }}>
           <div style={{ fontSize: 19 }}>✅</div>
-          <div style={{ fontSize: 14, fontWeight: 700, color: T.ink }}>Today's log is in for {todaysProject.name}</div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: T.ink }}>{todayProjEntries.length > 1 ? `All ${todayProjEntries.length} of today's logs are in` : `Today's log is in for ${todaysProject?.name}`}</div>
         </div>
-      )) : (
+      ) : todayNotes.length > 0 ? (
+        <div style={{ ...card, padding: "14px 16px", borderLeft: `4px solid ${T.amber}` }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: T.ink }}>✏️ Today: {todayNotes.map(n2 => n2.text).join(" · ")}</div>
+          <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 2 }}>Off the project board today — log hours from the Log tab if needed.</div>
+        </div>
+      ) : (
         <div style={{ ...card, padding: "14px 16px" }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: T.ink }}>Nothing on the schedule for you today</div>
           <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 2 }}>You can still log hours from the Log tab.</div>
+        </div>
+      )}
+      {(todayProjEntries.length > 1 || (todayProjEntries.length > 0 && todayNotes.length > 0)) && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: -4 }}>
+          {todayProjEntries.map((e, i) => { const p = activeProjects.find(x => x.id === e.id); const done = loggedFor(e.id); return (
+            <button key={i} onClick={() => startLog(e.id)} style={{ padding: "7px 12px", borderRadius: 16, border: `1px solid ${done ? T.green : T.line}`, background: done ? T.greenWash : T.card, color: done ? T.green : T.ink, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{done ? "✓ " : ""}{p?.jobNumber ? "#" + p.jobNumber + " " : ""}{p?.name}</button>
+          ); })}
+          {todayNotes.map((n2, i) => <span key={"n" + i} style={{ padding: "7px 12px", borderRadius: 16, border: `1px solid ${T.amber}40`, background: T.amberWash, color: T.amber, fontSize: 12, fontWeight: 700, fontStyle: "italic" }}>✏ {n2.text}</span>)}
         </div>
       )}
 
@@ -287,17 +313,18 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
       <div style={{ ...card, padding: "14px 16px" }}>
         <div style={{ ...eyebrow, marginBottom: 10 }}>My week</div>
         {week.map(d => (
-          <div key={d.iso} style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 0", borderBottom: `1px solid ${T.line}`, opacity: d.proj ? 1 : 0.55 }}>
+          <div key={d.iso} style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 0", borderBottom: `1px solid ${T.line}`, opacity: d.labels.length ? 1 : 0.55 }}>
             <div style={{ width: 44, textAlign: "center", flexShrink: 0 }}>
               <div style={{ fontSize: 12, fontWeight: 800, color: d.today ? T.green : T.inkSoft }}>{d.day}</div>
               <div style={{ fontSize: 10.5, color: T.inkFaint }}>{d.date}</div>
             </div>
             <div style={{ width: 3, alignSelf: "stretch", borderRadius: 2, background: d.today ? T.green : T.line }} />
-            <div style={{ flex: 1, fontSize: 14, fontWeight: d.today ? 800 : 600, color: d.proj ? T.ink : T.inkFaint, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {d.proj ? `${d.proj.jobNumber ? "#" + d.proj.jobNumber + " " : ""}${d.proj.name}` : "Off"}
+            <div style={{ flex: 1, fontSize: 13.5, fontWeight: d.today ? 800 : 600, color: d.labels.length ? T.ink : T.inkFaint, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {d.labels.length ? d.labels.join("  ·  ") : "Off"}
             </div>
-            {d.logged && <span style={{ fontSize: 11, fontWeight: 800, color: T.green, flexShrink: 0 }}>LOGGED ✓</span>}
-            {d.today && !d.logged && <span style={{ fontSize: 11, fontWeight: 800, color: T.amber, flexShrink: 0 }}>TODAY</span>}
+            {d.projCount > 0 && d.loggedCount === d.projCount && <span style={{ fontSize: 11, fontWeight: 800, color: T.green, flexShrink: 0 }}>LOGGED ✓</span>}
+            {d.projCount > 1 && d.loggedCount > 0 && d.loggedCount < d.projCount && <span style={{ fontSize: 11, fontWeight: 800, color: T.amber, flexShrink: 0 }}>{d.loggedCount}/{d.projCount} LOGGED</span>}
+            {d.today && d.projCount > 0 && d.loggedCount === 0 && <span style={{ fontSize: 11, fontWeight: 800, color: T.amber, flexShrink: 0 }}>TODAY</span>}
           </div>
         ))}
       </div>

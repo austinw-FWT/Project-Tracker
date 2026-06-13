@@ -61,6 +61,16 @@ export const readTracker = () => dbGet(ROOT);
 /** Whole-section write for small low-contention lists (phases, roster, contacts, adminSettings). */
 export const putSection = (section, value) => dbPut(`${ROOT}/${section}`, value);
 
+/** Schedule entries: a member's day is either a legacy string (one project
+    id) or an array of { type: "project", id } / { type: "note", text }.
+    Always read through this so old data keeps working. */
+export function scheduleEntries(raw) {
+  if (!raw) return [];
+  if (typeof raw === "string") return [{ type: "project", id: raw }];
+  if (Array.isArray(raw)) return raw.filter(Boolean);
+  return [];
+}
+
 /** One day of the schedule grid. */
 export const putScheduleDay = (dateIso, value) => dbPut(`${ROOT}/schedule/${dateIso}`, value);
 

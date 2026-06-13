@@ -18,6 +18,7 @@ import {
   putProject, patchProject, deleteProject as dbDeleteProject,
   putProjectDailyLog, putMemberPrivate,
   putCatalogItem, deleteCatalogItem, putAssembly, deleteAssembly, putEstimatingDefaults,
+  scheduleEntries,
   readUsers, putUser, deleteUser as dbDeleteUser,
   normalizeTracker, denormalizeProjectUpdates,
 } from "./db.js";
@@ -942,11 +943,55 @@ function ScheduleView({ schedule, teamRoster, projects, onUpdate }) {
         {dates.map(d => <div key={d} style={{ padding: "10px 8px", background: d === today ? "#69BE2822" : "#0F2444", textAlign: "center", fontSize: 11, fontWeight: 600, color: d === today ? "#82CC4A" : "#94a3b8" }}>{fmt(d)}</div>)}
         {teamRoster.map(member => (<>
           <div key={`n-${member.id}`} style={{ padding: "10px 12px", background: "#001528", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid #1A3050" }}><div style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0" }}>{member.name}</div></div>
-          {dates.map(d => <div key={`${member.id}-${d}`} style={{ padding: "6px 4px", background: d === today ? "#69BE2808" : "#0A192F", borderBottom: "1px solid #1A3050" }}><select style={iS} value={schedule[d]?.[member.name] || ""} onChange={e => { const dd = { ...(schedule[d] || {}) }; if (e.target.value) dd[member.name] = e.target.value; else delete dd[member.name]; onUpdate({ ...schedule, [d]: dd }, d); }}><option value="">— Off —</option>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>)}
+          {dates.map(d => <div key={`${member.id}-${d}`} style={{ padding: "5px 4px", background: d === today ? "#69BE2808" : "#0A192F", borderBottom: "1px solid #1A3050" }}>
+            <ScheduleCell raw={schedule[d]?.[member.name]} projects={projects}
+              onChange={entries => { const dd = { ...(schedule[d] || {}) }; if (entries.length) dd[member.name] = entries; else delete dd[member.name]; onUpdate({ ...schedule, [d]: dd }, d); }} />
+          </div>)}
         </>))}
       </div></div>
     )}
   </div>);
+}
+
+/** One member-day cell: stack of assignment chips (projects and free-text
+    write-ins), an add-select, and an inline write-in input. A member can be
+    on multiple jobs a day, or on work the app doesn't track (service calls,
+    shop day, PTO) without forcing a fake project. */
+function ScheduleCell({ raw, projects, onChange }) {
+  const entries = scheduleEntries(raw);
+  const [noteMode, setNoteMode] = useState(false);
+  const [noteText, setNoteText] = useState("");
+  const sS = { width: "100%", padding: "4px 6px", borderRadius: 6, border: "1px dashed #1A3050", background: "transparent", color: "#475569", fontSize: 10.5, fontFamily: "'DM Sans',sans-serif", outline: "none", cursor: "pointer" };
+  function add(entry) { onChange([...entries, entry]); }
+  function removeAt(i) { onChange(entries.filter((_, x) => x !== i)); }
+  function commitNote() { const t = noteText.trim(); if (t) add({ type: "note", text: t }); setNoteText(""); setNoteMode(false); }
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+      {entries.map((e, i) => {
+        const proj = e.type === "project" ? projects.find(p => p.id === e.id) : null;
+        const label = e.type === "project" ? (proj ? `${proj.jobNumber ? "#" + proj.jobNumber + " " : ""}${proj.name}` : "(removed project)") : e.text;
+        const isNote = e.type === "note";
+        return (
+          <div key={i} title={label} style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 6px", borderRadius: 6, background: isNote ? "#f59e0b14" : "#69BE2814", border: `1px solid ${isNote ? "#f59e0b33" : "#69BE2833"}` }}>
+            <span style={{ flex: 1, fontSize: 10.5, fontWeight: 600, color: isNote ? "#f0a93b" : "#82CC4A", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontStyle: isNote ? "italic" : "normal" }}>{isNote ? "✏ " : ""}{label}</span>
+            <button onClick={() => removeAt(i)} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer", fontSize: 11, padding: 0, lineHeight: 1 }}>×</button>
+          </div>
+        );
+      })}
+      {noteMode ? (
+        <input autoFocus value={noteText} onChange={e => setNoteText(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") commitNote(); if (e.key === "Escape") { setNoteText(""); setNoteMode(false); } }}
+          onBlur={commitNote} placeholder="Service call, shop, PTO…"
+          style={{ width: "100%", padding: "4px 6px", borderRadius: 6, border: "1px solid #f59e0b", background: "#0A192F", color: "#f0a93b", fontSize: 10.5, fontFamily: "'DM Sans',sans-serif", outline: "none", boxSizing: "border-box" }} />
+      ) : (
+        <select style={sS} value="" onChange={e => { const v = e.target.value; if (v === "__note") setNoteMode(true); else if (v) add({ type: "project", id: v }); }}>
+          <option value="">{entries.length ? "+ add" : "— Off —"}</option>
+          {projects.map(p => <option key={p.id} value={p.id}>{p.jobNumber ? `#${p.jobNumber} ` : ""}{p.name}</option>)}
+          <option value="__note">✏ Write-in…</option>
+        </select>
+      )}
+    </div>
+  );
 }
 
 /* ═══ TEAM, PHASES, ADMIN ═══ */
