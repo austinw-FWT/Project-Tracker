@@ -12,6 +12,7 @@ import WarrantyTracker from "./WarrantyTracker.jsx";
 import MigrationTool from "./MigrationTool.jsx";
 import FieldMode from "./FieldMode.jsx";
 import PriceBook from "./PriceBook.jsx";
+import Briefing from "./Briefing.jsx";
 
 import {
   FB_URL, dbGet, readTracker, putSection, putScheduleDay,
@@ -443,6 +444,7 @@ function Tracker({ user, userRecord }) {
   ];
 
   const mySpaceItems = [
+    { id: "briefing", label: "The Briefing", icon: "🧭" },
     { id: "daily", label: "Daily Task Board", icon: "📋" },
     { id: "dailylog", label: "Daily Log", icon: "📝" },
     { id: "opportunities", label: "Opportunities", icon: "🎯" },
@@ -451,7 +453,7 @@ function Tracker({ user, userRecord }) {
   ];
 
   const currentPageTitle = selectedProject ? selectedProject.name
-    : view === "myspace" ? (mySpaceTab === "daily" ? "Daily Task Board" : mySpaceTab === "dailylog" ? "Daily Log" : mySpaceTab === "opportunities" ? "Opportunities" : mySpaceTab === "pricebook" ? "Price Book" : "My Timesheets")
+    : view === "myspace" ? (mySpaceTab === "briefing" ? "The Briefing" : mySpaceTab === "daily" ? "Daily Task Board" : mySpaceTab === "dailylog" ? "Daily Log" : mySpaceTab === "opportunities" ? "Opportunities" : mySpaceTab === "pricebook" ? "Price Book" : "My Timesheets")
     : view === "team" ? "Team Roster" : view === "schedule" ? "Team Schedule" : view === "admin" ? "User Admin"
     : view === "contacts" ? "Contacts" : view === "warranties" ? "Warranties" : view === "dashboard" ? "Dashboard"
     : view === "board" ? "Project Board" : "Phase Settings";
@@ -629,6 +631,11 @@ function Tracker({ user, userRecord }) {
             <Contacts contacts={data.contacts || []} projects={data.projects} onSave={c => saveSection("contacts", c, { ...latestData.current, contacts: c })} />
           ) : view === "warranties" ? (
             <WarrantyTracker projects={data.projects} onUpdateProject={(pid, u) => updateProject(pid, u)} />
+          ) : view === "myspace" && mySpaceTab === "briefing" ? (
+            <Briefing data={data} myPrivate={getMyPrivate()} myName={myName} isMobile={isMobile}
+              onUpdateProject={updateProject} onSaveMyPrivate={saveMyPrivate}
+              onSelectProject={(p, tab) => { setSelectedProject(p); setDetailTab(tab || "overview"); }}
+              onNavigate={navigate} />
           ) : view === "myspace" && mySpaceTab === "daily" ? (
             <DailyTracker data={getMyPrivate().dailyTracker} archivedDays={getMyPrivate().archivedDays || []} onSave={dt => saveMyPrivate({ dailyTracker: dt })} onArchive={archive => saveMyPrivate({ archivedDays: archive })} />
           ) : view === "myspace" && mySpaceTab === "dailylog" ? (
