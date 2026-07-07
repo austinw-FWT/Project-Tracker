@@ -377,6 +377,22 @@ function Tracker({ user, userRecord }) {
     }
   }
 
+  /** Quick Add with no project → my private Daily Task Board.
+      Internal/company items land in the chosen board section (created if the
+      board has never been opened); notes are prefixed 📝. */
+  function addInternalItem(category, text, kind) {
+    const mp = getMyPrivate();
+    const dt = mp.dailyTracker || {};
+    let sections = dt.dailySections || [];
+    if (!sections.some(s => s.id === category)) {
+      const meta = TASK_CATEGORIES.find(c => c.id === category);
+      sections = [...sections, { id: category, label: meta?.label || category, icon: meta?.icon || "", items: [] }];
+    }
+    const item = { id: genId(), text: kind === "note" ? `📝 ${text}` : text, done: false };
+    sections = sections.map(s => s.id === category ? { ...s, items: [...(s.items || []), item] } : s);
+    saveMyPrivate({ dailyTracker: { ...dt, dailySections: sections } });
+  }
+
   // Close sidebar when navigating on mobile
   function navigate(viewId, spaceTab) {
     setView(viewId);
@@ -675,6 +691,7 @@ function Tracker({ user, userRecord }) {
 
       {showNewProject && <NewProjectModal phases={data.phases} onSave={addProject} onClose={() => setShowNewProject(false)} templates={PROJECT_TEMPLATES} />}
       <QuickAddButton projects={data.projects} isMobile={isMobile}
+        onAddInternal={addInternalItem}
         onAddTask={(pid, task) => updateProject(pid, { tasks: [...((data.projects.find(p => p.id === pid)?.tasks) || []), { ...task, id: genId(), done: false }] })}
         onAddNote={(pid, note) => updateProject(pid, { notes: [{ text: note, date: new Date().toISOString() }, ...((data.projects.find(p => p.id === pid)?.notes) || [])] })}
         onAddMaterial={(pid, item) => updateProject(pid, { materials: [...((data.projects.find(p => p.id === pid)?.materials) || []), { id: genId(), item, manufacturer: "", vendor: "", qtyNeeded: "1", qtyOnHand: "", poNumber: "", status: "Pending Quote", deliveryDate: "", cost: "", notes: "" }] })} />
@@ -1076,15 +1093,19 @@ function UserAdminView() {
 }
 
 /* ═══ QUICK ADD BUTTON ═══ */
-function QuickAddButton({ projects, onAddTask, onAddNote, onAddMaterial, isMobile }) {
+function QuickAddButton({ projects, onAddTask, onAddNote, onAddMaterial, onAddInternal, isMobile }) {
   const [open, setOpen] = useState(false);
   const [type, setType] = useState("task");
-  const [pid, setPid] = useState("");
+  const [pid, setPid] = useState(""); // "" = internal — no project (tasks & notes)
+  const [category, setCategory] = useState("hotlist"); // board section for internal items
   const [text, setText] = useState("");
+  const needsProject = type === "material"; // materials live on a project's material list
+  const canSubmit = !!text.trim() && (!!pid || !needsProject);
   const qS = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1A3050", background: "#0A192F", color: "#e2e8f0", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none" };
   function submit() {
-    if (!text.trim() || !pid) return;
-    if (type === "task") onAddTask(pid, { text: text.trim(), assignee: "", category: "projects" });
+    if (!canSubmit) return;
+    if (!pid) onAddInternal(category, text.trim(), type);
+    else if (type === "task") onAddTask(pid, { text: text.trim(), assignee: "", category: "projects" });
     else if (type === "note") onAddNote(pid, text.trim());
     else if (type === "material") onAddMaterial(pid, text.trim());
     setText(""); setOpen(false);
@@ -1100,12 +1121,19 @@ function QuickAddButton({ projects, onAddTask, onAddNote, onAddMaterial, isMobil
           {["task", "note", "material"].map(t => (<button key={t} onClick={() => setType(t)} style={{ flex: 1, padding: "8px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", background: type === t ? "#69BE28" : "transparent", color: type === t ? "#fff" : "#64748b", textTransform: "capitalize" }}>{t}</button>))}
         </div>
         <select style={{ ...qS, marginBottom: 8 }} value={pid} onChange={e => setPid(e.target.value)}>
-          <option value="">Select project...</option>
+          <option value="">{needsProject ? "Select project..." : "🏢 Internal — no project"}</option>
           {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
+        {!pid && !needsProject && (<>
+          <select style={{ ...qS, marginBottom: 4 }} value={category} onChange={e => setCategory(e.target.value)}>
+            {TASK_CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.icon} {c.label}</option>)}
+          </select>
+          <div style={{ fontSize: 11, color: "#64748b", margin: "0 2px 10px" }}>Goes to your Daily Task Board{category === "priority" || category === "hotlist" ? " · shows in your Briefing" : ""}</div>
+        </>)}
+        {!pid && needsProject && <div style={{ fontSize: 11, color: "#f59e0b", margin: "0 2px 10px" }}>Materials need a project.</div>}
         <input style={qS} value={text} onChange={e => setText(e.target.value)} placeholder={type === "task" ? "Task description..." : type === "note" ? "Note..." : "Material item..."} onKeyDown={e => { if (e.key === "Enter") submit(); }} />
         <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
-          <button onClick={submit} style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: "#69BE28", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", opacity: text.trim() && pid ? 1 : 0.4 }}>Add</button>
+          <button onClick={submit} style={{ padding: "10px 20px", borderRadius: 8, border: "none", background: "#69BE28", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", opacity: canSubmit ? 1 : 0.4 }}>Add</button>
         </div>
       </div>
     )}
