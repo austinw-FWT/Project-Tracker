@@ -3,7 +3,7 @@ import { Plus, X, Clock, Users, Send, ChevronDown, ChevronUp, Download } from "l
 import JSZip from "jszip";
 import { LABOR_PHASES } from "./App.jsx";
 import { openOutlookCompose } from "./emailHelper.js";
-import { TIMESHEET_TEMPLATE_B64 } from "./timesheetTemplate.js";
+
 
 const DEPARTMENTS = ["Brandon", "Justin", "Service", "Steve", "Tim", "Todd", "Overhead", "Tech Staffing"];
 
@@ -165,6 +165,7 @@ async function fillTimesheetTemplate({ employeeName, weekStartIso, entries }) {
   }
 
   // Load template
+  const { TIMESHEET_TEMPLATE_B64 } = await import("./timesheetTemplate.js");
   const zip = await JSZip.loadAsync(b64ToArrayBuffer(TIMESHEET_TEMPLATE_B64));
   const sheetPath = "xl/worksheets/sheet1.xml";
   let xml = await zip.file(sheetPath).async("string");

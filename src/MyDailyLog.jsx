@@ -1,8 +1,9 @@
-import { useState } from "react";
-import { Plus, X, Send, ChevronDown, ChevronUp, Clock, Users, Briefcase, Archive, Trash2 } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
+import { Plus, X, Send, ChevronDown, ChevronUp, Clock, Users, Briefcase, Archive, Trash2, Camera } from "lucide-react";
 import { LABOR_PHASES } from "./App.jsx";
 import { remainingHours } from "./laborMath.js";
 import { openOutlookCompose } from "./emailHelper.js";
+import { uploadLogPhotos, previewUrl } from "./photoUtils.js";
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 
@@ -38,11 +39,60 @@ function totalCrewHours(crew) {
   return getAllocations(crew).reduce((s, a) => s + (parseFloat(a.hours) || 0), 0);
 }
 
+/** Photo picker for one project entry: camera on phones, file picker on
+    desktop, thumbnails with remove. Files upload (compressed) at submit. */
+function EntryPhotos({ entry, onAdd, onRemove }) {
+  const fileRef = useRef(null);
+  const photos = entry.photos || [];
+  return (
+    <div style={{ marginTop: 12 }}>
+      <label style={lS}>Photos</label>
+      <input ref={fileRef} type="file" accept="image/*" capture="environment" multiple style={{ display: "none" }}
+        onChange={e => { onAdd(e.target.files); e.target.value = ""; }} />
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <button type="button" onClick={() => fileRef.current?.click()}
+          style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 16px", borderRadius: 8, border: "1.5px solid #69BE28", background: "#69BE2815", color: "#82CC4A", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", minHeight: 42 }}>
+          <Camera size={14} /> Add Photos{photos.length ? ` (${photos.length})` : ""}
+        </button>
+        {photos.length > 0 && (
+          <span style={{ fontSize: 11.5, color: "#64748b" }}>Compressed on your device before upload — works on weak signal.</span>
+        )}
+      </div>
+      {photos.length > 0 && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
+          {photos.map((f, i) => {
+            const src = typeof f === "string" ? f : previewUrl(f);
+            return (
+              <div key={i} style={{ position: "relative" }}>
+                {src
+                  ? <img src={src} alt="" style={{ width: 76, height: 76, objectFit: "cover", borderRadius: 8, border: "1px solid #1A3050" }} />
+                  : <div style={{ width: 76, height: 76, borderRadius: 8, background: "#0A192F", border: "1px solid #1A3050", display: "flex", alignItems: "center", justifyContent: "center", color: "#475569", fontSize: 18 }}>🖼</div>}
+                <button type="button" onClick={() => onRemove(i)} title="Remove"
+                  style={{ position: "absolute", top: -6, right: -6, width: 22, height: 22, borderRadius: "50%", border: "none", background: "#0A192F", color: "#f87171", fontSize: 13, fontWeight: 700, cursor: "pointer", lineHeight: 1, boxShadow: "0 1px 4px rgba(0,0,0,0.5)" }}>×</button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function useIsMobileLog() {
+  const [m, setM] = useState(() => typeof window !== "undefined" && window.innerWidth < 768);
+  useEffect(() => { const h = () => setM(window.innerWidth < 768); window.addEventListener("resize", h); return () => window.removeEventListener("resize", h); }, []);
+  return m;
+}
+
 export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, myEmail, predefinedEmail, onSubmit, onDeleteLog }) {
   const [tab, setTab] = useState("new");
   const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
   const [entries, setEntries] = useState([]);
   const [expandedArchive, setExpandedArchive] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [uploadMsg, setUploadMsg] = useState("");
+  const [saveError, setSaveError] = useState("");
+  const isMobile = useIsMobileLog();
 
   const logs = dailyLogs || [];
 
@@ -57,6 +107,7 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
       projectName: proj.name,
       crewMembers: [makeCrewMember(myName)],
       activities: "",
+      photos: [],
     }]);
   }
 
@@ -137,20 +188,58 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
     }));
   }
 
+  // ── Photos ──
+  function addPhotos(entryId, files) {
+    const list = Array.from(files || []);
+    if (!list.length) return;
+    setEntries(entries.map(e => e.id === entryId ? { ...e, photos: [...(e.photos || []), ...list] } : e));
+  }
+  function removePhoto(entryId, idx) {
+    setEntries(entries.map(e => e.id === entryId ? { ...e, photos: (e.photos || []).filter((_, i) => i !== idx) } : e));
+  }
+
   // ── Submit ──
-  function submit() {
-    if (entries.length === 0) return;
+  async function submit() {
+    if (entries.length === 0 || submitting) return;
     const validEntries = entries.filter(e => {
       const anyHours = e.crewMembers.some(c => getAllocations(c).some(a => a.hours > 0));
-      return e.activities.trim() || anyHours;
+      return e.activities.trim() || anyHours || (e.photos || []).length > 0;
     });
     if (validEntries.length === 0) return;
+    setSubmitting(true);
+
+    // Upload photos BEFORE writing the logs so the URLs ride inside each
+    // record. Log ids are generated up front so photos file under them.
+    const logIds = {};
+    const photoUrlsByEntry = {};
+    const totalPhotos = validEntries.reduce((n, e) => n + (e.photos || []).length, 0);
+    let uploaded = 0;
+    for (const entry of validEntries) {
+      logIds[entry.id] = genId();
+      const files = entry.photos || [];
+      if (!files.length) { photoUrlsByEntry[entry.id] = []; continue; }
+      try {
+        photoUrlsByEntry[entry.id] = await uploadLogPhotos(files, entry.projectId, logIds[entry.id], () => {
+          uploaded++; setUploadMsg(`Uploading photos… ${uploaded}/${totalPhotos}`);
+        });
+      } catch {
+        setUploadMsg("");
+        if (!confirm("Photo upload failed — weak signal?\n\nSubmit the log without photos? You can add them later from the project's Daily Log tab.")) {
+          setSubmitting(false); return;
+        }
+        photoUrlsByEntry[entry.id] = [];
+      }
+    }
+    setUploadMsg("");
+
+    // Strip File objects out of the personal archive — store the URLs instead
+    const cleanEntries = validEntries.map(e => ({ ...e, photos: photoUrlsByEntry[e.id] || [] }));
 
     const log = {
       id: genId(),
       date,
       submittedBy: myName,
-      entries: validEntries,
+      entries: cleanEntries,
       createdAt: new Date().toISOString(),
     };
 
@@ -176,7 +265,7 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
       projectLogs.push({
         pid: entry.projectId,
         log: {
-          id: genId(),
+          id: logIds[entry.id],
           date,
           member: myName,
           hours: totalHours,
@@ -185,13 +274,23 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
             name: c.name,
             allocations: getAllocations(c).filter(a => a.hours > 0).map(a => ({ hours: a.hours, category: a.category })),
           })).filter(c => c.allocations.length > 0),
+          ...((photoUrlsByEntry[entry.id] || []).length ? { photos: photoUrlsByEntry[entry.id] } : {}),
           createdAt: new Date().toISOString(),
         },
       });
     });
 
     const updatedLogs = [log, ...logs];
-    onSubmit(updatedLogs, projectLogs);
+    // Await the real write — never tell someone it saved when it didn't.
+    try {
+      await onSubmit(updatedLogs, projectLogs);
+      setSaveError("");
+    } catch {
+      setSaveError("Couldn't reach the server — nothing was lost, your entries are still here. Check your connection and hit Submit again.");
+      setSubmitting(false);
+      return;
+    }
+    setSubmitting(false);
 
     // Open email in default client with pre-filled body
     (async () => {
@@ -247,7 +346,7 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
   const availableProjects = projects.filter(p => !usedProjectIds.includes(p.id));
 
   return (
-    <div style={{ maxWidth: 800, margin: "0 auto", padding: "20px 24px" }}>
+    <div style={{ maxWidth: 800, margin: "0 auto", padding: isMobile ? "14px 12px 90px" : "20px 24px" }}>
       {/* Tabs */}
       <div style={{ display: "flex", gap: 4, marginBottom: 20 }}>
         <button onClick={() => setTab("new")} style={{ padding: "8px 20px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", background: tab === "new" ? "#69BE28" : "#0F2444", color: tab === "new" ? "#fff" : "#64748b" }}>New Entry</button>
@@ -257,7 +356,7 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
       {tab === "new" ? (
         <div>
           {/* Date + Stats */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 20 }}>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: isMobile ? 8 : 12, marginBottom: 20 }}>
             <div style={{ background: "#0A192F", borderRadius: 10, padding: "14px 16px", borderLeft: `3px solid ${logs.some(l => l.date === date) ? "#f59e0b" : "#69BE28"}` }}>
               <label style={lS}>Date</label>
               <input type="date" style={{ ...iS, background: "#0A192F" }} value={date} onChange={e => setDate(e.target.value)} />
@@ -376,6 +475,9 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
                   <label style={lS}>Activities / Work Performed</label>
                   <textarea style={{ ...iS, minHeight: 60, resize: "vertical" }} value={entry.activities} onChange={e => updateEntry(entry.id, { activities: e.target.value })} placeholder="Describe work performed on this project today..." />
                 </div>
+
+                {/* Photos */}
+                <EntryPhotos entry={entry} onAdd={files => addPhotos(entry.id, files)} onRemove={i => removePhoto(entry.id, i)} />
               </div>
             );
           })}
@@ -388,11 +490,14 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
 
           {/* Submit */}
           {entries.length > 0 && (
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, alignItems: "center", marginTop: 16 }}>
-              <span style={{ fontSize: 11, color: "#64748b" }}>Opens Outlook web after saving</span>
-              <button onClick={submit} style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 20px", borderRadius: 8, border: "none", background: "#69BE28", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
-                <Send size={14} /> Submit &amp; Email
-              </button>
+            <div style={{ marginTop: 16 }}>
+              {saveError && <div style={{ padding: "12px 14px", borderRadius: 10, background: "#7f1d1d22", border: "1.5px solid #ef4444", color: "#fca5a5", fontSize: 13, fontWeight: 600, lineHeight: 1.5, marginBottom: 10 }}>⚠ {saveError}</div>}
+              <div style={{ display: "flex", flexDirection: isMobile ? "column-reverse" : "row", justifyContent: "flex-end", gap: isMobile ? 8 : 8, alignItems: isMobile ? "stretch" : "center" }}>
+                <span style={{ fontSize: 11, color: uploadMsg ? "#82CC4A" : "#64748b", textAlign: isMobile ? "center" : "right" }}>{uploadMsg || "Opens Outlook web after saving"}</span>
+                <button onClick={submit} disabled={submitting} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: isMobile ? "15px 20px" : "10px 20px", borderRadius: 10, border: "none", background: submitting ? "#1A3050" : "#69BE28", color: submitting ? "#475569" : "#fff", fontSize: isMobile ? 16 : 14, fontWeight: 700, cursor: submitting ? "default" : "pointer", fontFamily: "inherit", minHeight: isMobile ? 52 : 44 }}>
+                  <Send size={15} /> {submitting ? "Saving…" : "Submit & Email"}
+                </button>
+              </div>
             </div>
           )}
         </div>

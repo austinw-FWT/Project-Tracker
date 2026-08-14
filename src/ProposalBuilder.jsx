@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { Plus, X, Printer, ChevronDown, ChevronUp, FileText, Calculator, Download } from "lucide-react";
 import JSZip from "jszip";
-import { PROPOSAL_TEMPLATE_B64 } from "./proposalTemplate";
-import { TAKEOFF_TEMPLATE_B64 } from "./takeoffTemplate";
+
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 const n = v => parseFloat(v) || 0;
@@ -307,6 +306,7 @@ async function downloadBOMToTemplate(takeoffData, label) {
     if (!confirm("⚠ Export warnings:\n\n" + warnings.join("\n") + "\n\nProceed anyway?")) return;
   }
 
+  const { TAKEOFF_TEMPLATE_B64 } = await import("./takeoffTemplate");
   const zip = await JSZip.loadAsync(b64ToArrayBuffer(TAKEOFF_TEMPLATE_B64));
   const sheetPath = "xl/worksheets/sheet1.xml";
   const sheetFile = zip.file(sheetPath);
@@ -669,6 +669,7 @@ async function generateProposalDocx(d, opp) {
   const totalPrice = d.scopes.reduce((s, sc) => s + (parseFloat(sc.price) || 0), 0);
   const scopeCount = Math.min(d.scopes.length, 10);
 
+  const { PROPOSAL_TEMPLATE_B64 } = await import("./proposalTemplate");
   const templateData = b64ToArrayBuffer(PROPOSAL_TEMPLATE_B64);
   const zip = await JSZip.loadAsync(templateData);
   let docXml = await zip.file("word/document.xml").async("string");

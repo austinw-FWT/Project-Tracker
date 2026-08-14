@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { LABOR_PHASES, genId } from "./App.jsx";
 import { remainingHours } from "./laborMath.js";
-import { storage, storageRef, uploadBytes, getDownloadURL } from "./firebase.js";
+import { uploadLogPhotos } from "./photoUtils.js";
 import { scheduleEntries } from "./db.js";
 
 /**
@@ -47,30 +47,6 @@ const THEME_KEY = "fwt-fieldmode-theme";
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 const isoFor = (offset) => { const d = new Date(); d.setDate(d.getDate() + offset); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 
-/** Client-side photo compression: ~1600px long edge, JPEG q0.8.
-    Turns 10MB phone shots into ~300KB uploads that survive one bar of LTE. */
-function compressImage(file) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    const url = URL.createObjectURL(file);
-    img.onload = () => {
-      const MAX = 1600;
-      let { width, height } = img;
-      if (width > MAX || height > MAX) {
-        const s = MAX / Math.max(width, height);
-        width = Math.round(width * s); height = Math.round(height * s);
-      }
-      const canvas = document.createElement("canvas");
-      canvas.width = width; canvas.height = height;
-      canvas.getContext("2d").drawImage(img, 0, 0, width, height);
-      URL.revokeObjectURL(url);
-      canvas.toBlob(b => b ? resolve(b) : reject(new Error("compress failed")), "image/jpeg", 0.8);
-    };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("image load failed")); };
-    img.src = url;
-  });
-}
-
 export default function FieldMode({ projects, teamRoster, schedule, myName, myLogs, onSubmit, onOpenFullApp, onUpdateProject, isAdmin }) {
   const [themeKey, setThemeKey] = useState(() => { try { return localStorage.getItem(THEME_KEY) || "daylight"; } catch { return "daylight"; } });
   const T = THEMES[themeKey] || THEMES.daylight;
@@ -86,11 +62,30 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
   const [photos, setPhotos] = useState([]); // File objects, compressed at submit
   const [submitting, setSubmitting] = useState(false);
   const [crewSheet, setCrewSheet] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
   const [detailId, setDetailId] = useState(null);
   const fileRef = useRef(null);
   const restored = useRef(false);
 
-  const activeProjects = (projects || []).filter(p => !p.movedToWarranty);
+  const activeProjectsAll = (projects || []).filter(p => !p.movedToWarranty);
+  /* Techs shouldn't scroll 20 jobs to find today's. Rank: scheduled today,
+     then scheduled anywhere this week, then jobs they're on the team for,
+     then everything else. */
+  const weekIds = new Set();
+  let todayIdForSort = null;
+  {
+    const s0 = schedule || {};
+    for (let o = -1; o < 6; o++) {
+      const d = new Date(); d.setDate(d.getDate() + o);
+      const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      const raw = s0[iso]?.[myName];
+      const list = !raw ? [] : (typeof raw === "string" ? [{ type: "project", id: raw }] : Array.isArray(raw) ? raw : []);
+      list.forEach(e => { if (e.type === "project" && e.id) { weekIds.add(e.id); if (o === 0) todayIdForSort = todayIdForSort || e.id; } });
+    }
+  }
+  const rank = p => (p.id === todayIdForSort ? 0 : weekIds.has(p.id) ? 1 : (p.teamMembers || []).includes(myName) ? 2 : 3);
+  const activeProjects = [...activeProjectsAll].sort((a, b) => rank(a) - rank(b) || (a.name || "").localeCompare(b.name || ""));
   const proj = activeProjects.find(p => p.id === projectId);
   const today = todayIso();
   const todayEntries = scheduleEntries((schedule || {})[today]?.[myName]);
@@ -124,6 +119,11 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
   }, [date, projectId, crew, activities]);
 
   useEffect(() => { try { localStorage.setItem(THEME_KEY, themeKey); } catch {} }, [themeKey]);
+  useEffect(() => {
+    const up = () => setOnline(true), down = () => setOnline(false);
+    window.addEventListener("online", up); window.addEventListener("offline", down);
+    return () => { window.removeEventListener("online", up); window.removeEventListener("offline", down); };
+  }, []);
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 2600); return () => clearTimeout(t); }, [toast]);
   useEffect(() => { if (!copied) return; const t = setTimeout(() => setCopied(null), 1500); return () => clearTimeout(t); }, [copied]);
 
@@ -168,12 +168,7 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
       if (photos.length) {
         setToast(`Uploading ${photos.length} photo${photos.length > 1 ? "s" : ""}…`);
         try {
-          photoUrls = await Promise.all(photos.map(async (f, i) => {
-            const blob = await compressImage(f);
-            const r = storageRef(storage, `projects/${proj.id}/dailyLogs/${logId}/${i}-${Date.now()}.jpg`);
-            await uploadBytes(r, blob);
-            return await getDownloadURL(r);
-          }));
+          photoUrls = await uploadLogPhotos(photos, proj.id, logId, (done, total) => setToast(`Uploading photos… ${done}/${total}`));
         } catch {
           if (!confirm("Photo upload failed (weak signal?).\n\nSubmit the log without photos? You can add them later from better signal.")) { setSubmitting(false); return; }
           photoUrls = [];
@@ -197,9 +192,18 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
         createdAt: new Date().toISOString(),
       };
 
-      onSubmit([personalLog, ...(myLogs || [])], [{ pid: proj.id, log: projectLog }]);
+      // Wait for the ACTUAL write. Never clear the draft or claim success
+      // until Firebase confirms — a dead zone must not silently eat hours.
+      try {
+        await onSubmit([personalLog, ...(myLogs || [])], [{ pid: proj.id, log: projectLog }]);
+      } catch {
+        setSaveError("Couldn't reach the server — your log is still here. Move to better signal and hit Submit again.");
+        setSubmitting(false);
+        return;   // draft and form stay exactly as they were
+      }
 
       try { localStorage.removeItem(DRAFT_KEY); } catch {}
+      setSaveError("");
       setCrew([]); setActivities(""); setPhotos([]); setProjectId(""); setDate(todayIso());
       setTab("today");
       setToast(`Log saved ✓ ${totalHrs}h on ${proj.jobNumber ? "#" + proj.jobNumber : proj.name}${photoUrls.length ? ` · ${photoUrls.length} photos` : ""}`);
@@ -430,6 +434,11 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
         </div>
       )}
 
+      {saveError && (
+        <div style={{ padding: "12px 14px", borderRadius: 12, background: "#B4231818", border: `1.5px solid ${T.red}`, color: T.red, fontSize: 13, fontWeight: 700, lineHeight: 1.5 }}>
+          ⚠ {saveError}
+        </div>
+      )}
       {proj && (
         <button onClick={submit} disabled={totalHrs === 0 || submitting} style={{ width: "100%", minHeight: 56, borderRadius: 14, border: "none", background: totalHrs > 0 && !submitting ? T.green : T.chip, color: totalHrs > 0 && !submitting ? "#fff" : T.inkFaint, fontSize: 17, fontWeight: 800, fontFamily: "'Outfit',sans-serif", cursor: totalHrs > 0 && !submitting ? "pointer" : "default" }}>
           {submitting ? "Saving…" : `Submit log — ${totalHrs}h${photos.length ? ` · ${photos.length} photo${photos.length > 1 ? "s" : ""}` : ""}`}
@@ -639,8 +648,17 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
           <div style={{ fontFamily: "'Outfit',sans-serif", fontSize: 15, fontWeight: 800, color: "#fff", lineHeight: 1 }}>Field Mode</div>
           <div style={{ fontSize: 10.5, color: "#8FA3C2", marginTop: 2 }}>FWT Workspaces</div>
         </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 9px", borderRadius: 20, background: online ? "#4BA53C22" : "#B4231822", border: `1px solid ${online ? "#4BA53C55" : "#F8717155"}` }} title={online ? "Connected" : "No connection — logs can't be submitted"}>
+          <span style={{ width: 7, height: 7, borderRadius: "50%", background: online ? "#4BA53C" : "#F87171" }} />
+          <span style={{ fontSize: 10, fontWeight: 800, color: online ? "#82CC4A" : "#F87171", letterSpacing: "0.04em" }}>{online ? "ONLINE" : "OFFLINE"}</span>
+        </div>
         <button onClick={() => setThemeKey(themeKey === "daylight" ? "office" : "daylight")} style={{ width: 38, height: 38, borderRadius: 10, border: "1px solid #2A4470", background: "transparent", cursor: "pointer", fontSize: 15 }}>{themeKey === "daylight" ? "🌙" : "☀️"}</button>
       </div>
+      {!online && (
+        <div style={{ background: "#B42318", color: "#fff", padding: "8px 16px", fontSize: 12.5, fontWeight: 700, textAlign: "center" }}>
+          No signal — your work is saved on this phone. Submit once you're back online.
+        </div>
+      )}
 
       <div style={{ flex: 1, padding: "16px 14px 100px", maxWidth: 520, width: "100%", margin: "0 auto", boxSizing: "border-box" }}>
         {tab === "today" && ScreenToday}

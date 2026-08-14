@@ -3,6 +3,7 @@ import { Plus, X, Edit2, Trash2, ClipboardList, Clock, Cable, CheckCircle2, Circ
 import { PROJECT_TYPES, LABOR_PHASES, MATERIAL_STATUSES, TASK_CATEGORIES, genId } from "./App.jsx";
 import { bidHours, usedHours, loggedHours, adjustment, remainingHours, laborTotals } from "./laborMath.js";
 import { storage, storageRef, uploadBytes, getDownloadURL } from "./firebase.js";
+import { uploadLogPhotos } from "./photoUtils.js";
 
 const iS = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1A3050", background: "#0F2444", color: "#e2e8f0", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none" };
 const lS = { fontSize: 11, fontWeight: 600, color: "#64748b", marginBottom: 4, display: "block", textTransform: "uppercase", letterSpacing: "0.05em" };
@@ -615,15 +616,7 @@ function DailyLogTab({ project, onUpdate }) {
     {logs.map((l, i) => (<div key={l.id || i} style={{ padding: "12px 14px", background: "#0A192F", borderRadius: 10, border: "1px solid #1A3050", marginBottom: 6 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}><span style={{ fontSize: 12, fontWeight: 600, color: "#fff" }}>{l.date}</span>{l.member && <span style={{ fontSize: 11, color: "#64748b" }}>· {l.member}</span>}{l.hours > 0 && <span style={{ fontSize: 11, color: "#f59e0b", fontWeight: 600 }}>{l.hours}h</span>}<button onClick={() => onUpdate({ dailyLogs: logs.filter((_, idx) => idx !== i) })} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer", marginLeft: "auto" }}><X size={12} /></button></div>
       <div style={{ fontSize: 13, color: "#e2e8f0", whiteSpace: "pre-wrap" }}>{l.activities}</div>
-      {l.photos?.length > 0 && (
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
-          {l.photos.map((url, pi) => (
-            <a key={pi} href={url} target="_blank" rel="noreferrer">
-              <img src={url} alt={`Log photo ${pi + 1}`} style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 8, border: "1px solid #1A3050" }} />
-            </a>
-          ))}
-        </div>
-      )}
+      <LogPhotos log={l} project={project} onUpdate={onUpdate} />
     </div>))}
     {logs.length === 0 && <div style={{ textAlign: "center", padding: 20, color: "#334155", fontSize: 13 }}>No daily logs yet. Submit a log from My Space → Daily Log.</div>}
   </div>);
@@ -929,6 +922,58 @@ function NotesTab({ project, onUpdate }) {
 }
 
 
+
+/** Photos on an already-submitted log: view, and add more later. Covers the
+    tech who submitted from a dead zone and the office adding shots after the
+    fact. Uploads compress client-side like everywhere else. */
+function LogPhotos({ log, project, onUpdate }) {
+  const fileRef = useRef(null);
+  const [busy, setBusy] = useState(false);
+  const photos = log.photos || [];
+
+  async function addPhotos(files) {
+    const list = Array.from(files || []);
+    if (!list.length) return;
+    setBusy(true);
+    try {
+      const urls = await uploadLogPhotos(list, project.id, log.id);
+      const logs = (project.dailyLogs || []).map(x => x.id === log.id ? { ...x, photos: [...(x.photos || []), ...urls] } : x);
+      onUpdate({ dailyLogs: logs });
+    } catch (e) {
+      alert("Photo upload failed: " + (e?.message || "unknown error") + "\n\nCheck the connection and try again.");
+    }
+    setBusy(false);
+  }
+  function removePhoto(url) {
+    if (!confirm("Remove this photo from the log?")) return;
+    const logs = (project.dailyLogs || []).map(x => x.id === log.id ? { ...x, photos: (x.photos || []).filter(u => u !== url) } : x);
+    onUpdate({ dailyLogs: logs });
+  }
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      {photos.length > 0 && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+          {photos.map((url, pi) => (
+            <div key={pi} style={{ position: "relative" }}>
+              <a href={url} target="_blank" rel="noreferrer">
+                <img src={url} alt={`Log photo ${pi + 1}`} style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 8, border: "1px solid #1A3050" }} />
+              </a>
+              <button onClick={() => removePhoto(url)} title="Remove photo"
+                style={{ position: "absolute", top: -5, right: -5, width: 20, height: 20, borderRadius: "50%", border: "none", background: "#0A192F", color: "#f87171", fontSize: 12, fontWeight: 700, cursor: "pointer", lineHeight: 1 }}>×</button>
+            </div>
+          ))}
+        </div>
+      )}
+      <input ref={fileRef} type="file" accept="image/*" capture="environment" multiple style={{ display: "none" }}
+        onChange={e => { addPhotos(e.target.files); e.target.value = ""; }} />
+      <button onClick={() => fileRef.current?.click()} disabled={busy}
+        style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 7, border: "1px dashed #1A3050", background: "transparent", color: busy ? "#475569" : "#64748b", fontSize: 11.5, fontWeight: 600, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>
+        <Camera size={12} /> {busy ? "Uploading…" : photos.length ? "Add more photos" : "Add photos"}
+      </button>
+    </div>
+  );
+}
 
 /* ════════ CUSTOMER RECAP GENERATOR ════════ */
 function RecapModal({ project, onClose }) {

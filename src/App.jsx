@@ -214,9 +214,15 @@ function Tracker({ user, userRecord }) {
   const eventSourceRef = useRef(null);
   const isSaving = useRef(false);
   const latestData = useRef(null);
-  const hasCheckedRoster = useRef(false);
   const isAdmin = userRecord.role === "admin";
-  const myName = user.displayName || user.email;
+  const accountName = user.displayName || user.email;
+  /* Resolve this account to a roster entry. Everything downstream — schedule
+     lookups, log attribution, timesheets, crew picker — uses the ROSTER name
+     so the office and the field always agree on who someone is. */
+  const rosterEntry = (data?.teamRoster || []).find(m => m.uid === user.uid)
+    || (data?.teamRoster || []).find(m => m.email && user.email && m.email.toLowerCase() === user.email.toLowerCase())
+    || (data?.teamRoster || []).find(m => m.name === accountName);
+  const myName = rosterEntry?.name || accountName;
   const isMobile = useIsMobile();
 
   useEffect(() => {
@@ -228,16 +234,13 @@ function Tracker({ user, userRecord }) {
         latestData.current = d;
         if (alive) {
           setData(d); setSyncStatus("synced"); setLastSync(new Date()); setLoading(false);
-          if (!hasCheckedRoster.current) {
-            hasCheckedRoster.current = true;
-            const roster = d.teamRoster || [];
-            if (!roster.some(m => m.email === user.email || m.name === myName)) {
-              const newRoster = [...roster, { id: genId(), name: myName, role: isAdmin ? "Admin / PM" : "Technician", email: user.email }];
-              const updated = { ...d, teamRoster: newRoster };
-              latestData.current = updated; setData(updated);
-              putSection("teamRoster", newRoster).catch(() => {});
-            }
-          }
+          // Identity is resolved against the roster by uid → email → exact
+          // name (see rosterEntry below). We deliberately do NOT auto-create
+          // a roster row from the account's display name: that produced a
+          // duplicate ("Dennis" typed by the office vs "Dennis Martinez" from
+          // Google), and since the schedule is keyed by roster name, the
+          // duplicate left the tech with a permanently empty Today screen.
+          // Unmatched users get the link screen instead.
         }
         if (!remote) await putSection("phases", DEFAULT_PHASES);
       } catch { if (alive) { setData(DEFAULTS); setSyncStatus("error"); setLoading(false); } }
@@ -290,9 +293,11 @@ function Tracker({ user, userRecord }) {
   const applyLocal = useCallback(newData => { latestData.current = newData; setData(newData); }, []);
   const persist = useCallback(writePromise => {
     isSaving.current = true; setSyncStatus("saving");
-    Promise.resolve(writePromise)
-      .then(() => { setSyncStatus("synced"); setLastSync(new Date()); })
-      .catch(() => setSyncStatus("error"))
+    // Returns the promise so callers that must confirm a real save (daily
+    // log submit) can await it instead of assuming success.
+    return Promise.resolve(writePromise)
+      .then(r => { setSyncStatus("synced"); setLastSync(new Date()); return r; })
+      .catch(e => { setSyncStatus("error"); throw e; })
       .finally(() => setTimeout(() => { isSaving.current = false; }, 1000));
   }, []);
   /** Small low-contention sections: phases, teamRoster, contacts, adminSettings. */
@@ -335,7 +340,11 @@ function Tracker({ user, userRecord }) {
 
   /** Shared daily-log submit path — Field Mode and the classic My Daily Log
       screen both go through here, so the data is identical either way. */
-  function submitDailyLogs(updatedPersonalLogs, projectLogs) {
+  /** Returns a promise that REJECTS if the log did not actually reach
+      Firebase. Callers must await it before telling a tech "saved" — a
+      false confirmation in a dead zone loses hours and payroll data. */
+  async function submitDailyLogs(updatedPersonalLogs, projectLogs) {
+    const prev = latestData.current;
     const merged = { ...getMyPrivate(), dailyLogs: updatedPersonalLogs };
     let nd = { ...latestData.current, memberPrivate: { ...(latestData.current.memberPrivate || {}), [user.uid]: merged } };
     const writes = [putMemberPrivate(user.uid, merged)];
@@ -344,7 +353,12 @@ function Tracker({ user, userRecord }) {
       writes.push(putProjectDailyLog(pid, log));
     });
     applyLocal(nd);
-    persist(Promise.all(writes));
+    try {
+      await persist(Promise.all(writes));
+    } catch (e) {
+      applyLocal(prev);   // don't leave a phantom log sitting in the UI
+      throw e;
+    }
   }
 
   /* Private space is keyed by uid (stable) with a fallback read of the
@@ -422,6 +436,44 @@ function Tracker({ user, userRecord }) {
             <div style={{ fontSize: 13, color: "#94a3b8", marginTop: 8, lineHeight: 1.6 }}>The system is being upgraded — check back in a few minutes. Nothing is lost.</div>
           </div>
         )}
+      </div>
+    );
+  }
+
+  // Unlinked account: make the tech pick who they are ONCE. Without this the
+  // schedule (keyed by roster name) never matches and Field Mode looks empty.
+  if (!rosterEntry) {
+    const unlinked = (data.teamRoster || []).filter(m => !m.uid);
+    const linkTo = member => {
+      const roster = (data.teamRoster || []).map(m => m.id === member.id ? { ...m, uid: user.uid, email: m.email || user.email } : m);
+      saveSection("teamRoster", roster, { ...latestData.current, teamRoster: roster });
+    };
+    const addSelf = () => {
+      const roster = [...(data.teamRoster || []), { id: genId(), name: accountName, role: isAdmin ? "Admin / PM" : "Technician", email: user.email, uid: user.uid }];
+      saveSection("teamRoster", roster, { ...latestData.current, teamRoster: roster });
+    };
+    return (
+      <div style={{ minHeight: "100vh", background: "#0A192F", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, fontFamily: "'DM Sans',sans-serif" }}>
+        <div style={{ background: "#0F2444", border: "1px solid #1A3050", borderRadius: 16, padding: 26, width: "100%", maxWidth: 440 }}>
+          <div style={{ fontSize: 20, fontWeight: 800, color: "#fff", fontFamily: "'Outfit',sans-serif", marginBottom: 6 }}>Who are you?</div>
+          <div style={{ fontSize: 13, color: "#94a3b8", lineHeight: 1.6, marginBottom: 18 }}>
+            Tap your name so your schedule, hours, and daily logs line up with the office. You only do this once.
+          </div>
+          {unlinked.map(m => (
+            <button key={m.id} onClick={() => linkTo(m)} style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", minHeight: 58, padding: "0 16px", borderRadius: 12, border: "1px solid #1A3050", background: "#0A192F", cursor: "pointer", fontFamily: "inherit", marginBottom: 8, textAlign: "left" }}>
+              <div style={{ width: 38, height: 38, borderRadius: "50%", background: "#69BE2822", color: "#82CC4A", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 15 }}>{(m.name || "?")[0].toUpperCase()}</div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 15, fontWeight: 700, color: "#e2e8f0" }}>{m.name}</div>
+                {m.role && <div style={{ fontSize: 11.5, color: "#64748b" }}>{m.role}</div>}
+              </div>
+            </button>
+          ))}
+          {unlinked.length === 0 && <div style={{ fontSize: 13, color: "#64748b", marginBottom: 14 }}>Everyone on the roster is already linked to an account.</div>}
+          <button onClick={addSelf} style={{ width: "100%", minHeight: 48, borderRadius: 12, border: "1px dashed #1A3050", background: "transparent", color: "#94a3b8", fontSize: 13.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", marginTop: 4 }}>
+            I'm not listed — add me as "{accountName}"
+          </button>
+          <div style={{ fontSize: 11.5, color: "#475569", marginTop: 14, lineHeight: 1.5 }}>Signed in as {user.email}. Picked wrong? An admin can fix it under Team.</div>
+        </div>
       </div>
     );
   }
@@ -1023,7 +1075,7 @@ function TeamView({ teamRoster, newTeamName, setNewTeamName, newTeamRole, setNew
   const iS = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1A3050", background: "#0F2444", color: "#e2e8f0", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none" };
   return (<div style={{ maxWidth: 600, margin: "0 auto", padding: 24 }}>
     <div style={{ display: "flex", gap: 8, marginBottom: 20 }}><input style={{ ...iS, flex: 1 }} placeholder="Name" value={newTeamName} onChange={e => setNewTeamName(e.target.value)} /><input style={{ ...iS, flex: 1 }} placeholder="Role" value={newTeamRole} onChange={e => setNewTeamRole(e.target.value)} /><button onClick={onAdd} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: "#69BE28", color: "#fff", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}><Plus size={15} /></button></div>
-    {teamRoster.map(m => (<div key={m.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", background: "#0F2444", borderRadius: 10, border: "1px solid #1A3050", marginBottom: 8 }}><div style={{ width: 36, height: 36, borderRadius: "50%", background: "#69BE2822", display: "flex", alignItems: "center", justifyContent: "center", color: "#82CC4A" }}><User size={16} /></div><div style={{ flex: 1 }}><div style={{ fontSize: 14, fontWeight: 600, color: "#fff" }}>{m.name}</div><div style={{ fontSize: 12, color: "#64748b" }}>{m.role || "Team Member"}</div></div><button onClick={() => onRemove(m.id)} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer" }}><X size={16} /></button></div>))}
+    {teamRoster.map(m => (<div key={m.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", background: "#0F2444", borderRadius: 10, border: "1px solid #1A3050", marginBottom: 8 }}><div style={{ width: 36, height: 36, borderRadius: "50%", background: "#69BE2822", display: "flex", alignItems: "center", justifyContent: "center", color: "#82CC4A" }}><User size={16} /></div><div style={{ flex: 1 }}><div style={{ fontSize: 14, fontWeight: 600, color: "#fff", display: "flex", alignItems: "center", gap: 8 }}>{m.name}{m.uid ? <span title={m.email || "Linked to an app account"} style={{ fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 10, background: "#69BE2822", color: "#82CC4A", letterSpacing: "0.04em" }}>APP LINKED</span> : <span title="No one has signed in as this person yet" style={{ fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 10, background: "#64748b22", color: "#64748b", letterSpacing: "0.04em" }}>NOT LINKED</span>}</div><div style={{ fontSize: 12, color: "#64748b" }}>{m.role || "Team Member"}{m.email ? ` · ${m.email}` : ""}</div></div><button onClick={() => { if (m.uid && !confirm(`Remove ${m.name}?\n\nTheir account is linked — they'll be asked to pick a name again next time they open the app.`)) return; onRemove(m.id); }} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer" }}><X size={16} /></button></div>))}
   </div>);
 }
 
