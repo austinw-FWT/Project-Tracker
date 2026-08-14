@@ -12,6 +12,7 @@ import WarrantyTracker from "./WarrantyTracker.jsx";
 import MigrationTool from "./MigrationTool.jsx";
 import FieldMode from "./FieldMode.jsx";
 import PriceBook from "./PriceBook.jsx";
+import { resolveJobRole, getPermissions, JOB_ROLES, ROLE_LABEL, ROLE_COLOR } from "./permissions.js";
 import Briefing from "./Briefing.jsx";
 
 import {
@@ -223,6 +224,8 @@ function Tracker({ user, userRecord }) {
     || (data?.teamRoster || []).find(m => m.email && user.email && m.email.toLowerCase() === user.email.toLowerCase())
     || (data?.teamRoster || []).find(m => m.name === accountName);
   const myName = rosterEntry?.name || accountName;
+  const jobRole = resolveJobRole(rosterEntry, isAdmin);
+  const perms = getPermissions(jobRole);
   const isMobile = useIsMobile();
 
   useEffect(() => {
@@ -336,7 +339,7 @@ function Tracker({ user, userRecord }) {
   }
   // Field Mode: techs land here on mobile by default; admins opt in.
   const [fieldMode, setFieldMode] = useState(null);
-  const fieldModeOn = fieldMode === null ? (!isAdmin && isMobile) : fieldMode;
+  const fieldModeOn = fieldMode === null ? (perms.fieldFirst && isMobile) : fieldMode;
 
   /** Shared daily-log submit path — Field Mode and the classic My Daily Log
       screen both go through here, so the data is identical either way. */
@@ -515,8 +518,10 @@ function Tracker({ user, userRecord }) {
     { id: "briefing", label: "The Briefing", icon: "🧭" },
     { id: "daily", label: "Daily Task Board", icon: "📋" },
     { id: "dailylog", label: "Daily Log", icon: "📝" },
-    { id: "opportunities", label: "Opportunities", icon: "🎯" },
-    { id: "pricebook", label: "Price Book", icon: "💲" },
+    ...(perms.seeEstimating ? [
+      { id: "opportunities", label: "Opportunities", icon: "🎯" },
+      { id: "pricebook", label: "Price Book", icon: "💲" },
+    ] : []),
     { id: "timesheets", label: "My Timesheets", icon: "⏱️" },
   ];
 
@@ -690,9 +695,9 @@ function Tracker({ user, userRecord }) {
         {/* Page content */}
         <div style={{ flex: 1, overflow: "auto" }}>
           {selectedProject ? (
-            <ProjectDetail project={selectedProject} phases={data.phases} phaseMap={phaseMap} teamRoster={data.teamRoster} onUpdate={u => updateProject(selectedProject.id, u)} onDelete={() => deleteProject(selectedProject.id)} detailTab={detailTab} setDetailTab={setDetailTab} assignTaskToMember={assignTaskToMember} />
+            <ProjectDetail perms={perms} project={selectedProject} phases={data.phases} phaseMap={phaseMap} teamRoster={data.teamRoster} onUpdate={u => updateProject(selectedProject.id, u)} onDelete={() => deleteProject(selectedProject.id)} detailTab={detailTab} setDetailTab={setDetailTab} assignTaskToMember={assignTaskToMember} />
           ) : view === "dashboard" ? (
-            <Dashboard data={data} myName={myName} onSelectProject={p => { setSelectedProject(p); setDetailTab("overview"); }} onNavigate={(v, tab) => { setView(v); if (tab) setMySpaceTab(tab); }} />
+            <Dashboard perms={perms} teamRoster={data.teamRoster || []} data={data} myName={myName} onSelectProject={p => { setSelectedProject(p); setDetailTab("overview"); }} onNavigate={(v, tab) => { setView(v); if (tab) setMySpaceTab(tab); }} />
           ) : view === "board" ? (
             <KanbanBoard projects={filteredProjects} phases={data.phases} onSelectProject={p => { setSelectedProject(p); setDetailTab("overview"); }} onDragStart={setDragItem} onDrop={handleDrop} dragItem={dragItem} isMobile={isMobile} />
           ) : view === "contacts" ? (
@@ -710,14 +715,14 @@ function Tracker({ user, userRecord }) {
             <MyDailyLog dailyLogs={getMyPrivate().dailyLogs || []} projects={data.projects} teamRoster={data.teamRoster} myName={myName} myEmail={user.email} predefinedEmail={data.adminSettings?.predefinedEmail || ""}
               onSubmit={submitDailyLogs}
               onDeleteLog={logs => saveMyPrivate({ dailyLogs: logs })} />
-          ) : view === "myspace" && mySpaceTab === "pricebook" ? (
+          ) : view === "myspace" && mySpaceTab === "pricebook" && perms.seeEstimating ? (
             <PriceBook catalog={data.catalog || {}} assemblies={data.assemblies || {}} defaults={data.estimatingDefaults || {}} isMobile={isMobile}
               onSaveItem={item => { applyLocal({ ...latestData.current, catalog: { ...(latestData.current.catalog || {}), [item.id]: item } }); persist(putCatalogItem(item.id, item)); }}
               onDeleteItem={id => { const c = { ...(latestData.current.catalog || {}) }; delete c[id]; applyLocal({ ...latestData.current, catalog: c }); persist(deleteCatalogItem(id)); }}
               onSaveAssembly={a => { applyLocal({ ...latestData.current, assemblies: { ...(latestData.current.assemblies || {}), [a.id]: a } }); persist(putAssembly(a.id, a)); }}
               onDeleteAssembly={id => { const a = { ...(latestData.current.assemblies || {}) }; delete a[id]; applyLocal({ ...latestData.current, assemblies: a }); persist(deleteAssembly(id)); }}
               onSaveDefaults={d => { applyLocal({ ...latestData.current, estimatingDefaults: d }); persist(putEstimatingDefaults(d)); }} />
-          ) : view === "myspace" && mySpaceTab === "opportunities" ? (
+          ) : view === "myspace" && mySpaceTab === "opportunities" && perms.seeEstimating ? (
             <Opportunities catalog={data.catalog || {}} assemblies={data.assemblies || {}} estDefaults={data.estimatingDefaults || {}} onSaveCatalogItem={item => { applyLocal({ ...latestData.current, catalog: { ...(latestData.current.catalog || {}), [item.id]: item } }); persist(putCatalogItem(item.id, item)); }} opportunities={getMyPrivate().opportunities || []} onSave={opps => saveMyPrivate({ opportunities: opps })} onConvert={opp => addProject({ ...opp, phaseId: "awarded" })} />
           ) : view === "myspace" && mySpaceTab === "timesheets" ? (
             <TimesheetView timesheets={getMyPrivate().timesheets || []} projects={data.projects} myName={myName} myEmail={user.email} predefinedEmail={data.adminSettings?.predefinedEmail || ""} isAdmin={isAdmin} allMemberPrivate={isAdmin ? (data.memberPrivate || {}) : null} teamRoster={data.teamRoster}
@@ -1071,11 +1076,23 @@ function ScheduleCell({ raw, projects, onChange }) {
 }
 
 /* ═══ TEAM, PHASES, ADMIN ═══ */
-function TeamView({ teamRoster, newTeamName, setNewTeamName, newTeamRole, setNewTeamRole, onAdd, onRemove }) {
+function TeamView({ teamRoster, newTeamName, setNewTeamName, newTeamRole, setNewTeamRole, onAdd, onRemove, onSetRole, isAdmin }) {
   const iS = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1A3050", background: "#0F2444", color: "#e2e8f0", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none" };
   return (<div style={{ maxWidth: 600, margin: "0 auto", padding: 24 }}>
     <div style={{ display: "flex", gap: 8, marginBottom: 20 }}><input style={{ ...iS, flex: 1 }} placeholder="Name" value={newTeamName} onChange={e => setNewTeamName(e.target.value)} /><input style={{ ...iS, flex: 1 }} placeholder="Role" value={newTeamRole} onChange={e => setNewTeamRole(e.target.value)} /><button onClick={onAdd} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: "#69BE28", color: "#fff", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}><Plus size={15} /></button></div>
-    {teamRoster.map(m => (<div key={m.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", background: "#0F2444", borderRadius: 10, border: "1px solid #1A3050", marginBottom: 8 }}><div style={{ width: 36, height: 36, borderRadius: "50%", background: "#69BE2822", display: "flex", alignItems: "center", justifyContent: "center", color: "#82CC4A" }}><User size={16} /></div><div style={{ flex: 1 }}><div style={{ fontSize: 14, fontWeight: 600, color: "#fff", display: "flex", alignItems: "center", gap: 8 }}>{m.name}{m.uid ? <span title={m.email || "Linked to an app account"} style={{ fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 10, background: "#69BE2822", color: "#82CC4A", letterSpacing: "0.04em" }}>APP LINKED</span> : <span title="No one has signed in as this person yet" style={{ fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 10, background: "#64748b22", color: "#64748b", letterSpacing: "0.04em" }}>NOT LINKED</span>}</div><div style={{ fontSize: 12, color: "#64748b" }}>{m.role || "Team Member"}{m.email ? ` · ${m.email}` : ""}</div></div><button onClick={() => { if (m.uid && !confirm(`Remove ${m.name}?\n\nTheir account is linked — they'll be asked to pick a name again next time they open the app.`)) return; onRemove(m.id); }} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer" }}><X size={16} /></button></div>))}
+    {teamRoster.map(m => (<div key={m.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", background: "#0F2444", borderRadius: 10, border: "1px solid #1A3050", marginBottom: 8 }}><div style={{ width: 36, height: 36, borderRadius: "50%", background: "#69BE2822", display: "flex", alignItems: "center", justifyContent: "center", color: "#82CC4A" }}><User size={16} /></div><div style={{ flex: 1 }}><div style={{ fontSize: 14, fontWeight: 600, color: "#fff", display: "flex", alignItems: "center", gap: 8 }}>{m.name}{m.uid ? <span title={m.email || "Linked to an app account"} style={{ fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 10, background: "#69BE2822", color: "#82CC4A", letterSpacing: "0.04em" }}>APP LINKED</span> : <span title="No one has signed in as this person yet" style={{ fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 10, background: "#64748b22", color: "#64748b", letterSpacing: "0.04em" }}>NOT LINKED</span>}</div><div style={{ fontSize: 12, color: "#64748b" }}>{m.role || "Team Member"}{m.email ? ` · ${m.email}` : ""}</div>
+      {isAdmin && (
+        <div style={{ display: "flex", gap: 4, marginTop: 7 }}>
+          {JOB_ROLES.map(r => {
+            const on = (m.jobRole || "") === r.id;
+            return (<button key={r.id} title={r.desc} onClick={() => onSetRole(m.id, r.id)}
+              style={{ padding: "4px 10px", borderRadius: 14, border: on ? `1.5px solid ${ROLE_COLOR[r.id]}` : "1px solid #1A3050", background: on ? ROLE_COLOR[r.id] + "22" : "transparent", color: on ? ROLE_COLOR[r.id] : "#475569", fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+              {ROLE_LABEL[r.id]}</button>);
+          })}
+          {!m.jobRole && <span style={{ fontSize: 10.5, color: "#f59e0b", fontWeight: 700, alignSelf: "center", marginLeft: 4 }}>← set role</span>}
+        </div>
+      )}
+      </div><button onClick={() => { if (m.uid && !confirm(`Remove ${m.name}?\n\nTheir account is linked — they'll be asked to pick a name again next time they open the app.`)) return; onRemove(m.id); }} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer" }}><X size={16} /></button></div>))}
   </div>);
 }
 

@@ -25,7 +25,8 @@ async function callFunction(name, data) {
   } catch (e) { console.error(`Function ${name} failed:`, e); return null; }
 }
 
-export default function ProjectDetail({ project, phases, phaseMap, teamRoster, onUpdate, onDelete, detailTab, setDetailTab, assignTaskToMember }) {
+export default function ProjectDetail({ project, phases, phaseMap, teamRoster, onUpdate, onDelete, detailTab, setDetailTab, assignTaskToMember, perms }) {
+  const canSeeMoney = perms ? perms.seeFinancials : true;
   const [editMode, setEditMode] = useState(false);
   const [form, setForm] = useState(project);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -43,18 +44,19 @@ export default function ProjectDetail({ project, phases, phaseMap, teamRoster, o
     { id: "overview", label: "Overview", icon: ClipboardList },
     { id: "hours", label: "Hours", icon: Clock },
     { id: "materials", label: "Materials", icon: Package },
-    { id: "invoices", label: "Invoices", icon: Receipt },
-    { id: "changeorders", label: "Change Orders", icon: AlertTriangle },
+    ...(canSeeMoney ? [{ id: "invoices", label: "Invoices", icon: Receipt }] : []),
+    ...(canSeeMoney ? [{ id: "changeorders", label: "Change Orders", icon: AlertTriangle }] : []),
     { id: "scope", label: "Scope", icon: Cable },
     { id: "tasks", label: "Tasks", icon: CheckCircle2 },
     { id: "dailylog", label: "Daily Log", icon: BookOpen },
     { id: "photos", label: "Photos", icon: Image },
     { id: "rfis", label: "RFIs", icon: FileSearch },
-    { id: "profit", label: "Profit", icon: TrendingUp },
+    ...(canSeeMoney ? [{ id: "profit", label: "Profit", icon: TrendingUp }] : []),
     { id: "punchlist", label: "Punch List", icon: ClipboardCheck },
     { id: "docs", label: "Docs", icon: FileText },
     { id: "notes", label: "Activity", icon: Clock },
   ];
+  const visibleTab = tabs.some(t => t.id === detailTab) ? detailTab : "overview";
   const cp = phaseMap[project.phaseId];
   const currentTab = tabs.find(t => t.id === detailTab) || tabs[0];
 
@@ -220,25 +222,25 @@ export default function ProjectDetail({ project, phases, phaseMap, teamRoster, o
         </button>
       ) : (
         <div style={{ display: "flex", gap: 2, marginBottom: 20, borderBottom: "1px solid #1A3050", overflowX: "auto", paddingBottom: 1 }}>
-          {tabs.map(tab => (<button key={tab.id} onClick={() => setDetailTab(tab.id)} style={{ padding: "9px 12px", border: "none", background: "none", cursor: "pointer", color: detailTab === tab.id ? "#fff" : "#64748b", borderBottom: detailTab === tab.id ? "2px solid #69BE28" : "2px solid transparent", fontSize: 11, fontWeight: 600, fontFamily: "inherit", display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" }}><tab.icon size={12} /> {tab.label}</button>))}
+          {tabs.map(tab => (<button key={tab.id} onClick={() => setDetailTab(tab.id)} style={{ padding: "9px 12px", border: "none", background: "none", cursor: "pointer", color: visibleTab === tab.id ? "#fff" : "#64748b", borderBottom: visibleTab === tab.id ? "2px solid #69BE28" : "2px solid transparent", fontSize: 11, fontWeight: 600, fontFamily: "inherit", display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" }}><tab.icon size={12} /> {tab.label}</button>))}
         </div>
       )}
 
       <div style={{ background: "#0F2444", borderRadius: 12, border: "1px solid #1A3050", padding: isMobile ? 14 : 20 }}>
-        {detailTab === "overview" && <OverviewTab project={project} form={form} setForm={setForm} editMode={editMode} setEditMode={setEditMode} onUpdate={onUpdate} teamRoster={teamRoster} isMobile={isMobile} />}
-        {detailTab === "hours" && <HoursTab project={project} onUpdate={onUpdate} />}
-        {detailTab === "materials" && <MaterialsTab project={project} onUpdate={onUpdate} />}
-        {detailTab === "invoices" && <InvoiceTab project={project} onUpdate={onUpdate} />}
-        {detailTab === "changeorders" && <ChangeOrdersTab project={project} onUpdate={onUpdate} />}
-        {detailTab === "scope" && <ScopeTab project={project} onUpdate={onUpdate} />}
-        {detailTab === "tasks" && <TasksTab project={project} onUpdate={onUpdate} teamRoster={teamRoster} assignTaskToMember={assignTaskToMember} />}
-        {detailTab === "dailylog" && <DailyLogTab project={project} onUpdate={onUpdate} />}
-        {detailTab === "photos" && <PhotoLogTab project={project} onUpdate={onUpdate} />}
-        {detailTab === "rfis" && <RFITab project={project} onUpdate={onUpdate} />}
-        {detailTab === "profit" && <ProfitTab project={project} />}
-        {detailTab === "punchlist" && <PunchListTab project={project} onUpdate={onUpdate} />}
-        {detailTab === "docs" && <DocsTab project={project} onUpdate={onUpdate} />}
-        {detailTab === "notes" && <NotesTab project={project} onUpdate={onUpdate} />}
+        {visibleTab === "overview" && <OverviewTab project={project} form={form} setForm={setForm} editMode={editMode} setEditMode={setEditMode} onUpdate={onUpdate} teamRoster={teamRoster} isMobile={isMobile} />}
+        {visibleTab === "hours" && <HoursTab project={project} onUpdate={onUpdate} />}
+        {visibleTab === "materials" && <MaterialsTab canSeeMoney={canSeeMoney} project={project} onUpdate={onUpdate} />}
+        {visibleTab === "invoices" && <InvoiceTab project={project} onUpdate={onUpdate} />}
+        {visibleTab === "changeorders" && <ChangeOrdersTab project={project} onUpdate={onUpdate} />}
+        {visibleTab === "scope" && <ScopeTab project={project} onUpdate={onUpdate} />}
+        {visibleTab === "tasks" && <TasksTab project={project} onUpdate={onUpdate} teamRoster={teamRoster} assignTaskToMember={assignTaskToMember} />}
+        {visibleTab === "dailylog" && <DailyLogTab project={project} onUpdate={onUpdate} />}
+        {visibleTab === "photos" && <PhotoLogTab project={project} onUpdate={onUpdate} />}
+        {visibleTab === "rfis" && <RFITab project={project} onUpdate={onUpdate} />}
+        {visibleTab === "profit" && <ProfitTab project={project} />}
+        {visibleTab === "punchlist" && <PunchListTab project={project} onUpdate={onUpdate} />}
+        {visibleTab === "docs" && <DocsTab project={project} onUpdate={onUpdate} />}
+        {visibleTab === "notes" && <NotesTab project={project} onUpdate={onUpdate} />}
       </div>
 
       {/* Bottom-sheet pickers — mobile only */}
@@ -316,7 +318,7 @@ export default function ProjectDetail({ project, phases, phaseMap, teamRoster, o
 }
 
 /* ── OVERVIEW ── */
-function OverviewTab({ project, form, setForm, editMode, setEditMode, onUpdate, teamRoster, isMobile }) {
+function OverviewTab({ project, form, setForm, editMode, setEditMode, onUpdate, teamRoster, isMobile, canSeeMoney = true }) {
   const gridCols = isMobile ? "1fr" : "1fr 1fr";
   if (editMode) return (
     <div style={{ display: "grid", gridTemplateColumns: gridCols, gap: 16 }}>
@@ -349,7 +351,7 @@ function OverviewTab({ project, form, setForm, editMode, setEditMode, onUpdate, 
       <IR icon={Building2} label="Customer" value={project.customer} /><IR icon={User} label="Contact" value={project.contactName} />
       <IR icon={Phone} label="Phone" value={project.contactPhone} /><IR icon={Mail} label="Email" value={project.contactEmail} />
       <IR icon={MapPin} label="Site Address" value={project.siteAddress} /><IR icon={Layers} label="Type" value={project.type === "retrofit" ? "Retrofit" : "New Construction"} />
-      <IR icon={DollarSign} label="Bid Amount" value={project.bidAmount} /><IR icon={DollarSign} label="Contract Amount" value={project.contractAmount} />
+      {canSeeMoney && <><IR icon={DollarSign} label="Bid Amount" value={project.bidAmount} /><IR icon={DollarSign} label="Contract Amount" value={project.contractAmount} /></>}
       {project.siteInfo && (project.siteInfo.gateCode || project.siteInfo.lockbox || project.siteInfo.siteContact || project.siteInfo.idf || project.siteInfo.parking) && (
         <div style={{ gridColumn: "1/-1", background: "#69BE2808", border: "1px solid #69BE2833", borderRadius: 10, padding: "12px 14px" }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: "#69BE28", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>⚡ Site Info (Field Mode)</div>
@@ -401,7 +403,7 @@ function HoursTab({ project, onUpdate }) {
 }
 
 /* ── MATERIALS ── */
-function MaterialsTab({ project, onUpdate }) {
+function MaterialsTab({ project, onUpdate, canSeeMoney = true }) {
   const [item, setItem] = useState(""); const [mfr, setMfr] = useState(""); const [qty, setQty] = useState(""); const [vendor, setVendor] = useState(""); const [status, setStatus] = useState("Pending Quote"); const [cost, setCost] = useState("");
   const [filter, setFilter] = useState("all"); const [editIdx, setEditIdx] = useState(null);
   const materials = project.materials || [];
@@ -411,7 +413,7 @@ function MaterialsTab({ project, onUpdate }) {
   const filtered = filter === "all" ? materials : materials.filter(m => m.status === filter);
   const totalCost = materials.reduce((s, m) => s + (parseFloat(m.cost) || 0) * (parseInt(m.qtyNeeded) || 1), 0);
   return (<div>
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, marginBottom: 16 }}><SC label="Items" value={materials.length} color="#69BE28" /><SC label="Delivered" value={materials.filter(m => m.status === "Delivered" || m.status === "Installed").length} color="#10b981" /><SC label="Backordered" value={materials.filter(m => m.status === "Backordered").length} color="#ef4444" /><SC label="Est. Cost" value={`$${totalCost.toLocaleString()}`} color="#f59e0b" /></div>
+    <div style={{ display: "grid", gridTemplateColumns: canSeeMoney ? "1fr 1fr 1fr 1fr" : "1fr 1fr 1fr", gap: 12, marginBottom: 16 }}><SC label="Items" value={materials.length} color="#69BE28" /><SC label="Delivered" value={materials.filter(m => m.status === "Delivered" || m.status === "Installed").length} color="#10b981" /><SC label="Backordered" value={materials.filter(m => m.status === "Backordered").length} color="#ef4444" />{canSeeMoney && <SC label="Est. Cost" value={`$${totalCost.toLocaleString()}`} color="#f59e0b" />}</div>
     <div style={{ display: "flex", gap: 4, marginBottom: 14, flexWrap: "wrap" }}>
       <button onClick={() => setFilter("all")} style={{ padding: "4px 10px", borderRadius: 20, border: filter === "all" ? "2px solid #69BE28" : "1px solid #1A3050", background: filter === "all" ? "#69BE2822" : "transparent", color: filter === "all" ? "#82CC4A" : "#64748b", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>All</button>
       {MATERIAL_STATUSES.map(s => { const c = materials.filter(m => m.status === s).length; return c > 0 ? <button key={s} onClick={() => setFilter(s)} style={{ padding: "4px 10px", borderRadius: 20, border: filter === s ? `2px solid ${sC[s]}` : "1px solid #1A3050", background: filter === s ? sC[s] + "22" : "transparent", color: filter === s ? sC[s] : "#64748b", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{s} ({c})</button> : null; })}
@@ -431,7 +433,7 @@ function MaterialsTab({ project, onUpdate }) {
           <div><label style={sS}>Vendor</label><input style={{ ...iS, fontSize: 12 }} value={m.vendor} onChange={e => upd(idx, "vendor", e.target.value)} /></div>
           <div><label style={sS}>Qty</label><input type="number" style={{ ...iS, fontSize: 12 }} value={m.qtyNeeded} onChange={e => upd(idx, "qtyNeeded", e.target.value)} /></div>
           <div><label style={sS}>Status</label><select style={{ ...iS, fontSize: 12 }} value={m.status} onChange={e => upd(idx, "status", e.target.value)}>{MATERIAL_STATUSES.map(s => <option key={s}>{s}</option>)}</select></div>
-          <div><label style={sS}>Unit Cost</label><input type="number" step="0.01" style={{ ...iS, fontSize: 12 }} value={m.cost} onChange={e => upd(idx, "cost", e.target.value)} /></div>
+          {canSeeMoney && <div><label style={sS}>Unit Cost</label><input type="number" step="0.01" style={{ ...iS, fontSize: 12 }} value={m.cost} onChange={e => upd(idx, "cost", e.target.value)} /></div>}
           <div><label style={sS}>PO #</label><input style={{ ...iS, fontSize: 12 }} value={m.poNumber} onChange={e => upd(idx, "poNumber", e.target.value)} /></div>
           <div><label style={sS}>Delivery</label><input type="date" style={{ ...iS, fontSize: 12 }} value={m.deliveryDate} onChange={e => upd(idx, "deliveryDate", e.target.value)} /></div>
           <div><label style={sS}>Notes</label><input style={{ ...iS, fontSize: 12 }} value={m.notes} onChange={e => upd(idx, "notes", e.target.value)} /></div>
