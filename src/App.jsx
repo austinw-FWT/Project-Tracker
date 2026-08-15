@@ -20,6 +20,7 @@ import {
   putProject, patchProject, deleteProject as dbDeleteProject,
   putProjectDailyLog, putMemberPrivate,
   putCatalogItem, deleteCatalogItem, putAssembly, deleteAssembly, putEstimatingDefaults,
+  readInvite, putInvite, patchInvite, deleteInvite, listInvites, genInviteCode,
   scheduleEntries,
   readUsers, putUser, deleteUser as dbDeleteUser,
   normalizeTracker, denormalizeProjectUpdates,
@@ -97,17 +98,61 @@ export default function App() {
           // Read only OUR record — security rules allow self-read but block
           // unapproved users from listing everyone.
           const existing = await dbGet(`/users/${u.uid}`);
-          if (existing) { setUserRecord(existing); }
+          if (existing) {
+            // Already signed up (probably sitting in the pending queue) and
+            // now opening an invite link — redeem it rather than ignore it.
+            let rec = existing;
+            const code = captureInviteFromUrl();
+            if (code && existing.status !== "approved") {
+              try {
+                const inv = await readInvite(code);
+                const expired = inv?.expiresAt && new Date(inv.expiresAt) < new Date();
+                if (inv && !inv.usedBy && !expired) {
+                  const upgraded = { ...existing, status: "approved", role: inv.accountRole === "admin" ? "admin" : "member", inviteCode: code };
+                  await fbWriteUser(u.uid, upgraded);
+                  await patchInvite(code, { usedBy: u.uid, usedAt: new Date().toISOString(), usedEmail: u.email });
+                  try { sessionStorage.setItem("fwt-invite-link", JSON.stringify({ memberId: inv.memberId || "", name: inv.name || "", jobRole: inv.jobRole || "tech" })); } catch {}
+                  rec = upgraded;
+                }
+              } catch { /* invalid or spent code — leave them pending */ }
+              try { sessionStorage.removeItem(INVITE_KEY); } catch {}
+            }
+            setUserRecord(rec);
+          }
           else {
             // Bootstrap: the rules permit an admin/approved self-write ONLY
             // when /users is empty (first user ever). Try it; if the rules
             // reject it, we're not first — create a pending record instead.
             const base = { email: u.email, displayName: u.displayName || u.email, createdAt: new Date().toISOString() };
-            let nr = { ...base, status: "approved", role: "admin" };
-            try { await fbWriteUser(u.uid, nr); }
-            catch {
-              nr = { ...base, status: "pending", role: "member" };
-              await fbWriteUser(u.uid, nr);
+            let nr = null;
+
+            // 1) Invited? Redeem it — the rules let an invitee self-approve
+            //    only when they present a valid, unused, unexpired code.
+            const code = captureInviteFromUrl();
+            if (code) {
+              try {
+                const inv = await readInvite(code);
+                const expired = inv?.expiresAt && new Date(inv.expiresAt) < new Date();
+                if (inv && !inv.usedBy && !expired) {
+                  const candidate = { ...base, status: "approved", role: inv.accountRole === "admin" ? "admin" : "member", inviteCode: code };
+                  await fbWriteUser(u.uid, candidate);
+                  await patchInvite(code, { usedBy: u.uid, usedAt: new Date().toISOString(), usedEmail: u.email });
+                  nr = candidate;
+                  try { sessionStorage.setItem("fwt-invite-link", JSON.stringify({ memberId: inv.memberId || "", name: inv.name || "", jobRole: inv.jobRole || "tech" })); } catch {}
+                }
+              } catch { /* bad or already-used code → fall through to normal flow */ }
+              try { sessionStorage.removeItem(INVITE_KEY); } catch {}
+            }
+
+            // 2) First user ever bootstraps as admin; the rules reject this
+            //    for everyone after, and they land as pending for approval.
+            if (!nr) {
+              nr = { ...base, status: "approved", role: "admin" };
+              try { await fbWriteUser(u.uid, nr); }
+              catch {
+                nr = { ...base, status: "pending", role: "member" };
+                await fbWriteUser(u.uid, nr);
+              }
             }
             setUserRecord(nr);
           }
@@ -133,6 +178,24 @@ function LoadingScreen({ text }) {
 }
 
 /* ═══ LOGIN ═══ */
+const INVITE_KEY = "fwt-pending-invite";
+/** Pull ?invite=CODE out of the URL, stash it, and clean the address bar so
+    the code isn't left sitting in history or copied into a screenshot. */
+function captureInviteFromUrl() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("invite");
+    if (code) {
+      sessionStorage.setItem(INVITE_KEY, code);
+      params.delete("invite");
+      const clean = window.location.pathname + (params.toString() ? "?" + params : "");
+      window.history.replaceState({}, "", clean);
+      return code;
+    }
+    return sessionStorage.getItem(INVITE_KEY);
+  } catch { return null; }
+}
+
 function LoginScreen() {
   const [mode, setMode] = useState("login");
   const [email, setEmail] = useState(""); const [password, setPassword] = useState(""); const [displayName, setDisplayName] = useState("");
@@ -443,8 +506,26 @@ function Tracker({ user, userRecord }) {
     );
   }
 
-  // Unlinked account: make the tech pick who they are ONCE. Without this the
-  // schedule (keyed by roster name) never matches and Field Mode looks empty.
+  // An invite already said who this person is — bind them and skip the
+  // picker entirely. Runs once; afterwards rosterEntry resolves by uid.
+  if (!rosterEntry) {
+    let pending = null;
+    try { const raw = sessionStorage.getItem("fwt-invite-link"); if (raw) pending = JSON.parse(raw); } catch {}
+    if (pending) {
+      const roster = data.teamRoster || [];
+      const target = pending.memberId ? roster.find(m => m.id === pending.memberId && !m.uid) : null;
+      const next = target
+        ? roster.map(m => m.id === target.id ? { ...m, uid: user.uid, email: m.email || user.email, jobRole: m.jobRole || pending.jobRole } : m)
+        : [...roster, { id: genId(), name: pending.name || accountName, role: ROLE_LABEL[pending.jobRole] || "Technician", jobRole: pending.jobRole || "tech", email: user.email, uid: user.uid }];
+      try { sessionStorage.removeItem("fwt-invite-link"); } catch {}
+      saveSection("teamRoster", next, { ...latestData.current, teamRoster: next });
+      return <LoadingScreen text="Setting up your account..." />;
+    }
+  }
+
+  // Unlinked and uninvited: make the person pick who they are ONCE. Without
+  // this the schedule (keyed by roster name) never matches and Field Mode
+  // looks empty.
   if (!rosterEntry) {
     const unlinked = (data.teamRoster || []).filter(m => !m.uid);
     const linkTo = member => {
@@ -735,7 +816,7 @@ function Tracker({ user, userRecord }) {
               onAdd={() => { if (!newTeamName.trim()) return; const r = [...data.teamRoster, { id: genId(), name: newTeamName.trim(), role: newTeamRole.trim() }]; saveSection("teamRoster", r, { ...latestData.current, teamRoster: r }); setNewTeamName(""); setNewTeamRole(""); }}
               onRemove={id => { const r = data.teamRoster.filter(t => t.id !== id); saveSection("teamRoster", r, { ...latestData.current, teamRoster: r }); }} />
           ) : view === "admin" && isAdmin ? (
-            <UserAdminView />
+            <UserAdminView teamRoster={data.teamRoster || []} />
           ) : (
             <PhaseSettings phases={data.phases} newPhaseName={newPhaseName} setNewPhaseName={setNewPhaseName} newPhaseColor={newPhaseColor} setNewPhaseColor={setNewPhaseColor}
               onAdd={() => { if (!newPhaseName.trim()) return; const ph = [...data.phases, { id: genId(), name: newPhaseName.trim(), color: newPhaseColor }]; saveSection("phases", ph, { ...latestData.current, phases: ph }); setNewPhaseName(""); }}
@@ -1137,7 +1218,139 @@ function PredefinedEmailSetting() {
   );
 }
 
-function UserAdminView() {
+/**
+ * InvitePanel — admin-generated invite links.
+ *
+ * No email server needed: the app mints a single-use code, and you share the
+ * link however you already talk to your crew (text, Outlook, in person).
+ * Redeeming it auto-approves the account, sets the role, and binds the person
+ * to their Team roster entry — so they skip both the approval wait and the
+ * "Who are you?" screen and land straight in Field Mode.
+ */
+function InvitePanel({ teamRoster }) {
+  const [invites, setInvites] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [mode, setMode] = useState("existing");     // existing roster member | brand new person
+  const [memberId, setMemberId] = useState("");
+  const [newName, setNewName] = useState("");
+  const [jobRole, setJobRole] = useState("tech");
+  const [days, setDays] = useState(7);
+  const [copied, setCopied] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => { load(); }, []);
+  async function load() { setLoading(true); try { setInvites(await listInvites() || {}); } catch {} setLoading(false); }
+
+  const unlinked = (teamRoster || []).filter(m => !m.uid);
+  const inviteUrl = code => `${window.location.origin}${window.location.pathname}?invite=${code}`;
+
+  async function create() {
+    const member = unlinked.find(m => m.id === memberId);
+    const name = mode === "existing" ? member?.name : newName.trim();
+    if (!name) return;
+    setBusy(true);
+    const code = genInviteCode();
+    const inv = {
+      code, name,
+      memberId: mode === "existing" ? memberId : "",
+      jobRole,
+      accountRole: jobRole === "admin" ? "admin" : "member",
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + (parseInt(days) || 7) * 86400000).toISOString(),
+    };
+    try { await putInvite(code, inv); setInvites({ ...invites, [code]: inv }); setNewName(""); setMemberId(""); }
+    catch (e) { alert("Couldn't create the invite: " + (e?.message || "unknown error")); }
+    setBusy(false);
+  }
+  async function revoke(code) {
+    if (!confirm("Revoke this invite? The link stops working immediately.")) return;
+    try { await deleteInvite(code); const n = { ...invites }; delete n[code]; setInvites(n); } catch {}
+  }
+  function copy(code) {
+    const url = inviteUrl(code);
+    try { navigator.clipboard?.writeText(url); } catch {}
+    setCopied(code); setTimeout(() => setCopied(""), 1800);
+  }
+
+  const list = Object.values(invites).sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+  const active = list.filter(i => !i.usedBy && (!i.expiresAt || new Date(i.expiresAt) > new Date()));
+  const spent = list.filter(i => i.usedBy || (i.expiresAt && new Date(i.expiresAt) <= new Date()));
+
+  return (
+    <div style={{ background: "#0F2444", borderRadius: 12, border: "1px solid #1A3050", padding: 20, marginBottom: 24 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", marginBottom: 6, textTransform: "uppercase" }}>Invite Someone</div>
+      <p style={{ fontSize: 12, color: "#64748b", marginBottom: 14 }}>Creates a single-use link. Whoever opens it gets approved automatically, with the role you pick, already linked to their name on the Team roster — no approval step, no setup questions.</p>
+
+      <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+        {[["existing", "Someone on the roster"], ["new", "Someone new"]].map(([id, label]) => (
+          <button key={id} onClick={() => setMode(id)} style={{ padding: "7px 14px", borderRadius: 8, border: mode === id ? "1.5px solid #69BE28" : "1px solid #1A3050", background: mode === id ? "#69BE2818" : "transparent", color: mode === id ? "#82CC4A" : "#64748b", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{label}</button>
+        ))}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1.6fr 1.2fr 0.7fr auto", gap: 8, alignItems: "end" }}>
+        <div>
+          <label style={{ fontSize: 10.5, fontWeight: 700, color: "#64748b", textTransform: "uppercase", display: "block", marginBottom: 4 }}>{mode === "existing" ? "Who" : "Their name"}</label>
+          {mode === "existing"
+            ? <select style={iS} value={memberId} onChange={e => { setMemberId(e.target.value); const m = unlinked.find(x => x.id === e.target.value); if (m?.jobRole) setJobRole(m.jobRole); }}>
+                <option value="">Select a person…</option>
+                {unlinked.map(m => <option key={m.id} value={m.id}>{m.name}{m.jobRole ? ` — ${ROLE_LABEL[m.jobRole]}` : ""}</option>)}
+              </select>
+            : <input style={iS} value={newName} onChange={e => setNewName(e.target.value)} placeholder="Travis" />}
+        </div>
+        <div>
+          <label style={{ fontSize: 10.5, fontWeight: 700, color: "#64748b", textTransform: "uppercase", display: "block", marginBottom: 4 }}>Role</label>
+          <select style={iS} value={jobRole} onChange={e => setJobRole(e.target.value)}>
+            {JOB_ROLES.map(r => <option key={r.id} value={r.id}>{ROLE_LABEL[r.id]}</option>)}
+          </select>
+        </div>
+        <div>
+          <label style={{ fontSize: 10.5, fontWeight: 700, color: "#64748b", textTransform: "uppercase", display: "block", marginBottom: 4 }}>Expires</label>
+          <select style={iS} value={days} onChange={e => setDays(e.target.value)}>
+            <option value="2">2 days</option><option value="7">7 days</option><option value="30">30 days</option>
+          </select>
+        </div>
+        <button onClick={create} disabled={busy || (mode === "existing" ? !memberId : !newName.trim())} style={{ padding: "9px 18px", borderRadius: 8, border: "none", background: (mode === "existing" ? memberId : newName.trim()) ? "#69BE28" : "#1A3050", color: (mode === "existing" ? memberId : newName.trim()) ? "#fff" : "#475569", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", height: 38 }}>Create Link</button>
+      </div>
+      {mode === "existing" && unlinked.length === 0 && <div style={{ fontSize: 11.5, color: "#f59e0b", marginTop: 8 }}>Everyone on the roster already has an account. Use "Someone new" to add a person.</div>}
+
+      {!loading && active.length > 0 && (
+        <div style={{ marginTop: 18 }}>
+          <div style={{ fontSize: 10.5, fontWeight: 700, color: "#64748b", textTransform: "uppercase", marginBottom: 8 }}>Active invites</div>
+          {active.map(i => (
+            <div key={i.code} style={{ background: "#0A192F", borderRadius: 10, border: "1px solid #1A3050", padding: "10px 12px", marginBottom: 6 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>{i.name}</span>
+                <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: (ROLE_COLOR[i.jobRole] || "#64748b") + "22", color: ROLE_COLOR[i.jobRole] || "#64748b", fontWeight: 800 }}>{ROLE_LABEL[i.jobRole] || "Technician"}</span>
+                <span style={{ fontSize: 11, color: "#475569" }}>expires {new Date(i.expiresAt).toLocaleDateString()}</span>
+                <button onClick={() => revoke(i.code)} style={{ marginLeft: "auto", background: "none", border: "none", color: "#475569", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>Revoke</button>
+              </div>
+              <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                <button onClick={() => copy(i.code)} style={{ padding: "7px 12px", borderRadius: 7, border: "1px solid #69BE28", background: copied === i.code ? "#69BE28" : "transparent", color: copied === i.code ? "#fff" : "#82CC4A", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{copied === i.code ? "Copied ✓" : "Copy link"}</button>
+                <a href={`sms:?&body=${encodeURIComponent(`${i.name} — here's your login for the FWT project app. Tap to set it up: ${inviteUrl(i.code)}`)}`} style={{ padding: "7px 12px", borderRadius: 7, border: "1px solid #1A3050", color: "#94a3b8", fontSize: 11.5, fontWeight: 700, textDecoration: "none" }}>Text it</a>
+                <a href={`mailto:?subject=${encodeURIComponent("Your FWT Workspaces login")}&body=${encodeURIComponent(`${i.name},\n\nHere's your access to the FWT project tracking app. Open this link on your phone and sign in — everything else is set up for you:\n\n${inviteUrl(i.code)}\n\nThis link works once and expires ${new Date(i.expiresAt).toLocaleDateString()}.`)}`} style={{ padding: "7px 12px", borderRadius: 7, border: "1px solid #1A3050", color: "#94a3b8", fontSize: 11.5, fontWeight: 700, textDecoration: "none" }}>Email it</a>
+                <code style={{ padding: "7px 10px", borderRadius: 7, background: "#13294d", color: "#64748b", fontSize: 11, letterSpacing: "0.05em" }}>{i.code.slice(0, 6)}…</code>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {!loading && spent.length > 0 && (
+        <div style={{ marginTop: 14 }}>
+          <div style={{ fontSize: 10.5, fontWeight: 700, color: "#475569", textTransform: "uppercase", marginBottom: 6 }}>Used / expired</div>
+          {spent.slice(0, 6).map(i => (
+            <div key={i.code} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11.5, color: "#475569", padding: "4px 0" }}>
+              <span>{i.usedBy ? "✓" : "⌛"}</span><span style={{ color: "#64748b" }}>{i.name}</span>
+              <span>{i.usedBy ? `joined ${new Date(i.usedAt).toLocaleDateString()}${i.usedEmail ? ` · ${i.usedEmail}` : ""}` : "expired"}</span>
+              <button onClick={() => revoke(i.code)} style={{ marginLeft: "auto", background: "none", border: "none", color: "#334155", cursor: "pointer", fontSize: 11 }}>Clear</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function UserAdminView({ teamRoster }) {
   const [users, setUsers] = useState({}); const [loading, setLoading] = useState(true);
   useEffect(() => { load(); }, []);
   async function load() { setLoading(true); try { setUsers(await fbReadUsers() || {}); } catch {} setLoading(false); }
@@ -1149,6 +1362,7 @@ function UserAdminView() {
   if (loading) return <div style={{ padding: 40, textAlign: "center", color: "#64748b" }}>Loading...</div>;
   return (<div style={{ maxWidth: 700, margin: "0 auto", padding: 24 }}>
     <p style={{ fontSize: 13, color: "#64748b", marginBottom: 20 }}>Manage who can access FWT Workspaces.</p>
+    <InvitePanel teamRoster={teamRoster} />
     <div style={{ background: "#0F2444", borderRadius: 12, border: "1px solid #1A3050", padding: 20, marginBottom: 24 }}>
       <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", marginBottom: 10, textTransform: "uppercase" }}>Email Notifications</div>
       <p style={{ fontSize: 12, color: "#64748b", marginBottom: 10 }}>Daily logs, timesheets, and task notifications are automatically emailed to all admins. Add an additional recipient below (e.g., office manager, payroll).</p>

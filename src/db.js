@@ -94,6 +94,28 @@ export const putAssembly       = (id, asm)  => dbPut(`${ROOT}/assemblies/${id}`,
 export const deleteAssembly    = (id)       => dbDelete(`${ROOT}/assemblies/${id}`);
 export const putEstimatingDefaults = (d)    => dbPut(`${ROOT}/estimatingDefaults`, d);
 
+/* ── invites ────────────────────────────────────────────────────
+   Invites live OUTSIDE /tracker because an invitee must read theirs
+   before they're an approved user. The code is the secret: /invites is
+   not listable, but a specific /invites/{code} is readable by any signed-in
+   user. See database.rules.json. */
+export const readInvite   = (code)        => dbGet(`/invites/${code}`);
+export const putInvite    = (code, inv)   => dbPut(`/invites/${code}`, inv);
+export const patchInvite  = (code, upd)   => dbPatch(`/invites/${code}`, upd);
+export const deleteInvite = (code)        => dbDelete(`/invites/${code}`);
+export const listInvites  = ()            => dbGet("/invites");
+
+/** Short, unambiguous, hard to guess. No 0/O/1/I so it can be read aloud. */
+export function genInviteCode() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let out = "";
+  const rnd = (typeof crypto !== "undefined" && crypto.getRandomValues)
+    ? Array.from(crypto.getRandomValues(new Uint32Array(12)))
+    : Array.from({ length: 12 }, () => Math.floor(Math.random() * 4294967296));
+  rnd.forEach(n => { out += alphabet[n % alphabet.length]; });
+  return out;
+}
+
 /* ── users node ─────────────────────────────────────────────────── */
 export const readUsers  = ()         => dbGet("/users");
 export const putUser    = (uid, rec) => dbPut(`/users/${uid}`, rec);
