@@ -46,66 +46,6 @@ function downloadBOMCsv(takeoffData, label) {
   const overheadPct = n(d.overheadPct);
 
   // Compute totals
-  /* ── Price book integration ────────────────────────────────── */
-  const catalogItems = Object.values(catalog || {});
-  const assemblyList = Object.values(assemblies || {}).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-  const [catQ, setCatQ] = useState("");
-  const [asmId, setAsmId] = useState("");
-  const [asmQty, setAsmQty] = useState(1);
-  const catMatches = catQ.trim() ? catalogItems.filter(i => `${i.manf} ${i.partNum} ${i.desc} ${i.category || ""}`.toLowerCase().includes(catQ.toLowerCase())).slice(0, 8) : [];
-
-  function rowFromCatalog(cat, qty) {
-    return { id: genId(), manf: cat.manf || "", partNum: cat.partNum || "", desc: cat.desc || "", qty: qty || 1, unit: cat.unit || "EA",
-      costPU: n(cat.costPU), markupPct: n(cat.markupPct), pricePU: Math.round(n(cat.costPU) * (1 + n(cat.markupPct) / 100) * 100) / 100,
-      laborHrs: 0, laborRate: 0, laborUnits: { lr: n(cat.laborUnits?.lr), lt: n(cat.laborUnits?.lt), lh: n(cat.laborUnits?.lh), lp: n(cat.laborUnits?.lp) } };
-  }
-  function insertCatalogItem(cat) {
-    // Reuse a fully-empty row if one exists, otherwise append
-    const blankIdx = materials.findIndex(r => !r.manf && !r.partNum && !r.desc && !n(r.qty) && !n(r.costPU));
-    const row = rowFromCatalog(cat, 1);
-    const updated = blankIdx >= 0 ? materials.map((r, i) => i === blankIdx ? row : r) : [...materials, row];
-    setMaterials(updated); save(updated, null, null, null); setCatQ("");
-  }
-  function insertAssembly() {
-    const asm = assemblyList.find(a => a.id === asmId);
-    const qty = n(asmQty) || 1;
-    if (!asm) return;
-    const newRows = [];
-    (asm.items || []).forEach(it => {
-      const cat = catalogItems.find(c => c.id === it.catalogId);
-      if (cat) newRows.push(rowFromCatalog(cat, Math.round(n(it.qtyPer) * qty * 100) / 100));
-    });
-    // assembly-level labor adders ride on a zero-cost marker row so suggestions stay accurate
-    const add = asm.laborAdders || {};
-    if (n(add.lr) + n(add.lt) + n(add.lh) + n(add.lp) > 0) {
-      newRows.push({ id: genId(), manf: "FWT", partNum: "ASSY", desc: `${asm.name} — assembly labor`, qty, unit: "EA", costPU: 0, markupPct: 0, pricePU: 0, laborHrs: 0, laborRate: 0,
-        laborUnits: { lr: n(add.lr), lt: n(add.lt), lh: n(add.lh), lp: n(add.lp) } });
-    }
-    if (!newRows.length) return;
-    const nonBlank = materials.filter(r => r.manf || r.partNum || r.desc || n(r.qty) || n(r.costPU));
-    const updated = [...nonBlank, ...newRows];
-    setMaterials(updated); save(updated, null, null, null); setAsmId(""); setAsmQty(1);
-  }
-  function saveRowToCatalog(row) {
-    if (!onSaveCatalogItem || (!row.partNum && !row.desc)) return;
-    const existing = catalogItems.find(c => c.partNum && row.partNum && c.partNum.toLowerCase() === row.partNum.toLowerCase() && (c.manf || "").toLowerCase() === (row.manf || "").toLowerCase());
-    onSaveCatalogItem({ id: existing?.id || genId(), manf: row.manf || "", partNum: row.partNum || "", desc: row.desc || "", unit: row.unit || "EA",
-      costPU: n(row.costPU), markupPct: n(row.markupPct), laborUnits: existing?.laborUnits || row.laborUnits || { lr: 0, lt: 0, lh: 0, lp: 0 } });
-    alert(`${existing ? "Updated" : "Saved"} "${row.partNum || row.desc}" in the catalog${existing ? " (cost/markup refreshed, labor units kept)" : ""}.`);
-  }
-
-  // Suggested phase hours from row labor units (qty × hrs/unit)
-  const PHASE_MAP = [["lr", "ROUGH IN"], ["lt", "TRIM"], ["lh", "HEAD END"], ["lp", "PROGRAMMING"]];
-  const suggested = { lr: 0, lt: 0, lh: 0, lp: 0 };
-  materials.forEach(r => { if (r.laborUnits) PHASE_MAP.forEach(([k]) => { suggested[k] += n(r.qty) * n(r.laborUnits[k]); }); });
-  const suggestedTotal = PHASE_MAP.reduce((t, [k]) => t + suggested[k], 0);
-  function applySuggested() {
-    const updated = labor.map(r => {
-      const hit = PHASE_MAP.find(([, label]) => (r.desc || "").toUpperCase().includes(label));
-      return hit ? { ...r, hours: Math.round(suggested[hit[0]] * 4) / 4 } : r;
-    });
-    setLabor(updated); save(null, updated, null, null);
-  }
 
   const matTotal = materials.reduce((s, r) => s + (n(r.qty) * n(r.pricePU)) + (n(r.laborHrs) * n(r.laborRate)), 0);
   const matExtPrice = materials.reduce((s, r) => s + (n(r.qty) * n(r.pricePU)), 0);

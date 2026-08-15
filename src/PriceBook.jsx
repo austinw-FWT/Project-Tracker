@@ -97,6 +97,16 @@ function CatalogTab({ items, onSave, onDelete, isMobile, defaults }) {
     : items;
   if (catFilter === "uncat") filtered = filtered.filter(i => !i.category);
   else if (catFilter !== "all") filtered = filtered.filter(i => i.category === catFilter);
+  // Grouped browsing when idle; flat list while searching or filtered.
+  const groups = (!q.trim() && catFilter === "all")
+    ? [
+        ...presentCats
+          .map(c => ({ name: c, rows: filtered.filter(i => i.category === c) }))
+          .filter(g => g.rows.length),
+        ...(filtered.some(i => !i.category) ? [{ name: "Uncategorized", rows: filtered.filter(i => !i.category) }] : []),
+      ]
+    : [{ name: null, rows: filtered }];
+
   function bulkAssign() {
     if (!bulkCat || !filtered.length) return;
     if (!confirm(`Set category "${bulkCat}" on all ${filtered.length} parts currently shown?`)) return;
@@ -245,11 +255,6 @@ function CatalogTab({ items, onSave, onDelete, isMobile, defaults }) {
           <Search size={13} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: "#475569" }} />
           <input style={{ ...iS, paddingLeft: 30 }} value={q} onChange={e => setQ(e.target.value)} placeholder="Search manufacturer, part #, description…" />
         </div>
-        <select value={catFilter} onChange={e => setCatFilter(e.target.value)} style={{ ...iS, width: "auto", minWidth: 160, padding: "8px 10px" }}>
-          <option value="all">All categories ({items.length})</option>
-          {categories.map(c => <option key={c} value={c}>{c} ({items.filter(i => i.category === c).length})</option>)}
-          {uncategorized > 0 && <option value="__none">Uncategorized ({uncategorized})</option>}
-        </select>
         <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls,.xlsm,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" style={{ display: "none" }} onChange={importFile} />
         <button onClick={() => fileRef.current?.click()} style={{ ...btnG, background: "#1A3050", color: "#94a3b8" }}><Upload size={13} /> Import CSV / Excel</button>
         <button onClick={newItem} style={btnG}><Plus size={14} /> Add Part</button>

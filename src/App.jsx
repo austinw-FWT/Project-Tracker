@@ -1228,6 +1228,10 @@ function PredefinedEmailSetting() {
  * "Who are you?" screen and land straight in Field Mode.
  */
 function InvitePanel({ teamRoster }) {
+  // Local input style. This was previously referencing an `iS` that only
+  // existed inside other components, which threw a ReferenceError and took
+  // the whole User Admin page down when it rendered.
+  const iS = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1A3050", background: "#0A192F", color: "#e2e8f0", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none", boxSizing: "border-box" };
   const [invites, setInvites] = useState({});
   const [loading, setLoading] = useState(true);
   const [mode, setMode] = useState("existing");     // existing roster member | brand new person
