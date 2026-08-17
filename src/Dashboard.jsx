@@ -3,6 +3,7 @@ import { AlertCircle, Clock, DollarSign, CheckCircle2, Calendar, ArrowRight, Tre
 import { laborTotals } from "./laborMath.js";
 import { scheduleEntries } from "./db.js";
 import { resolveJobRole } from "./permissions.js";
+import InvoiceProgress from "./InvoiceProgress.jsx";
 
 export default function Dashboard({ data, myName, onSelectProject, onNavigate, perms, teamRoster }) {
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768);
@@ -76,6 +77,7 @@ export default function Dashboard({ data, myName, onSelectProject, onNavigate, p
         <p style={{ fontSize: 13, color: "#94a3b8", margin: 0 }}>{new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</p>
       </div>
 
+      {perms?.isAdminRole && <InvoiceProgress projects={data.projects} isMobile={isMobile} onSelectProject={onSelectProject} />}
       {perms?.isAdminRole && <LogCompliance projects={data.projects} teamRoster={teamRoster || data.teamRoster} schedule={schedule} isMobile={isMobile} onSelectProject={onSelectProject} />}
 
       {/* Top Row: Today + Daily Progress */}

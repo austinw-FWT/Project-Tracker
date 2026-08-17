@@ -12,6 +12,7 @@ import WarrantyTracker from "./WarrantyTracker.jsx";
 import MigrationTool from "./MigrationTool.jsx";
 import FieldMode from "./FieldMode.jsx";
 import PriceBook from "./PriceBook.jsx";
+import ProjectImport from "./ProjectImport.jsx";
 import { resolveJobRole, getPermissions, JOB_ROLES, ROLE_LABEL, ROLE_COLOR } from "./permissions.js";
 import Briefing from "./Briefing.jsx";
 
@@ -602,12 +603,13 @@ function Tracker({ user, userRecord }) {
     ...(perms.seeEstimating ? [
       { id: "opportunities", label: "Opportunities", icon: "🎯" },
       { id: "pricebook", label: "Price Book", icon: "💲" },
+      { id: "import", label: "Import Projects", icon: "📥" },
     ] : []),
     { id: "timesheets", label: "My Timesheets", icon: "⏱️" },
   ];
 
   const currentPageTitle = selectedProject ? selectedProject.name
-    : view === "myspace" ? (mySpaceTab === "briefing" ? "The Briefing" : mySpaceTab === "daily" ? "Daily Task Board" : mySpaceTab === "dailylog" ? "Daily Log" : mySpaceTab === "opportunities" ? "Opportunities" : mySpaceTab === "pricebook" ? "Price Book" : "My Timesheets")
+    : view === "myspace" ? (mySpaceTab === "briefing" ? "The Briefing" : mySpaceTab === "daily" ? "Daily Task Board" : mySpaceTab === "dailylog" ? "Daily Log" : mySpaceTab === "opportunities" ? "Opportunities" : mySpaceTab === "pricebook" ? "Price Book" : mySpaceTab === "import" ? "Import Projects" : "My Timesheets")
     : view === "team" ? "Team Roster" : view === "schedule" ? "Team Schedule" : view === "admin" ? "User Admin"
     : view === "contacts" ? "Contacts" : view === "warranties" ? "Warranties" : view === "dashboard" ? "Dashboard"
     : view === "board" ? "Project Board" : "Phase Settings";
@@ -796,6 +798,8 @@ function Tracker({ user, userRecord }) {
             <MyDailyLog dailyLogs={getMyPrivate().dailyLogs || []} projects={data.projects} teamRoster={data.teamRoster} myName={myName} myEmail={user.email} predefinedEmail={data.adminSettings?.predefinedEmail || ""}
               onSubmit={submitDailyLogs}
               onDeleteLog={logs => saveMyPrivate({ dailyLogs: logs })} />
+          ) : view === "myspace" && mySpaceTab === "import" && perms.seeEstimating ? (
+            <ProjectImport existingProjects={data.projects} isMobile={isMobile} onAddProject={addProject} />
           ) : view === "myspace" && mySpaceTab === "pricebook" && perms.seeEstimating ? (
             <PriceBook catalog={data.catalog || {}} assemblies={data.assemblies || {}} defaults={data.estimatingDefaults || {}} isMobile={isMobile}
               onSaveItem={item => { applyLocal({ ...latestData.current, catalog: { ...(latestData.current.catalog || {}), [item.id]: item } }); persist(putCatalogItem(item.id, item)); }}
