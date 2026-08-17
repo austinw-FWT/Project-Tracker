@@ -32,8 +32,14 @@ const cellNum = v => {
 const clean = v => (typeof v === "string" ? v.trim() : v ?? "");
 
 /* ── file classification by name ─────────────────────────────── */
-export function classifyFile(name) {
+export function classifyFile(name, path) {
   const n = name.toLowerCase();
+  const inCloseout = /close[\s_-]?out/i.test(path || "");
+  // Invoices live in the job's closeout folder. Accept any document there
+  // that looks like an invoice, plus INV-named files found anywhere.
+  if (/\.(pdf|docx?|xlsx?)$/.test(n) && (/(^|[^a-z])(inv|invoice|pi)[-_ #]?\d|billing/.test(n) || inCloseout)) {
+    if (!/^pif|[-_]pif[-_]/.test(n)) return "invoice";
+  }
   if (/^pif|[-_]pif[-_]|pif-\d/.test(n) && /\.xlsx?$/.test(n)) return "pif";
   if (/\.xlsx?$/.test(n) && /(takeoff|^01_to|_to\d{2}_|bom)/.test(n)) return "takeoff";
   if (/\.docx$/.test(n) && /(pro\d{2}|proposal|_pro_)/.test(n)) return "proposal";
@@ -46,6 +52,75 @@ export function classifyFile(name) {
 export function jobNumberFromName(name, path) {
   const m = (path || name).match(/\b(2[0-9]{5})\b/);
   return m ? m[1] : null;
+}
+
+/* ── Invoices (closeout folder) ───────────────────────────────
+   Amounts come from the PIF's Schedule of Values, which is authoritative.
+   These files supply the invoice numbers, dates, and the documents
+   themselves — and give us something to reconcile the SOV against. */
+export function parseInvoiceFile(file) {
+  const name = file.name.replace(/\.[^.]+$/, "");
+  // invoice number: INV-1234, INV 1234, PI#02, 260349-PI01, or a bare 4-6 digit run
+  let number = "";
+  const patterns = [
+    /(?:inv(?:oice)?)[-_ #]*([A-Za-z0-9]{2,12})/i,
+    /\bpi[-_ #]*0*(\d{1,2})\b/i,
+    /\b(\d{4,6})\b/,
+  ];
+  for (const re of patterns) { const m = name.match(re); if (m) { number = m[1]; break; } }
+  if (/\bpi[-_ #]*0*\d{1,2}\b/i.test(name) && number && !/^inv/i.test(number)) number = "PI#" + String(number).padStart(2, "0");
+
+  // date: 2026-03-08 / 03-08-2026 / 030826, else the file's own timestamp
+  let date = "";
+  const d1 = name.match(/\b(20\d{2})[-_.]?(\d{2})[-_.]?(\d{2})\b/);
+  const d2 = name.match(/\b(\d{2})[-_.](\d{2})[-_.](20\d{2})\b/);
+  if (d1) date = `${d1[1]}-${d1[2]}-${d1[3]}`;
+  else if (d2) date = `${d2[3]}-${d2[1]}-${d2[2]}`;
+  else if (file.lastModified) date = new Date(file.lastModified).toISOString().split("T")[0];
+
+  const amt = name.match(/\$\s?([\d,]+(?:\.\d{2})?)/);
+  return {
+    fileName: file.name,
+    path: file.webkitRelativePath || "",
+    number, date,
+    amountFromName: amt ? parseFloat(amt[1].replace(/,/g, "")) : null,
+    sizeKB: Math.round((file.size || 0) / 1024),
+  };
+}
+
+/** Build invoice records: SOV progress columns give the amounts, closeout
+ *  files give numbers/dates/documents. Matched in order when counts line up. */
+export function reconcileInvoices(pif, invoiceFiles) {
+  const out = { records: [], warnings: [] };
+  const sovCols = [];
+  if (pif?.invoicing?.progressDraws?.length) sovCols.push(...pif.invoicing.progressDraws);
+
+  const files = [...invoiceFiles].sort((a, b) => (a.date || "").localeCompare(b.date || "") || a.fileName.localeCompare(b.fileName));
+
+  if (sovCols.length === 0 && files.length === 0) return out;
+
+  if (sovCols.length && files.length && sovCols.length !== files.length) {
+    out.warnings.push(`PIF shows ${sovCols.length} progress invoice${sovCols.length > 1 ? "s" : ""} billed but the closeout folder has ${files.length} invoice file${files.length > 1 ? "s" : ""} — check for a missing or extra copy.`);
+  }
+
+  const n = Math.max(sovCols.length, files.length);
+  for (let i = 0; i < n; i++) {
+    const draw = sovCols[i], f = files[i];
+    out.records.push({
+      id: genId(),
+      invoiceNumber: f?.number || draw?.label || `PI#${String(i + 1).padStart(2, "0")}`,
+      amount: draw ? String(Math.round(draw.amount * 100) / 100) : (f?.amountFromName != null ? String(f.amountFromName) : ""),
+      date: f?.date || "",
+      description: draw ? `${draw.label} — ${Math.round(draw.pct * 100)}% progress billing` : "From closeout folder",
+      status: "sent",
+      sourceFile: f?.fileName || "",
+      amountSource: draw ? "PIF schedule of values" : (f?.amountFromName != null ? "filename" : "unknown"),
+      createdAt: new Date().toISOString(),
+    });
+  }
+  const noAmt = out.records.filter(r => !r.amount).length;
+  if (noAmt) out.warnings.push(`${noAmt} invoice${noAmt > 1 ? "s have" : " has"} no readable amount — set them by hand after import.`);
+  return out;
 }
 
 /* ── PIF ──────────────────────────────────────────────────────── */
@@ -72,6 +147,17 @@ export async function parsePIF(file) {
     lineItems.push({ item: String(label).trim(), total, pctToDate: numAt(`K${r}`), invoicedToDate: Math.round(lineInv * 100) / 100 });
   }
   const contractTotal = numAt("C66") || numAt("C69") || numAt("C68");
+  // Each PI# column that carries value is one progress invoice already billed.
+  const progressDraws = [];
+  ["D", "E", "F", "G", "H", "I", "J"].forEach((col, idx) => {
+    let drawTotal = 0;
+    for (let r = 56; r <= 65; r++) drawTotal += cellNum(sheet[`${col}${r}`]?.v) * numAt(`C${r}`);
+    if (drawTotal > 0) progressDraws.push({
+      label: clean(sheet[`${col}55`]?.v) || `PI#${String(idx + 1).padStart(2, "0")}`,
+      amount: Math.round(drawTotal * 100) / 100,
+      pct: contractTotal ? drawTotal / contractTotal : 0,
+    });
+  });
 
   // "Name <email> Name2 <email2>" jammed into one cell — split into contacts
   const blob = `${at("C20")} ${at("C28")}`;
@@ -110,6 +196,7 @@ export async function parsePIF(file) {
       invoicedToDate: Math.round(invoiced * 100) / 100,
       pctInvoiced: contractTotal ? Math.round((invoiced / contractTotal) * 10000) / 10000 : 0,
       lineItems,
+      progressDraws,
       source: "PIF",
       syncedAt: new Date().toISOString(),
     } : null,
@@ -284,10 +371,10 @@ export async function parseProposal(file) {
 export async function buildCandidate(files, teamNames = DEFAULT_TEAM_NAMES) {
   const cand = { id: genId(), files: [], warnings: [], takeoffScopes: [] };
   let pif = null, proposal = null;
-  const materials = [], labor = {};
+  const materials = [], labor = {}, invoiceFiles = [];
 
   for (const f of files) {
-    const kind = classifyFile(f.name);
+    const kind = classifyFile(f.name, f.webkitRelativePath);
     cand.files.push({ name: f.name, kind });
     try {
       if (kind === "pif" && !pif) pif = await parsePIF(f);
@@ -323,6 +410,11 @@ export async function buildCandidate(files, teamNames = DEFAULT_TEAM_NAMES) {
   cand.billingEmail = p.billingEmail || "";
   cand.invoicing = p.invoicing || null;
   cand.materials = materials;
+
+  const rec = reconcileInvoices(p, invoiceFiles);
+  cand.invoices = rec.records;
+  cand.invoiceFiles = invoiceFiles;
+  rec.warnings.forEach(w => cand.warnings.push(w));
 
   // Price: PIF is authoritative; proposal fills in when the PIF has none
   cand.bidAmount = p.bidAmount || proposal?.totalPrice || 0;
@@ -366,6 +458,14 @@ export function candidateToProject(c) {
     laborHours: Object.keys(c.laborHours || {}).length ? c.laborHours : null,
     materials: c.materials || [],
     invoicing: c.invoicing || null,
+    invoices: (c.invoices || []).map(({ file, ...rest }) => rest),
+    documents: (c.invoiceFiles || []).map(f => ({
+      name: f.number ? `Invoice ${f.number}` : f.fileName,
+      type: "Invoice",
+      fileName: f.fileName,
+      sourcePath: f.path,
+      addedAt: new Date().toISOString(),
+    })),
     importedFrom: { files: (c.files || []).map(f => f.name), importedAt: new Date().toISOString() },
   };
 }

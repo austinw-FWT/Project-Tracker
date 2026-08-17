@@ -144,10 +144,11 @@ export default function ProjectImport({ existingProjects, onAddProject, isMobile
               {c.customer}{c.siteAddress ? ` · ${c.siteAddress}` : ""}
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, 1fr)", gap: 8, marginBottom: 10 }}>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(5, 1fr)", gap: 8, marginBottom: 10 }}>
               {[["Contract", money(c.contractAmount)], ["Takeoff hours", c.takeoffHours ? `${c.takeoffHours}h` : "—"],
                 ["Materials", c.materials?.length ? `${c.materials.length} lines` : "—"],
-                ["Invoiced", c.invoicing ? `${Math.round(c.invoicing.pctInvoiced * 100)}%` : "—"]].map(([l, v]) => (
+                ["Invoiced", c.invoicing ? `${Math.round(c.invoicing.pctInvoiced * 100)}%` : "—"],
+                ["Invoices", c.invoices?.length ? `${c.invoices.length} found` : "—"]].map(([l, v]) => (
                 <div key={l} style={{ background: "#0A192F", borderRadius: 8, padding: "8px 10px" }}>
                   <div style={{ fontSize: 9.5, color: "#475569", textTransform: "uppercase", letterSpacing: "0.05em" }}>{l}</div>
                   <div style={{ fontSize: 13.5, fontWeight: 700, color: "#e2e8f0", marginTop: 2 }}>{v}</div>
@@ -187,6 +188,19 @@ export default function ProjectImport({ existingProjects, onAddProject, isMobile
                 )}
                 {c.invoicing?.lineItems?.length > 0 && (
                   <div style={{ marginBottom: 6 }}><strong style={{ color: "#3b82f6" }}>Schedule of values:</strong> {c.invoicing.lineItems.length} lines, {money(c.invoicing.invoicedToDate)} of {money(c.invoicing.contractTotal)} invoiced</div>
+                )}
+                {c.invoices?.length > 0 && (
+                  <div style={{ marginBottom: 6 }}>
+                    <strong style={{ color: "#3b82f6" }}>Invoices (closeout):</strong>
+                    {c.invoices.map((iv, i) => (
+                      <div key={i} style={{ paddingLeft: 12, color: "#94a3b8" }}>
+                        {iv.invoiceNumber} — {iv.amount ? "$" + Number(iv.amount).toLocaleString() : "amount not readable"}
+                        {iv.date ? ` · ${iv.date}` : ""}
+                        <span style={{ color: "#475569", fontSize: 10.5 }}> [{iv.amountSource}]</span>
+                        {iv.sourceFile ? <span style={{ color: "#475569", fontSize: 10.5 }}> · {iv.sourceFile}</span> : ""}
+                      </div>
+                    ))}
+                  </div>
                 )}
                 {c.scopeNotes && (
                   <div><strong style={{ color: "#94a3b8" }}>Scope:</strong> <span style={{ color: "#64748b" }}>{c.scopeNotes.slice(0, 320)}{c.scopeNotes.length > 320 ? "…" : ""}</span></div>
