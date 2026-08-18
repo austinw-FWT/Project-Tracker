@@ -66,6 +66,7 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
   const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
   const [detailId, setDetailId] = useState(null);
   const fileRef = useRef(null);
+  const camRef = useRef(null);
   const restored = useRef(false);
 
   const activeProjectsAll = (projects || []).filter(p => !p.movedToWarranty);
@@ -422,11 +423,20 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
           <div style={{ ...eyebrow, marginBottom: 8 }}>Work performed</div>
           <textarea value={activities} onChange={e => setActivities(e.target.value)} placeholder="Finished Bldg C camera trim, terminated IDF-2, gate operator parts arrived…"
             style={{ width: "100%", minHeight: 84, padding: "11px 13px", borderRadius: 11, border: `1px solid ${T.line}`, background: T.cardAlt, color: T.ink, fontSize: 16, fontFamily: "inherit", outline: "none", resize: "vertical", boxSizing: "border-box" }} />
-          <input ref={fileRef} type="file" accept="image/*" capture="environment" multiple style={{ display: "none" }}
+          {/* Two inputs on purpose. `capture` forces the camera and HIDES the
+              library, which broke the actual field workflow: crews shoot
+              photos all day and write the log at 4:30. Library is primary;
+              the camera stays one tap away. */}
+          <input ref={fileRef} type="file" accept="image/*" multiple style={{ display: "none" }}
+            onChange={e => { const fs = Array.from(e.target.files || []); if (fs.length) setPhotos([...photos, ...fs]); e.target.value = ""; }} />
+          <input ref={camRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }}
             onChange={e => { const fs = Array.from(e.target.files || []); if (fs.length) setPhotos([...photos, ...fs]); e.target.value = ""; }} />
           <div style={{ display: "flex", gap: 8, marginTop: 9 }}>
             <button onClick={() => fileRef.current?.click()} style={{ flex: 1, minHeight: 50, borderRadius: 11, border: `1.5px solid ${T.green}`, background: T.greenWash, color: T.green, fontSize: 14.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
-              📷 Add photos{photos.length > 0 ? ` (${photos.length})` : ""}
+              🖼 From today's photos{photos.length > 0 ? ` (${photos.length})` : ""}
+            </button>
+            <button onClick={() => camRef.current?.click()} title="Take a photo now" style={{ minHeight: 50, padding: "0 18px", borderRadius: 11, border: `1px solid ${T.lineStrong}`, background: "transparent", color: T.ink, fontSize: 18, cursor: "pointer", fontFamily: "inherit" }}>
+              📷
             </button>
             {photos.length > 0 && <button onClick={() => setPhotos([])} style={{ minHeight: 50, padding: "0 16px", borderRadius: 11, border: `1px solid ${T.line}`, background: "transparent", color: T.inkSoft, fontSize: 13.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Clear</button>}
           </div>

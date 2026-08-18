@@ -930,6 +930,7 @@ function NotesTab({ project, onUpdate }) {
     fact. Uploads compress client-side like everywhere else. */
 function LogPhotos({ log, project, onUpdate }) {
   const fileRef = useRef(null);
+  const camRef = useRef(null);
   const [busy, setBusy] = useState(false);
   const photos = log.photos || [];
 
@@ -967,12 +968,22 @@ function LogPhotos({ log, project, onUpdate }) {
           ))}
         </div>
       )}
-      <input ref={fileRef} type="file" accept="image/*" capture="environment" multiple style={{ display: "none" }}
+      {/* No `capture` — this must offer the photo library, since photos are
+          usually being attached after the fact. */}
+      <input ref={fileRef} type="file" accept="image/*" multiple style={{ display: "none" }}
         onChange={e => { addPhotos(e.target.files); e.target.value = ""; }} />
-      <button onClick={() => fileRef.current?.click()} disabled={busy}
-        style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 7, border: "1px dashed #1A3050", background: "transparent", color: busy ? "#475569" : "#64748b", fontSize: 11.5, fontWeight: 600, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>
-        <Camera size={12} /> {busy ? "Uploading…" : photos.length ? "Add more photos" : "Add photos"}
-      </button>
+      <input ref={camRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }}
+        onChange={e => { addPhotos(e.target.files); e.target.value = ""; }} />
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        <button onClick={() => fileRef.current?.click()} disabled={busy}
+          style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 7, border: "1px dashed #1A3050", background: "transparent", color: busy ? "#475569" : "#64748b", fontSize: 11.5, fontWeight: 600, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>
+          <Camera size={12} /> {busy ? "Uploading…" : photos.length ? "Add more photos" : "Add photos"}
+        </button>
+        <button onClick={() => camRef.current?.click()} disabled={busy} title="Take a photo now"
+          style={{ padding: "6px 10px", borderRadius: 7, border: "1px dashed #1A3050", background: "transparent", color: busy ? "#475569" : "#64748b", fontSize: 11.5, cursor: busy ? "default" : "pointer", fontFamily: "inherit" }}>
+          📷
+        </button>
+      </div>
     </div>
   );
 }

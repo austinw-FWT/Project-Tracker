@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Plus, X, Send, ChevronDown, ChevronUp, Clock, Users, Briefcase, Archive, Trash2, Camera } from "lucide-react";
+import { Plus, X, Send, ChevronDown, ChevronUp, Clock, Users, Briefcase, Archive, Trash2, Camera, Image as ImageIcon } from "lucide-react";
 import { LABOR_PHASES } from "./App.jsx";
 import { remainingHours } from "./laborMath.js";
 import { openOutlookCompose } from "./emailHelper.js";
@@ -43,16 +43,26 @@ function totalCrewHours(crew) {
     desktop, thumbnails with remove. Files upload (compressed) at submit. */
 function EntryPhotos({ entry, onAdd, onRemove }) {
   const fileRef = useRef(null);
+  const camRef = useRef(null);
   const photos = entry.photos || [];
   return (
     <div style={{ marginTop: 12 }}>
       <label style={lS}>Photos</label>
-      <input ref={fileRef} type="file" accept="image/*" capture="environment" multiple style={{ display: "none" }}
+      {/* Library picker is primary — crews shoot photos through the day and
+          write the log at the end of it. `capture` would force the camera and
+          hide the library entirely, so it lives on its own button. */}
+      <input ref={fileRef} type="file" accept="image/*" multiple style={{ display: "none" }}
+        onChange={e => { onAdd(e.target.files); e.target.value = ""; }} />
+      <input ref={camRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }}
         onChange={e => { onAdd(e.target.files); e.target.value = ""; }} />
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         <button type="button" onClick={() => fileRef.current?.click()}
           style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 16px", borderRadius: 8, border: "1.5px solid #69BE28", background: "#69BE2815", color: "#82CC4A", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", minHeight: 42 }}>
-          <Camera size={14} /> Add Photos{photos.length ? ` (${photos.length})` : ""}
+          <ImageIcon size={14} /> Choose Photos{photos.length ? ` (${photos.length})` : ""}
+        </button>
+        <button type="button" onClick={() => camRef.current?.click()} title="Take a photo now"
+          style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 14px", borderRadius: 8, border: "1px solid #1A3050", background: "transparent", color: "#94a3b8", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", minHeight: 42 }}>
+          <Camera size={14} /> Take Photo
         </button>
         {photos.length > 0 && (
           <span style={{ fontSize: 11.5, color: "#64748b" }}>Compressed on your device before upload — works on weak signal.</span>
