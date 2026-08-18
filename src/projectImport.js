@@ -31,26 +31,77 @@ const cellNum = v => {
 };
 const clean = v => (typeof v === "string" ? v.trim() : v ?? "");
 
+/* ── grouping: which files belong to the same job ─────────────
+   A job folder normally contains subfolders (02_PIF, 01_Takeoffs,
+   04_Closeout…), so grouping by a file's immediate parent would treat every
+   subfolder as its own project. Instead we locate the JOB FOLDER itself:
+     1. a path segment carrying a job number (2xxxxx) marks it;
+     2. failing that, each PIF defines a job — its root is the shallowest
+        ancestor not shared with another PIF;
+     3. failing that, the whole selection is a single job.
+   Files attach to the longest matching root, so anything nested at any
+   depth lands on the right project. */
+export function groupFilesByJob(files) {
+  const pathOf = f => f.webkitRelativePath || f.name;
+  const split = p => p.split("/").filter(Boolean);
+  const JOB_SEG = /\b(2\d{5})\b/;
+  const isPifPath = p => classifyFile(split(p).pop() || "", p) === "pif";
+
+  const paths = files.map(pathOf);
+  const roots = new Set();
+  for (const p of paths) {
+    const seg = split(p);
+    // Only FOLDER segments can be a job root. Without this guard a filename
+    // carrying the job number (PIF-260349.xlsx) is mistaken for the job
+    // folder, so the PIF splits off alone and its siblings fall through to
+    // __unmatched__ — which is what made subfolders look like separate jobs.
+    const folders = seg.slice(0, -1);
+    const i = folders.findIndex(x => JOB_SEG.test(x));
+    if (i >= 0) roots.add(folders.slice(0, i + 1).join("/"));
+  }
+  if (roots.size === 0) {
+    const pifs = paths.filter(isPifPath);
+    if (pifs.length > 1) {
+      for (const p of pifs) {
+        const seg = split(p);
+        for (let d = 1; d < seg.length; d++) {
+          const anc = seg.slice(0, d).join("/");
+          if (!pifs.some(q => q !== p && (q === anc || q.startsWith(anc + "/")))) { roots.add(anc); break; }
+        }
+      }
+    }
+  }
+
+  const groups = new Map();
+  if (roots.size === 0) { groups.set("", files); return groups; }
+  const sorted = [...roots].sort((a, b) => b.length - a.length);
+  for (const f of files) {
+    const p = pathOf(f);
+    const root = sorted.find(r => p === r || p.startsWith(r + "/")) ?? "__unmatched__";
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(f);
+  }
+  return groups;
+}
+
 /* ── file classification by name ─────────────────────────────── */
 export function classifyFile(name, path) {
-  const n = name.toLowerCase();
+  const n = (name || "").toLowerCase();
   const inCloseout = /close[\s_-]?out/i.test(path || "");
-  // Invoices live in the job's closeout folder. Accept any document there
-  // that looks like an invoice, plus INV-named files found anywhere.
   if (/\.(pdf|docx?|xlsx?)$/.test(n) && (/(^|[^a-z])(inv|invoice|pi)[-_ #]?\d|billing/.test(n) || inCloseout)) {
     if (!/^pif|[-_]pif[-_]/.test(n)) return "invoice";
   }
   if (/^pif|[-_]pif[-_]|pif-\d/.test(n) && /\.xlsx?$/.test(n)) return "pif";
   if (/\.xlsx?$/.test(n) && /(takeoff|^01_to|_to\d{2}_|bom)/.test(n)) return "takeoff";
   if (/\.docx$/.test(n) && /(pro\d{2}|proposal|_pro_)/.test(n)) return "proposal";
-  if (/\.xlsx?$/.test(n)) return "takeoff";     // spreadsheets in a job folder are usually takeoffs
+  if (/\.xlsx?$/.test(n)) return "takeoff";
   if (/\.docx$/.test(n)) return "proposal";
   return "other";
 }
 
-/** Job number from a filename like PIF-260349.xlsx, or from folder path. */
+/** Job number from a filename like PIF-260349.xlsx, or from the folder path. */
 export function jobNumberFromName(name, path) {
-  const m = (path || name).match(/\b(2[0-9]{5})\b/);
+  const m = (path || name || "").match(/\b(2[0-9]{5})\b/);
   return m ? m[1] : null;
 }
 
@@ -369,13 +420,16 @@ export async function parseProposal(file) {
 
 /* ── Merge into one review candidate ──────────────────────────── */
 export async function buildCandidate(files, teamNames = DEFAULT_TEAM_NAMES) {
-  const cand = { id: genId(), files: [], warnings: [], takeoffScopes: [] };
+  const cand = { id: genId(), files: [], warnings: [], takeoffScopes: [], subfolders: [] };
   let pif = null, proposal = null;
   const materials = [], labor = {}, invoiceFiles = [];
 
   for (const f of files) {
     const kind = classifyFile(f.name, f.webkitRelativePath);
-    cand.files.push({ name: f.name, kind });
+    const rel = String(f.webkitRelativePath || "");
+    const sub = rel.split("/").slice(0, -1).pop() || "";
+    if (sub && !cand.subfolders.includes(sub)) cand.subfolders.push(sub);
+    cand.files.push({ name: f.name, kind, subfolder: sub });
     try {
       if (kind === "pif" && !pif) pif = await parsePIF(f);
       else if (kind === "takeoff") {

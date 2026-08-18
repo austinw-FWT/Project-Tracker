@@ -1,6 +1,6 @@
 import { useState, useRef } from "react";
 import { FolderOpen, Check, X, AlertTriangle, FileSpreadsheet, FileText, Loader } from "lucide-react";
-import { buildCandidate, candidateToProject, classifyFile, LABOR_PHASES } from "./projectImport.js";
+import { buildCandidate, candidateToProject, classifyFile, groupFilesByJob, LABOR_PHASES } from "./projectImport.js";
 
 /**
  * ProjectImport — the review queue.
@@ -36,17 +36,11 @@ export default function ProjectImport({ existingProjects, onAddProject, isMobile
     if (!files.length) return;
     setBusy(true); setStatus("Reading files…");
 
-    // Group by folder when a directory was picked; otherwise treat the whole
-    // selection as one job.
-    const groups = new Map();
-    for (const f of files) {
-      if (classifyFile(f.name) === "other") continue;
-      const rel = f.webkitRelativePath || "";
-      const folder = rel.includes("/") ? rel.split("/").slice(0, -1).join("/") : "__single__";
-      if (!groups.has(folder)) groups.set(folder, []);
-      groups.get(folder).push(f);
-    }
-    if (groups.size === 0) { setStatus("No PIF, takeoff, or proposal files found in that selection."); setBusy(false); return; }
+    // Group by JOB FOLDER, not by immediate parent — a job's files live in
+    // subfolders (02_PIF, 01_Takeoffs, 04_Closeout) and all belong together.
+    const relevant = files.filter(f => classifyFile(f.name, f.webkitRelativePath) !== "other");
+    if (relevant.length === 0) { setStatus("No PIF, takeoff, proposal, or invoice files found in that selection."); setBusy(false); return; }
+    const groups = groupFilesByJob(relevant);
 
     const found = [];
     let i = 0;
@@ -54,7 +48,7 @@ export default function ProjectImport({ existingProjects, onAddProject, isMobile
       i++; setStatus(`Parsing ${i} of ${groups.size}…`);
       try {
         const c = await buildCandidate(groupFiles);
-        c.folder = folder === "__single__" ? "" : folder.split("/").pop();
+        c.folder = folder && folder !== "__unmatched__" ? folder.split("/").pop() : "";
         c.alreadyExists = c.jobNumber && existingJobNums.has(String(c.jobNumber).trim());
         found.push(c);
       } catch (e) {
