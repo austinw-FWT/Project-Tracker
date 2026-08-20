@@ -573,6 +573,7 @@ function Tracker({ user, userRecord }) {
       onSubmit={submitDailyLogs}
       onOpenFullApp={() => setFieldMode(false)}
       onUpdateProject={updateProject}
+      perms={perms}
       isAdmin={isAdmin}
     />;
   }

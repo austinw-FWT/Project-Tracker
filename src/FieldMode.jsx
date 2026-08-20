@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { LABOR_PHASES, genId } from "./App.jsx";
-import { remainingHours } from "./laborMath.js";
+import { remainingHours, bidHours, usedHours, laborTotals } from "./laborMath.js";
 import { uploadLogPhotos } from "./photoUtils.js";
 import { scheduleEntries } from "./db.js";
 
@@ -47,7 +47,11 @@ const THEME_KEY = "fwt-fieldmode-theme";
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 const isoFor = (offset) => { const d = new Date(); d.setDate(d.getDate() + offset); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 
-export default function FieldMode({ projects, teamRoster, schedule, myName, myLogs, onSubmit, onOpenFullApp, onUpdateProject, isAdmin }) {
+export default function FieldMode({ projects, teamRoster, schedule, myName, myLogs, onSubmit, onOpenFullApp, onUpdateProject, isAdmin, perms }) {
+  // Foremen run the job and need to see where the hours stand; techs don't.
+  // Rides on the same foreman/tech switch as financials — change this one
+  // line if apprentices should see the burn too.
+  const canSeeHours = perms ? perms.seeFinancials : true;
   const [themeKey, setThemeKey] = useState(() => { try { return localStorage.getItem(THEME_KEY) || "daylight"; } catch { return "daylight"; } });
   const T = THEMES[themeKey] || THEMES.daylight;
   const [tab, setTab] = useState("today");
@@ -293,6 +297,18 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
               <span style={{ fontFamily: "'Outfit',sans-serif", fontSize: 19, fontWeight: 800, color: "#fff" }}>{todaysProject.name}</span>
             </div>
             <div style={{ fontSize: 12.5, color: "#9FB1CC", marginTop: 2 }}>{todaysProject.customer}{todaysProject.siteAddress ? ` · ${todaysProject.siteAddress}` : ""}</div>
+            {canSeeHours && (() => {
+              const t = laborTotals(todaysProject, LABOR_PHASES);
+              if (!t.bid) return null;
+              const over = t.remaining < 0;
+              return (
+                <div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 8, padding: "5px 10px", borderRadius: 16, background: over ? "#B4231833" : "#ffffff14", border: `1px solid ${over ? "#F8717155" : "#ffffff22"}` }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: over ? "#F87171" : "#9FB1CC" }}>HOURS</span>
+                  <span style={{ fontSize: 11.5, fontWeight: 700, color: "#fff" }}>{over ? `${Math.abs(t.remaining).toFixed(1)}h over` : `${t.remaining.toFixed(1)}h left`}</span>
+                  <span style={{ fontSize: 11, color: "#9FB1CC" }}>· {t.pctUsed}% used</span>
+                </div>
+              );
+            })()}
           </div>
           <div style={{ padding: "12px 16px 14px" }}>
             <div style={{ ...eyebrow, marginBottom: 8 }}>Site brain — tap to copy</div>
@@ -507,6 +523,52 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
             {psi.parking && <div style={{ marginTop: 8, padding: "9px 12px", borderRadius: 10, background: T.amberWash, border: `1px solid ${T.amber}30`, fontSize: 12.5, fontWeight: 600, color: T.amber }}>🚧 {psi.parking}</div>}
           </div>
         )}
+
+        {/* Hours — foremen only */}
+        {canSeeHours && (() => {
+          const t = laborTotals(detail, LABOR_PHASES);
+          if (!t.bid) return null;
+          const phases = LABOR_PHASES.filter(lp => bidHours(detail, lp.id) > 0 || usedHours(detail, lp.id) > 0);
+          const over = t.remaining < 0;
+          return (
+            <div style={{ ...card, padding: "13px 16px" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                <div style={eyebrow}>Hours on this job</div>
+                <div style={{ fontSize: 12, fontWeight: 800, color: over ? T.red : t.pctUsed > 90 ? T.amber : T.green }}>
+                  {t.used.toFixed(1)} of {t.bid.toFixed(1)}h · {t.pctUsed}%
+                </div>
+              </div>
+
+              <div style={{ height: 10, borderRadius: 5, background: T.chip, overflow: "hidden", marginBottom: 4 }}>
+                <div style={{ width: `${Math.min(t.pctUsed, 100)}%`, height: "100%", borderRadius: 5, background: over ? T.red : t.pctUsed > 90 ? T.amber : T.green }} />
+              </div>
+              <div style={{ fontSize: 12.5, fontWeight: 700, color: over ? T.red : T.inkSoft, marginBottom: 12 }}>
+                {over ? `⚠ Over by ${Math.abs(t.remaining).toFixed(1)}h` : `${t.remaining.toFixed(1)}h remaining`}
+              </div>
+
+              {phases.map(lp => {
+                const b = bidHours(detail, lp.id), u = usedHours(detail, lp.id), r = b - u;
+                const pct = b > 0 ? Math.round((u / b) * 100) : 100;
+                const phaseOver = r < 0;
+                return (
+                  <div key={lp.id} style={{ marginBottom: 9 }}>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 3 }}>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: T.ink, flex: 1 }}>{lp.name}</span>
+                      <span style={{ fontSize: 12, color: T.inkFaint, fontVariantNumeric: "tabular-nums" }}>{u.toFixed(1)} / {b.toFixed(1)}h</span>
+                      <span style={{ fontSize: 12, fontWeight: 800, color: phaseOver ? T.red : r < b * 0.2 ? T.amber : T.green, width: 58, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                        {phaseOver ? `+${Math.abs(r).toFixed(1)}` : r.toFixed(1)}h
+                      </span>
+                    </div>
+                    <div style={{ height: 5, borderRadius: 3, background: T.chip, overflow: "hidden" }}>
+                      <div style={{ width: `${Math.min(pct, 100)}%`, height: "100%", borderRadius: 3, background: phaseOver ? T.red : pct > 90 ? T.amber : T.green }} />
+                    </div>
+                  </div>
+                );
+              })}
+              <div style={{ fontSize: 11, color: T.inkFaint, marginTop: 4 }}>Used hours come from submitted daily logs and update as your crew logs time.</div>
+            </div>
+          );
+        })()}
 
         {/* Scope */}
         {detail.scopeNotes && (
