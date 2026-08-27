@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { LABOR_PHASES, genId } from "./App.jsx";
 import { remainingHours, bidHours, usedHours, laborTotals } from "./laborMath.js";
-import { uploadLogPhotos } from "./photoUtils.js";
+import { uploadLogPhotos, describeUploadError } from "./photoUtils.js";
 import { scheduleEntries } from "./db.js";
 
 /**
@@ -174,9 +174,15 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
         setToast(`Uploading ${photos.length} photo${photos.length > 1 ? "s" : ""}…`);
         try {
           photoUrls = await uploadLogPhotos(photos, proj.id, logId, (done, total) => setToast(`Uploading photos… ${done}/${total}`));
-        } catch {
-          if (!confirm("Photo upload failed (weak signal?).\n\nSubmit the log without photos? You can add them later from better signal.")) { setSubmitting(false); return; }
+        } catch (e) {
+          const why = e?.message || describeUploadError(e);
+          if (!confirm(`${why}\n\nSubmit the log WITHOUT photos?\n\nOK = submit now (photos can be added later from the project's Daily Log tab)\nCancel = keep everything and try again`)) {
+            setSaveError(why);
+            setSubmitting(false);
+            return;
+          }
           photoUrls = [];
+          setSaveError(`Log submitted without photos — ${why}`);
         }
       }
 

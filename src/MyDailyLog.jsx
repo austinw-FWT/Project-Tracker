@@ -3,7 +3,7 @@ import { Plus, X, Send, ChevronDown, ChevronUp, Clock, Users, Briefcase, Archive
 import { LABOR_PHASES } from "./App.jsx";
 import { remainingHours } from "./laborMath.js";
 import { openOutlookCompose } from "./emailHelper.js";
-import { uploadLogPhotos, previewUrl } from "./photoUtils.js";
+import { uploadLogPhotos, previewUrl, describeUploadError } from "./photoUtils.js";
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 
@@ -232,12 +232,15 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
         photoUrlsByEntry[entry.id] = await uploadLogPhotos(files, entry.projectId, logIds[entry.id], () => {
           uploaded++; setUploadMsg(`Uploading photos… ${uploaded}/${totalPhotos}`);
         });
-      } catch {
+      } catch (e) {
         setUploadMsg("");
-        if (!confirm("Photo upload failed — weak signal?\n\nSubmit the log without photos? You can add them later from the project's Daily Log tab.")) {
+        const why = e?.message || describeUploadError(e);
+        if (!confirm(`${why}\n\nSubmit the log WITHOUT photos?`)) {
+          setSaveError(why);
           setSubmitting(false); return;
         }
         photoUrlsByEntry[entry.id] = [];
+        setSaveError(`Log submitted without photos — ${why}`);
       }
     }
     setUploadMsg("");

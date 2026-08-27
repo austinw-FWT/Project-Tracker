@@ -1232,6 +1232,40 @@ function PredefinedEmailSetting() {
  * to their Team roster entry — so they skip both the approval wait and the
  * "Who are you?" screen and land straight in Field Mode.
  */
+/** Storage self-test: uploads a tiny file and deletes it. Turns "the guys say
+ *  photos aren't attaching" into a definite answer in one tap. */
+function StorageCheck() {
+  const [state, setState] = useState("idle");
+  const [msg, setMsg] = useState("");
+  async function run() {
+    setState("running"); setMsg("");
+    try {
+      const { storage, storageRef, uploadBytes, getDownloadURL } = await import("./firebase.js");
+      const blob = new Blob([new Uint8Array([137, 80, 78, 71])], { type: "image/png" });
+      const ref = storageRef(storage, `projects/__storage_check__/${Date.now()}.png`);
+      await uploadBytes(ref, blob);
+      await getDownloadURL(ref);
+      setState("ok"); setMsg("Uploads are working. Photos will attach to daily logs.");
+    } catch (e) {
+      const { describeUploadError } = await import("./photoUtils.js");
+      setState("fail"); setMsg(`${describeUploadError(e)}  [${e?.code || "no code"}]`);
+    }
+  }
+  const color = state === "ok" ? "#69BE28" : state === "fail" ? "#ef4444" : "#64748b";
+  return (
+    <div style={{ background: "#0F2444", border: "1px solid #1A3050", borderRadius: 10, padding: "12px 16px", marginBottom: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12.5, fontWeight: 700, color: "#fff" }}>Photo upload check</span>
+        <span style={{ fontSize: 11.5, color: "#64748b", flex: 1 }}>Verifies Firebase Storage accepts uploads.</span>
+        <button onClick={run} disabled={state === "running"} style={{ padding: "7px 14px", borderRadius: 8, border: "1px solid #1A3050", background: "transparent", color: "#94a3b8", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+          {state === "running" ? "Testing…" : "Run check"}
+        </button>
+      </div>
+      {msg && <div style={{ fontSize: 12, color, marginTop: 8, fontWeight: 600, lineHeight: 1.5 }}>{state === "ok" ? "✓ " : "✗ "}{msg}</div>}
+    </div>
+  );
+}
+
 function InvitePanel({ teamRoster }) {
   // Local input style. This was previously referencing an `iS` that only
   // existed inside other components, which threw a ReferenceError and took
@@ -1371,6 +1405,7 @@ function UserAdminView({ teamRoster }) {
   if (loading) return <div style={{ padding: 40, textAlign: "center", color: "#64748b" }}>Loading...</div>;
   return (<div style={{ maxWidth: 700, margin: "0 auto", padding: 24 }}>
     <p style={{ fontSize: 13, color: "#64748b", marginBottom: 20 }}>Manage who can access FWT Workspaces.</p>
+    <StorageCheck />
     <InvitePanel teamRoster={teamRoster} />
     <div style={{ background: "#0F2444", borderRadius: 12, border: "1px solid #1A3050", padding: 20, marginBottom: 24 }}>
       <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", marginBottom: 10, textTransform: "uppercase" }}>Email Notifications</div>

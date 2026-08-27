@@ -55,11 +55,36 @@ export async function uploadLogPhotos(files, projectId, logId, onProgress) {
   for (let i = 0; i < list.length; i++) {
     const blob = await compressImage(list[i]);
     const ref = storageRef(storage, `projects/${projectId}/dailyLogs/${logId}/${Date.now()}-${i}.jpg`);
-    await uploadBytes(ref, blob);
-    urls.push(await getDownloadURL(ref));
+    try {
+      await uploadBytes(ref, blob);
+      urls.push(await getDownloadURL(ref));
+    } catch (e) {
+      // Re-throw with a cause the person can act on. Reporting a permissions
+      // denial as "weak signal" sent crews chasing a connection problem while
+      // Storage rules quietly rejected every upload.
+      const err = new Error(describeUploadError(e));
+      err.code = e?.code || "unknown";
+      err.original = e;
+      throw err;
+    }
     if (onProgress) onProgress(i + 1, list.length);
   }
   return urls;
+}
+
+/** Turn a Firebase Storage error into something a foreman can read — and an
+ *  admin can act on. */
+export function describeUploadError(e) {
+  const code = String(e?.code || "");
+  if (code.includes("unauthorized") || code.includes("permission")) {
+    return "Photo uploads are blocked by the app's storage permissions. This is a settings issue, not your phone — tell the office (Firebase Storage rules need updating).";
+  }
+  if (code.includes("quota")) return "The photo storage account is full. Tell the office.";
+  if (code.includes("unauthenticated")) return "Your sign-in expired. Close and reopen the app, then try again.";
+  if (code.includes("retry-limit") || code.includes("canceled") || code.includes("network")) {
+    return "Upload timed out — weak signal. Your log is still here; try again from better service.";
+  }
+  return `Photo upload failed (${code || "unknown error"}).`;
 }
 
 /** Local preview URLs for chosen-but-not-yet-uploaded files. */
