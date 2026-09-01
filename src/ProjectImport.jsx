@@ -1,6 +1,7 @@
 import { useState, useRef } from "react";
 import { FolderOpen, Check, X, AlertTriangle, FileSpreadsheet, FileText, Loader } from "lucide-react";
-import { buildCandidate, candidateToProject, classifyFile, groupFilesByJob, LABOR_PHASES } from "./projectImport.js";
+import { buildCandidate, candidateToProject, classifyFile, groupFilesByJob, uploadCandidateDocuments, DOC_KINDS, LABOR_PHASES } from "./projectImport.js";
+import { genId } from "./App.jsx";
 
 /**
  * ProjectImport — the review queue.
@@ -26,6 +27,9 @@ export default function ProjectImport({ existingProjects, onAddProject, isMobile
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
   const [expanded, setExpanded] = useState(null);
+  const [docSel, setDocSel] = useState({});     // candidateId -> [kind]
+  const [uploading, setUploading] = useState(null);
+  const [uploadNote, setUploadNote] = useState({});
   const dirRef = useRef(null);
   const fileRef = useRef(null);
 
@@ -57,15 +61,49 @@ export default function ProjectImport({ existingProjects, onAddProject, isMobile
     }
     // Our jobs first, then everything else
     found.sort((a, b) => (b.assignedToTeam ? 1 : 0) - (a.assignedToTeam ? 1 : 0));
+    setDocSel(prev => {
+      const next = { ...prev };
+      found.forEach(c => {
+        if (next[c.id]) return;
+        const kinds = new Set((c.files || []).map(f => f.kind));
+        next[c.id] = DOC_KINDS.filter(d => d.default && kinds.has(d.kind)).map(d => d.kind);
+      });
+      return next;
+    });
     setCandidates(prev => [...found, ...prev]);
     const mine = found.filter(c => c.assignedToTeam && !c.alreadyExists).length;
     setStatus(`Found ${found.length} job folder${found.length > 1 ? "s" : ""} · ${mine} new for your team`);
     setBusy(false);
   }
 
-  function add(c) {
-    onAddProject(candidateToProject(c));
-    setCandidates(list => list.map(x => x.id === c.id ? { ...x, added: true } : x));
+  async function add(c) {
+    const kinds = docSel[c.id] || [];
+    let docs = [];
+    // Give the project its id up front so uploads land under the right
+    // Storage path and the records point at the real project.
+    const projectId = c.projectId || genId();
+    if (kinds.length) {
+      setUploading(c.id);
+      try {
+        docs = await uploadCandidateDocuments({ ...c, projectId }, projectId, kinds,
+          (done, total, name) => setUploadNote(n => ({ ...n, [c.id]: `Uploading ${done + (done < total ? 1 : 0)}/${total}${name ? ` — ${name}` : ""}` })));
+      } catch (e) {
+        docs = e.uploaded || [];
+        setUploading(null);
+        setUploadNote(n => ({ ...n, [c.id]: "" }));
+        if (!confirm(`${e.message}\n\nAdd the project anyway with the ${docs.length} document(s) that did upload?`)) return;
+      }
+      setUploading(null);
+      setUploadNote(n => ({ ...n, [c.id]: "" }));
+    }
+    onAddProject(candidateToProject({ ...c, projectId }, docs));
+    setCandidates(list => list.map(x => x.id === c.id ? { ...x, added: true, addedDocs: docs.length } : x));
+  }
+  function toggleDoc(cid, kind) {
+    setDocSel(prev => {
+      const cur = prev[cid] || [];
+      return { ...prev, [cid]: cur.includes(kind) ? cur.filter(k => k !== kind) : [...cur, kind] };
+    });
   }
   const dismiss = c => setCandidates(list => list.filter(x => x.id !== c.id));
 
@@ -112,7 +150,7 @@ export default function ProjectImport({ existingProjects, onAddProject, isMobile
         if (c.added) return (
           <div key={c.id} style={{ ...card, borderColor: "#69BE2855", padding: "12px 16px", marginBottom: 8, display: "flex", alignItems: "center", gap: 10 }}>
             <Check size={16} style={{ color: "#69BE28" }} />
-            <span style={{ fontSize: 13.5, color: "#82CC4A", fontWeight: 700 }}>Added {c.jobNumber ? `#${c.jobNumber}` : ""} {c.name}</span>
+            <span style={{ fontSize: 13.5, color: "#82CC4A", fontWeight: 700 }}>Added {c.jobNumber ? `#${c.jobNumber}` : ""} {c.name}{c.addedDocs ? ` · ${c.addedDocs} document${c.addedDocs > 1 ? "s" : ""} uploaded` : ""}</span>
           </div>
         );
         if (c.fatal) return (
@@ -202,11 +240,39 @@ export default function ProjectImport({ existingProjects, onAddProject, isMobile
               </div>
             )}
 
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button onClick={() => add(c)} disabled={c.alreadyExists} title={c.alreadyExists ? "A project with this job number already exists" : ""}
+            {(() => {
+              const kinds = new Set((c.files || []).map(f => f.kind));
+              const avail = DOC_KINDS.filter(d => kinds.has(d.kind));
+              if (!avail.length) return null;
+              const sel = docSel[c.id] || [];
+              return (
+                <div style={{ background: "#0A192F", borderRadius: 9, padding: "10px 12px", marginBottom: 10 }}>
+                  <div style={{ fontSize: 10.5, color: "#475569", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 7 }}>Attach to project documents</div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {avail.map(d => {
+                      const on = sel.includes(d.kind);
+                      const count = (c.files || []).filter(f => f.kind === d.kind).length;
+                      return (
+                        <button key={d.kind} onClick={() => toggleDoc(c.id, d.kind)}
+                          style={{ padding: "6px 12px", borderRadius: 16, border: on ? "1.5px solid #69BE28" : "1px solid #1A3050", background: on ? "#69BE2818" : "transparent", color: on ? "#82CC4A" : "#64748b", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                          {on ? "✓ " : ""}{d.label} ({count}){d.restricted ? " 🔒" : ""}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div style={{ fontSize: 10.5, color: "#475569", marginTop: 7, lineHeight: 1.5 }}>
+                    🔒 = office only. Unlocked documents are visible to the field crew in Field Mode.
+                  </div>
+                </div>
+              );
+            })()}
+
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <button onClick={() => add(c)} disabled={c.alreadyExists || uploading === c.id} title={c.alreadyExists ? "A project with this job number already exists" : ""}
                 style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 20px", borderRadius: 9, border: "none", background: c.alreadyExists ? "#1A3050" : "#69BE28", color: c.alreadyExists ? "#475569" : "#fff", fontSize: 13.5, fontWeight: 700, cursor: c.alreadyExists ? "default" : "pointer", fontFamily: "inherit" }}>
-                <Check size={14} /> Add to Projects
+                <Check size={14} /> {uploading === c.id ? "Uploading…" : "Add to Projects"}
               </button>
+              {uploadNote[c.id] && <span style={{ fontSize: 11.5, color: "#82CC4A", fontWeight: 600 }}>{uploadNote[c.id]}</span>}
               <button onClick={() => dismiss(c)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "10px 18px", borderRadius: 9, border: "1px solid #1A3050", background: "transparent", color: "#94a3b8", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
                 <X size={14} /> Ignore
               </button>

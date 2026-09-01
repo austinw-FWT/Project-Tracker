@@ -429,7 +429,7 @@ export async function buildCandidate(files, teamNames = DEFAULT_TEAM_NAMES) {
     const rel = String(f.webkitRelativePath || "");
     const sub = rel.split("/").slice(0, -1).pop() || "";
     if (sub && !cand.subfolders.includes(sub)) cand.subfolders.push(sub);
-    cand.files.push({ name: f.name, kind, subfolder: sub });
+    cand.files.push({ name: f.name, kind, subfolder: sub, file: f, size: f.size || 0 });
     try {
       if (kind === "pif" && !pif) pif = await parsePIF(f);
       else if (kind === "takeoff") {
@@ -492,9 +492,58 @@ export async function buildCandidate(files, teamNames = DEFAULT_TEAM_NAMES) {
   return cand;
 }
 
+/** Which file kinds go to the project's Documents section by default.
+ *  The PIF is deliberately OFF: it carries bid pricing, hours, and margin,
+ *  and the Documents section is visible to the field team. It can still be
+ *  ticked on, and it is marked restricted so only foremen and admins see it. */
+export const DOC_KINDS = [
+  { kind: "proposal", label: "Proposal", type: "Proposal", default: true, restricted: false },
+  { kind: "takeoff",  label: "Takeoffs", type: "Takeoff",  default: true, restricted: true  },
+  { kind: "invoice",  label: "Invoices", type: "Invoice",  default: true, restricted: true  },
+  { kind: "pif",      label: "PIF",      type: "PIF",      default: false, restricted: true },
+];
+
+/**
+ * Upload the selected files into the project's Documents section.
+ * Returns document records in the same shape the Docs tab writes, so imported
+ * documents behave exactly like ones added by hand.
+ */
+export async function uploadCandidateDocuments(cand, projectId, selectedKinds, onProgress) {
+  const { storage, storageRef, uploadBytes, getDownloadURL } = await import("./firebase.js");
+  const wanted = (cand.files || []).filter(f => f.file && selectedKinds.includes(f.kind));
+  const docs = [];
+  for (let i = 0; i < wanted.length; i++) {
+    const f = wanted[i];
+    if (onProgress) onProgress(i, wanted.length, f.name);
+    const meta = DOC_KINDS.find(d => d.kind === f.kind);
+    try {
+      const safe = f.name.replace(/[^\w.\- ]+/g, "_");
+      const ref = storageRef(storage, `projects/${projectId}/docs/${Date.now()}_${safe}`);
+      await uploadBytes(ref, f.file);
+      docs.push({
+        name: f.name.replace(/\.[^.]+$/, ""),
+        type: meta?.type || "Document",
+        restricted: !!meta?.restricted,
+        addedAt: new Date().toISOString(),
+        fileUrl: await getDownloadURL(ref),
+        fileName: f.name,
+        fileSize: f.size || 0,
+        source: "import",
+      });
+    } catch (e) {
+      const err = new Error(`Couldn't upload ${f.name}: ${e?.code || e?.message || "unknown error"}`);
+      err.uploaded = docs;
+      throw err;
+    }
+  }
+  if (onProgress) onProgress(wanted.length, wanted.length, "");
+  return docs;
+}
+
 /** Candidate → the app's project record. */
-export function candidateToProject(c) {
+export function candidateToProject(c, uploadedDocs) {
   return {
+    id: c.projectId || undefined,
     name: c.name || `Job ${c.jobNumber}`,
     jobNumber: c.jobNumber || "",
     customer: c.customer || "",
@@ -513,9 +562,10 @@ export function candidateToProject(c) {
     materials: c.materials || [],
     invoicing: c.invoicing || null,
     invoices: (c.invoices || []).map(({ file, ...rest }) => rest),
-    documents: (c.invoiceFiles || []).map(f => ({
+    documents: uploadedDocs && uploadedDocs.length ? uploadedDocs : (c.invoiceFiles || []).map(f => ({
       name: f.number ? `Invoice ${f.number}` : f.fileName,
       type: "Invoice",
+      restricted: true,
       fileName: f.fileName,
       sourcePath: f.path,
       addedAt: new Date().toISOString(),

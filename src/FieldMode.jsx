@@ -487,7 +487,10 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
     const psi = detail.siteInfo || {};
     const siteRows = [["Gate code", psi.gateCode], ["Lockbox", psi.lockbox], ["Site contact", psi.siteContact], ["IDF / Head end", psi.idf]].filter(([, v]) => v);
     const myTasks = (detail.tasks || []).filter(t => !t.done && (!t.assignee || t.assignee === myName));
-    const docs = detail.documents || [];
+    // Office-only documents (PIF, takeoffs, invoices) carry pricing and
+    // margin — foremen see them, technicians don't.
+    const docs = (detail.documents || []).filter(d => !d.restricted || canSeeHours);
+    const hiddenDocs = (detail.documents || []).length - docs.length;
     const recentLogs = (detail.dailyLogs || []).slice(0, 3);
     const mapsUrl = detail.siteAddress ? `https://maps.google.com/?q=${encodeURIComponent(detail.siteAddress)}` : null;
     const telUrl = detail.contactPhone ? `tel:${detail.contactPhone.replace(/[^\d+]/g, "")}` : null;
@@ -603,15 +606,23 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
         )}
 
         {/* Documents */}
-        {docs.length > 0 && (
+        {(docs.length > 0 || hiddenDocs > 0) && (
           <div style={{ ...card, padding: "13px 16px" }}>
-            <div style={{ ...eyebrow, marginBottom: 8 }}>Documents & drawings</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+              <div style={eyebrow}>Documents & drawings</div>
+              <span style={{ fontSize: 11, color: T.inkFaint, marginLeft: "auto" }}>{docs.length}</span>
+            </div>
+            {docs.length === 0 && (
+              <div style={{ fontSize: 12.5, color: T.inkFaint, padding: "6px 0" }}>Nothing shared for this job yet.</div>
+            )}
             {docs.map((d, i) => d.fileUrl ? (
               <a key={i} href={d.fileUrl} target="_blank" rel="noreferrer" style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 4px", borderBottom: `1px solid ${T.line}`, textDecoration: "none", minHeight: 48 }}>
                 <span style={{ fontSize: 17 }}>{/pdf/i.test(d.fileName || d.name) ? "📕" : /dwg|plan|drawing/i.test(d.type || "") ? "📐" : "📄"}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13.5, fontWeight: 700, color: T.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.name || d.fileName}</div>
-                  {d.type && <div style={{ fontSize: 11, color: T.inkFaint }}>{d.type}</div>}
+                  <div style={{ fontSize: 11, color: T.inkFaint }}>
+                    {[d.type, d.fileSize ? `${Math.max(1, Math.round(d.fileSize / 1024))} KB` : ""].filter(Boolean).join(" · ")}
+                  </div>
                 </div>
                 <span style={{ color: T.green, fontWeight: 800, fontSize: 13 }}>Open ›</span>
               </a>

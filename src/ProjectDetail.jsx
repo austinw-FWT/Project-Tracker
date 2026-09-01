@@ -889,6 +889,12 @@ function DocsTab({ project, onUpdate }) {
         <span style={{ fontSize: 11, color: "#64748b" }}>{doc.type}</span>
         {doc.fileSize && <span style={{ fontSize: 10, color: "#475569" }}>{formatSize(doc.fileSize)}</span>}
         <span style={{ fontSize: 11, color: "#475569" }}>{new Date(doc.addedAt).toLocaleDateString()}</span>
+        <button
+          onClick={() => onUpdate({ documents: project.documents.map((x, idx) => idx === i ? { ...x, restricted: !x.restricted } : x) })}
+          title={doc.restricted ? "Office only — tap to share with the field crew" : "Visible to the field crew — tap to make office only"}
+          style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12, padding: "2px 4px", color: doc.restricted ? "#f59e0b" : "#69BE28" }}>
+          {doc.restricted ? "🔒" : "👷"}
+        </button>
         {doc.fileUrl && <a href={doc.fileUrl} target="_blank" rel="noopener noreferrer" style={{ color: "#82CC4A", display: "flex", alignItems: "center" }} title="Download"><Download size={13} /></a>}
         <button onClick={() => onUpdate({ documents: project.documents.filter((_, idx) => idx !== i) })} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer" }}><X size={12} /></button>
       </div>

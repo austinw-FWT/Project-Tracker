@@ -379,7 +379,7 @@ function Tracker({ user, userRecord }) {
   }
   function addProject(project) {
     const now = new Date().toISOString();
-    const np = { ...EMPTY_PROJECT, ...project, id: genId(), phaseId: project.phaseId || data.phases[0]?.id || "awarded", createdAt: now, updatedAt: now };
+    const np = { ...EMPTY_PROJECT, ...project, id: project.id || genId(), phaseId: project.phaseId || data.phases[0]?.id || "awarded", createdAt: now, updatedAt: now };
     applyLocal({ ...latestData.current, projects: [...latestData.current.projects, np] });
     persist(putProject(np.id, denormalizeProjectUpdates(np)));
     setShowNewProject(false);
