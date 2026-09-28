@@ -4,6 +4,7 @@ import { PROJECT_TYPES, LABOR_PHASES, MATERIAL_STATUSES, TASK_CATEGORIES, genId 
 import { bidHours, usedHours, loggedHours, adjustment, remainingHours, laborTotals } from "./laborMath.js";
 import { storage, storageRef, uploadBytes, getDownloadURL } from "./firebase.js";
 import { uploadLogPhotos } from "./photoUtils.js";
+import { invoiceSnapshot } from "./InvoiceProgress.jsx";
 
 const iS = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1A3050", background: "#0F2444", color: "#e2e8f0", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none" };
 const lS = { fontSize: 11, fontWeight: 600, color: "#64748b", marginBottom: 4, display: "block", textTransform: "uppercase", letterSpacing: "0.05em" };
@@ -453,10 +454,11 @@ function MaterialsTab({ project, onUpdate, canSeeMoney = true }) {
 function InvoiceTab({ project, onUpdate }) {
   const [num, setNum] = useState(""); const [amt, setAmt] = useState(""); const [date, setDate] = useState(new Date().toISOString().split("T")[0]); const [desc, setDesc] = useState(""); const [st, setSt] = useState("requested");
   const inv = project.invoices || [];
-  const contract = parseFloat(project.contractAmount) || 0;
-  const totalInv = inv.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
-  const pct = contract > 0 ? Math.round((totalInv / contract) * 100) : 0;
-  const paid = inv.filter(i => i.status === "paid").reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
+  // Same numbers the dashboard's Invoice progress panel shows: this tab is its
+  // source of truth. Contract = contract amount + approved change orders.
+  const snap = invoiceSnapshot(project);
+  const contract = snap.contract, totalInv = snap.invoiced, paid = snap.collected;
+  const pct = Math.round(snap.pctInvoiced * 100);
 
   // Status config: value → { label, color }
   const STATUS_OPTIONS = [
@@ -482,7 +484,10 @@ function InvoiceTab({ project, onUpdate }) {
     </div>
     {pct > 0 && <div style={{ height: 8, background: "#1A3050", borderRadius: 4, overflow: "hidden", marginBottom: 16 }}><div style={{ width: `${Math.min(pct, 100)}%`, height: "100%", background: "linear-gradient(90deg, #69BE28, #10b981)", borderRadius: 4 }} /></div>}
 
-    {inv.sort((a, b) => (b.date || "").localeCompare(a.date || "")).map((v, idx) => {
+    {snap.approvedCOs > 0 && <div style={{ fontSize: 11, color: "#64748b", marginTop: -8, marginBottom: 12 }}>Contract includes ${snap.approvedCOs.toLocaleString()} in approved change orders.</div>}
+    {snap.missingVsPif > 0 && <div style={{ fontSize: 12, color: "#f87171", background: "#ef44440f", border: "1px solid #ef444433", borderRadius: 8, padding: "8px 12px", marginBottom: 12 }}>The PIF showed ${(totalInv + snap.missingVsPif).toLocaleString()} billed when it was imported, but only ${totalInv.toLocaleString()} is logged here. Check for a missing invoice.</div>}
+
+    {[...inv].sort((a, b) => (b.date || "").localeCompare(a.date || "")).map(v => {
       const s = statusMap[v.status] || statusMap["requested"];
       return (
         <div key={v.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", background: "#0A192F", borderRadius: 10, border: "1px solid #1A3050", marginBottom: 6 }}>
@@ -493,12 +498,12 @@ function InvoiceTab({ project, onUpdate }) {
           </div>
           <select
             value={v.status}
-            onChange={e => onUpdate({ invoices: inv.map((x, i) => i === idx ? { ...x, status: e.target.value } : x) })}
+            onChange={e => onUpdate({ invoices: inv.map(x => x === v ? { ...x, status: e.target.value } : x) })}
             style={{ padding: "4px 8px", borderRadius: 8, border: "1px solid #1A3050", background: s.color + "22", color: s.color, fontSize: 11, fontWeight: 600, fontFamily: "inherit", outline: "none", cursor: "pointer" }}
           >
             {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
-          <button onClick={() => onUpdate({ invoices: inv.filter((_, i) => i !== idx) })} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer" }}><X size={12} /></button>
+          <button onClick={() => onUpdate({ invoices: inv.filter(x => x !== v) })} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer" }}><X size={12} /></button>
         </div>
       );
     })}

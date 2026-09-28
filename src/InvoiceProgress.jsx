@@ -10,41 +10,52 @@ import { laborTotals } from "./laborMath.js";
  * 80% of its hours with 40% invoiced is roughly 40 points of finished work
  * sitting unbilled. That's the number worth surfacing every week.
  *
- * Data sources, in priority order:
- *   1. project.invoicing  — synced from the PIF's Schedule of Values by the
- *      OneDrive scan (contractTotal / invoicedToDate / pctInvoiced /
- *      lineItems). Authoritative when present; shows its sync date.
- *   2. project.invoices[] — invoices entered in the app.
- * Both are read-only here; nothing is written or overwritten.
+ * Data sources:
+ *   • Billed / collected → project.invoices[], the Invoices tab. This is the
+ *     only source for money billed. Log a progress invoice there and the panel
+ *     updates; no PIF re-upload needed.
+ *   • Contract value → contractAmount (set at PIF import, editable on the
+ *     Overview tab) plus approved change orders — the same adjusted contract
+ *     the Profit tab uses.
+ *   • project.invoicing (PIF import) → baseline only: the Schedule of Values
+ *     line items, and a sanity check against what the PIF showed billed at
+ *     import. Its invoicedToDate is a snapshot and is never used as a total.
+ * Read-only here; nothing is written or overwritten.
  */
 
 const money = v => "$" + Math.round(v || 0).toLocaleString();
 const num = v => parseFloat(String(v ?? "").replace(/[^0-9.-]/g, "")) || 0;
 
-/** Roll one project's billing picture up from whichever source it has. */
+/** Roll one project's billing picture up from the Invoices tab. Shared with
+ *  the Invoices tab itself so both always show the same numbers. */
 export function invoiceSnapshot(project) {
   const pif = project.invoicing;
-  const contract = num(project.contractAmount) || num(project.bidAmount) || num(pif?.contractTotal);
-  const entered = (project.invoices || []).reduce((s, i) => s + num(i.amount), 0);
-  const collected = (project.invoices || []).filter(i => i.status === "paid").reduce((s, i) => s + num(i.amount), 0);
+  const invoices = project.invoices || [];
+  const baseContract = num(project.contractAmount) || num(pif?.contractTotal) || num(project.bidAmount);
+  const approvedCOs = (project.changeOrders || []).filter(c => c.status === "approved").reduce((s, c) => s + num(c.amount), 0);
+  const contract = baseContract + approvedCOs;
 
-  const usePif = pif && num(pif.contractTotal) > 0;
-  const invoiced = usePif ? num(pif.invoicedToDate) : entered;
-  const base = usePif ? num(pif.contractTotal) : contract;
-  const pctInvoiced = base > 0 ? invoiced / base : 0;
+  const invoiced = invoices.reduce((s, i) => s + num(i.amount), 0);
+  const collected = invoices.filter(i => i.status === "paid").reduce((s, i) => s + num(i.amount), 0);
+  const pctInvoiced = contract > 0 ? invoiced / contract : 0;
 
   const t = laborTotals(project);
   const pctComplete = t.bid > 0 ? Math.min(t.used / t.bid, 1.5) : null;   // labor burn as completion proxy
   const gapPct = pctComplete === null ? null : pctComplete - pctInvoiced;
 
+  // The PIF showed more billed at import than the Invoices tab now holds —
+  // an invoice was likely deleted or never came across. Worth a look.
+  const pifBilledAtImport = num(pif?.invoicedToDate);
+  const missingVsPif = pifBilledAtImport - invoiced > 1 ? pifBilledAtImport - invoiced : 0;
+
   return {
-    contract: base, invoiced, collected,
-    outstanding: Math.max(base - invoiced, 0),
+    contract, baseContract, approvedCOs, invoiced, collected,
+    outstanding: Math.max(contract - invoiced, 0),
     unpaid: Math.max(invoiced - collected, 0),
     pctInvoiced, pctComplete, gapPct,
-    source: usePif ? "PIF" : "app",
-    syncedAt: usePif ? pif.syncedAt : null,
-    lineItems: usePif ? (pif.lineItems || []) : [],
+    invoiceCount: invoices.length,
+    missingVsPif, pifSyncedAt: pif?.syncedAt || null,
+    lineItems: pif?.lineItems || [],
   };
 }
 
@@ -131,7 +142,7 @@ export default function InvoiceProgress({ projects, isMobile, onSelectProject })
                   {p.jobNumber && <span style={{ fontSize: 11.5, fontWeight: 800, color: "#69BE28" }}>#{p.jobNumber}</span>}
                   <span style={{ fontSize: 13.5, fontWeight: 600, color: "#e2e8f0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
                 </button>
-                {s.source === "PIF" && <span title={s.syncedAt ? `From the PIF, synced ${new Date(s.syncedAt).toLocaleDateString()}` : "From the PIF"} style={{ fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 9, background: "#8b5cf622", color: "#a78bfa" }}>PIF</span>}
+                {s.missingVsPif > 0 && <span title={`The PIF showed ${money(s.invoiced + s.missingVsPif)} billed when it was imported${s.pifSyncedAt ? ` (${new Date(s.pifSyncedAt).toLocaleDateString()})` : ""}, but the Invoices tab only has ${money(s.invoiced)}. Check for a missing invoice.`} style={{ fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 9, background: "#ef444422", color: "#f87171" }}>CHECK INVOICES</span>}
                 <span style={{ fontSize: 12.5, color: "#94a3b8", fontVariantNumeric: "tabular-nums" }}>{money(s.invoiced)} <span style={{ color: "#475569" }}>/ {money(s.contract)}</span></span>
                 <span style={{ fontSize: 13, fontWeight: 800, color: s.pctInvoiced >= 0.99 ? "#10b981" : "#3b82f6", width: 44, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{Math.round(s.pctInvoiced * 100)}%</span>
               </div>
@@ -141,6 +152,7 @@ export default function InvoiceProgress({ projects, isMobile, onSelectProject })
                 {flag && <span style={{ color: "#f59e0b", fontWeight: 700 }}>~{Math.round(s.gapPct * 100)} pts unbilled</span>}
                 {s.outstanding > 0 && <span>{money(s.outstanding)} left to invoice</span>}
                 {s.unpaid > 0 && <span>{money(s.unpaid)} awaiting payment</span>}
+                {s.approvedCOs > 0 && <span>incl. {money(s.approvedCOs)} in COs</span>}
                 {s.lineItems.length > 0 && (
                   <button onClick={() => setExpanded(open ? null : p.id)} style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer", fontSize: 11, fontFamily: "inherit", textDecoration: "underline", padding: 0 }}>
                     {open ? "hide" : `${s.lineItems.length} SOV lines`}
@@ -149,12 +161,12 @@ export default function InvoiceProgress({ projects, isMobile, onSelectProject })
               </div>
               {open && s.lineItems.length > 0 && (
                 <div style={{ marginTop: 8, background: "#0A192F", borderRadius: 8, padding: "8px 12px" }}>
+                  <div style={{ fontSize: 10, color: "#475569", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Schedule of values — contract baseline from PIF</div>
                   {s.lineItems.map((li, i) => (
                     <div key={i} style={{ display: "flex", gap: 10, fontSize: 11.5, padding: "4px 0", color: "#94a3b8" }}>
                       <span style={{ flex: 1 }}>{li.item}</span>
-                      <span style={{ color: "#64748b" }}>{Math.round((li.pctToDate || 0) * 100)}%</span>
-                      <span style={{ width: 78, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money(li.invoicedToDate)}</span>
-                      <span style={{ width: 78, textAlign: "right", color: "#475569", fontVariantNumeric: "tabular-nums" }}>/ {money(li.total)}</span>
+                      <span style={{ color: "#64748b" }}>{s.baseContract > 0 ? Math.round((num(li.total) / s.baseContract) * 100) : 0}% of contract</span>
+                      <span style={{ width: 78, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{money(li.total)}</span>
                     </div>
                   ))}
                 </div>
