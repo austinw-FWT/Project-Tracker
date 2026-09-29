@@ -4,6 +4,7 @@ import { LABOR_PHASES } from "./App.jsx";
 import { remainingHours } from "./laborMath.js";
 import { openOutlookCompose } from "./emailHelper.js";
 import { uploadLogPhotos, previewUrl, describeUploadError } from "./photoUtils.js";
+import { crewLabel, guestFields, pastHelpers, resolveTypedMember } from "./guestCrew.js";
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 
@@ -105,6 +106,9 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
   const isMobile = useIsMobileLog();
 
   const logs = dailyLogs || [];
+  const rosterNames = (teamRoster || []).map(t => t.name);
+  const helperHistory = pastHelpers(projects, rosterNames);
+  const [helperForm, setHelperForm] = useState(null);   // { entryId, name, from } while the "add helper" row is open
 
   // ── Add a project entry ──
   function addProjectEntry(projectId) {
@@ -121,10 +125,11 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
     }]);
   }
 
-  function makeCrewMember(name) {
+  function makeCrewMember(name, extra = {}) {
     return {
       id: genId(),
       name,
+      ...extra,
       allocations: [{ id: genId(), hours: 0, category: LABOR_PHASES[0]?.id || "" }],
     };
   }
@@ -143,6 +148,18 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
       if (e.crewMembers.some(c => c.name === memberName)) return e;
       return { ...e, crewMembers: [...e.crewMembers, makeCrewMember(memberName)] };
     }));
+  }
+
+  // Helper borrowed from another crew — typed by name, no account needed.
+  function addHelper(entryId, name, from) {
+    setEntries(entries.map(e => {
+      if (e.id !== entryId) return e;
+      const m = resolveTypedMember(name, from, rosterNames, e.crewMembers);
+      if (!m) return e;
+      const { name: n, ...extra } = m;
+      return { ...e, crewMembers: [...e.crewMembers, makeCrewMember(n, extra)] };
+    }));
+    setHelperForm(null);
   }
 
   function removeCrewMember(entryId, crewId) {
@@ -269,7 +286,7 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
           const allocs = getAllocations(c).filter(a => a.hours > 0);
           if (allocs.length === 0) return null;
           const parts = allocs.map(a => `${a.hours}h [${getCategoryName(a.category)}]`).join(" + ");
-          return `${c.name}: ${parts}`;
+          return `${crewLabel(c)}: ${parts}`;
         })
         .filter(Boolean);
 
@@ -285,6 +302,7 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
           activities: entry.activities + (crewLines.length > 0 ? `\nCrew: ${crewLines.join("; ")}` : ""),
           crewBreakdown: entry.crewMembers.map(c => ({
             name: c.name,
+            ...guestFields(c),
             allocations: getAllocations(c).filter(a => a.hours > 0).map(a => ({ hours: a.hours, category: a.category })),
           })).filter(c => c.allocations.length > 0),
           ...((photoUrlsByEntry[entry.id] || []).length ? { photos: photoUrlsByEntry[entry.id] } : {}),
@@ -317,7 +335,7 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
               const allocs = getAllocations(c).filter(a => a.hours > 0);
               if (allocs.length === 0) return null;
               const parts = allocs.map(a => `    ${a.hours}h  [${getCategoryName(a.category)}]`).join("\n");
-              return `  ${c.name}:\n${parts}`;
+              return `  ${crewLabel(c)}:\n${parts}`;
             })
             .filter(Boolean)
             .join("\n");
@@ -420,7 +438,9 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
                       <div key={crew.id} style={{ background: "#0A192F", borderRadius: 8, padding: "10px 12px", marginBottom: 6, border: "1px solid #1A3050" }}>
                         {/* Crew member header */}
                         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                          <span style={{ fontSize: 13, color: "#e2e8f0", fontWeight: 700, flex: 1 }}>{crew.name}</span>
+                          <span style={{ fontSize: 13, color: "#e2e8f0", fontWeight: 700 }}>{crew.name}</span>
+                          {crew.guest && <span title={crew.guestFrom ? `Helper from ${crew.guestFrom}'s crew — no app account` : "Helper from another crew — no app account"} style={{ fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 9, background: "#8b5cf622", color: "#a78bfa", letterSpacing: "0.04em" }}>HELPER{crew.guestFrom ? ` · ${crew.guestFrom.toUpperCase()}` : ""}</span>}
+                          <span style={{ flex: 1 }} />
                           <span style={{ fontSize: 12, color: crewTotal > 0 ? "#10b981" : "#64748b", fontWeight: 600 }}>{crewTotal}h total</span>
                           {entry.crewMembers.length > 1 && (
                             <button onClick={() => removeCrewMember(entry.id, crew.id)} title="Remove crew member" style={{ background: "none", border: "none", color: "#334155", cursor: "pointer" }}><X size={14} /></button>
@@ -481,6 +501,35 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
                       <option key={t.id} value={t.name}>{t.name}</option>
                     ))}
                   </select>
+                  {helperForm?.entryId !== entry.id ? (
+                    <button onClick={() => setHelperForm({ entryId: entry.id, name: "", from: "" })} style={{ display: "inline-flex", alignItems: "center", gap: 4, marginTop: 6, marginLeft: 8, background: "none", border: "1px dashed #8b5cf655", color: "#a78bfa", fontSize: 12, cursor: "pointer", fontFamily: "inherit", padding: "7px 12px", borderRadius: 8 }}>
+                      <Plus size={12} /> Helper from another crew
+                    </button>
+                  ) : (
+                    <div style={{ marginTop: 8, background: "#0A192F", border: "1px solid #8b5cf644", borderRadius: 8, padding: "10px 12px" }}>
+                      <div style={{ fontSize: 11, color: "#a78bfa", fontWeight: 700, marginBottom: 6 }}>Borrowed helper — hours count toward this job; no app account needed</div>
+                      {helperHistory.filter(h => !entry.crewMembers.some(c => c.name.toLowerCase() === h.name.toLowerCase())).length > 0 && (
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+                          {helperHistory.filter(h => !entry.crewMembers.some(c => c.name.toLowerCase() === h.name.toLowerCase())).slice(0, 8).map(h => (
+                            <button key={h.name} onClick={() => addHelper(entry.id, h.name, h.guestFrom)} title={h.guestFrom ? `Last logged from ${h.guestFrom}'s crew` : ""} style={{ padding: "4px 10px", borderRadius: 14, border: "1px solid #8b5cf644", background: "#8b5cf614", color: "#c4b5fd", fontSize: 11.5, cursor: "pointer", fontFamily: "inherit" }}>
+                              {h.name}{h.guestFrom ? <span style={{ color: "#7c6fb0" }}> · {h.guestFrom}</span> : null}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        <input autoFocus style={{ ...iS, flex: 1.2, minWidth: 140, fontSize: 12 }} placeholder="Helper's name *" value={helperForm.name}
+                          onChange={e => setHelperForm({ ...helperForm, name: e.target.value })}
+                          onKeyDown={e => { if (e.key === "Enter") addHelper(entry.id, helperForm.name, helperForm.from); }} />
+                        <input list="fwt-foremen" style={{ ...iS, flex: 1, minWidth: 130, fontSize: 12 }} placeholder="Whose crew? (optional)" value={helperForm.from}
+                          onChange={e => setHelperForm({ ...helperForm, from: e.target.value })}
+                          onKeyDown={e => { if (e.key === "Enter") addHelper(entry.id, helperForm.name, helperForm.from); }} />
+                        <datalist id="fwt-foremen">{rosterNames.map(n => <option key={n} value={n} />)}</datalist>
+                        <button onClick={() => addHelper(entry.id, helperForm.name, helperForm.from)} style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: "#8b5cf6", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 700, fontFamily: "inherit", opacity: helperForm.name.trim() ? 1 : 0.4 }}>Add</button>
+                        <button onClick={() => setHelperForm(null)} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer" }}><X size={14} /></button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Activities */}
@@ -545,7 +594,7 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
                           return (
                             <div key={crew.id} style={{ padding: "4px 0", fontSize: 12 }}>
                               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
-                                <span style={{ color: "#e2e8f0", fontWeight: 600 }}>{crew.name}</span>
+                                <span style={{ color: "#e2e8f0", fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>{crew.name} {crew.guest && <span title={crew.guestFrom ? `Helper from ${crew.guestFrom}'s crew — no app account` : "Helper from another crew — no app account"} style={{ fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 9, background: "#8b5cf622", color: "#a78bfa", letterSpacing: "0.04em" }}>HELPER{crew.guestFrom ? ` · ${crew.guestFrom.toUpperCase()}` : ""}</span>}</span>
                                 <span style={{ color: "#f59e0b", fontWeight: 600 }}>{crewTotal}h</span>
                               </div>
                               {allocs.map(a => (

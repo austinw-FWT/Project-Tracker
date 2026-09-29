@@ -3,6 +3,7 @@ import { LABOR_PHASES, genId } from "./App.jsx";
 import { remainingHours, bidHours, usedHours, laborTotals } from "./laborMath.js";
 import { uploadLogPhotos, describeUploadError } from "./photoUtils.js";
 import { scheduleEntries } from "./db.js";
+import { crewLabel, guestFields, pastHelpers, resolveTypedMember } from "./guestCrew.js";
 
 /**
  * FieldMode — the technician's home screen.
@@ -66,6 +67,8 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
   const [photos, setPhotos] = useState([]); // File objects, compressed at submit
   const [submitting, setSubmitting] = useState(false);
   const [crewSheet, setCrewSheet] = useState(false);
+  const [helperName, setHelperName] = useState("");
+  const [helperFrom, setHelperFrom] = useState("");
   const [saveError, setSaveError] = useState("");
   const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
   const [detailId, setDetailId] = useState(null);
@@ -153,7 +156,7 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
     const e = last.entries[0];
     setProjectId(e.projectId || "");
     setCrew((e.crewMembers || []).map(c => ({
-      id: genId(), name: c.name,
+      id: genId(), name: c.name, ...guestFields(c),
       allocations: (c.allocations?.length ? c.allocations : [{ hours: 0, category: LABOR_PHASES[0]?.id || "" }]).map(a => ({ id: genId(), hours: parseFloat(a.hours) || 0, category: a.category || LABOR_PHASES[0]?.id || "" })),
     })));
     setToast(`Copied crew & phases from ${last.date}`);
@@ -188,13 +191,14 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
 
       const crewMembers = crew.map(c => ({
         name: c.name,
+        ...guestFields(c),
         allocations: c.allocations.filter(a => (parseFloat(a.hours) || 0) > 0).map(a => ({ hours: parseFloat(a.hours), category: a.category })),
       })).filter(c => c.allocations.length > 0);
 
       const entry = { projectId: proj.id, activities, crewMembers };
       const personalLog = { id: genId(), date, submittedBy: myName, entries: [entry], createdAt: new Date().toISOString() };
 
-      const crewLines = crewMembers.map(c => `${c.name}: ${c.allocations.map(a => `${a.hours}h [${LABOR_PHASES.find(l => l.id === a.category)?.name || a.category}]`).join(" + ")}`);
+      const crewLines = crewMembers.map(c => `${crewLabel(c)}: ${c.allocations.map(a => `${a.hours}h [${LABOR_PHASES.find(l => l.id === a.category)?.name || a.category}]`).join(" + ")}`);
       const projectLog = {
         id: logId, date, member: myName, hours: totalHrs,
         activities: activities + (crewLines.length ? `\nCrew: ${crewLines.join("; ")}` : ""),
@@ -360,6 +364,14 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
 
   /* ════════ LOG ════════ */
   const rosterNames = (teamRoster || []).map(t => t.name);
+  const helperHistory = pastHelpers(projects, rosterNames).filter(h => !crew.some(c => c.name.toLowerCase() === h.name.toLowerCase()));
+  const HELP = T.name === "Office" ? { ink: "#C4B5FD", wash: "#8B5CF622", line: "#8B5CF655" } : { ink: "#5B21B6", wash: "#EDE9FE", line: "#C4B5FD" };
+  function addHelper(name, from) {
+    const m = resolveTypedMember(name, from, rosterNames, crew);
+    if (!m) return;
+    setCrew([...crew, { id: genId(), ...m, allocations: [{ id: genId(), hours: 0, category: LABOR_PHASES[0]?.id || "" }] }]);
+    setHelperName(""); setHelperFrom(""); setCrewSheet(false);
+  }
   const ScreenLog = (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
@@ -401,7 +413,10 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
           {crew.map(c => (
             <div key={c.id} style={{ background: T.cardAlt, border: `1px solid ${T.line}`, borderRadius: 12, padding: "12px 12px 10px", marginBottom: 8 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 9 }}>
-                <span style={{ fontSize: 15, fontWeight: 800, color: T.ink, flex: 1 }}>{c.name}</span>
+                <span style={{ fontSize: 15, fontWeight: 800, color: T.ink, flex: 1, display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+                  {c.name}
+                  {c.guest && <span style={{ fontSize: 10, fontWeight: 800, padding: "3px 7px", borderRadius: 9, background: HELP.wash, color: HELP.ink, letterSpacing: "0.04em" }}>HELPER{c.guestFrom ? ` · ${c.guestFrom.toUpperCase()}` : ""}</span>}
+                </span>
                 <span style={{ fontSize: 14, fontWeight: 800, color: memberTotal(c) > 0 ? T.green : T.inkFaint }}>{memberTotal(c)}h</span>
                 <button onClick={() => setCrew(crew.filter(x => x.id !== c.id))} style={{ width: 32, height: 32, borderRadius: 8, border: "none", background: "transparent", color: T.inkFaint, fontSize: 16, cursor: "pointer" }}>✕</button>
               </div>
@@ -783,6 +798,29 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
                 <span style={{ fontSize: 15.5, fontWeight: 700, color: T.ink }}>{n}</span>
               </button>
             ))}
+
+            <div style={{ borderTop: `1px solid ${T.line}`, marginTop: 10, paddingTop: 14 }}>
+              <div style={{ fontSize: 14, fontWeight: 800, color: HELP.ink, marginBottom: 3 }}>Helper from another crew</div>
+              <div style={{ fontSize: 12, color: T.inkFaint, marginBottom: 10 }}>Hours count toward this job. They don't need the app.</div>
+              {helperHistory.length > 0 && (
+                <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 10 }}>
+                  {helperHistory.slice(0, 8).map(h => (
+                    <button key={h.name} onClick={() => addHelper(h.name, h.guestFrom)} style={{ minHeight: 40, padding: "0 13px", borderRadius: 20, border: `1px solid ${HELP.line}`, background: HELP.wash, color: HELP.ink, fontSize: 13.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                      {h.name}{h.guestFrom ? <span style={{ fontWeight: 500, opacity: 0.75 }}> · {h.guestFrom}</span> : null}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <input value={helperName} onChange={e => setHelperName(e.target.value)} placeholder="Helper's name" autoCapitalize="words"
+                style={{ width: "100%", boxSizing: "border-box", minHeight: 48, padding: "0 14px", borderRadius: 11, border: `1px solid ${T.lineStrong}`, background: T.cardAlt, color: T.ink, fontSize: 16, fontFamily: "inherit", marginBottom: 8, outline: "none" }} />
+              <input value={helperFrom} onChange={e => setHelperFrom(e.target.value)} placeholder="Whose crew? (optional)" list="fm-foremen" autoCapitalize="words"
+                style={{ width: "100%", boxSizing: "border-box", minHeight: 48, padding: "0 14px", borderRadius: 11, border: `1px solid ${T.lineStrong}`, background: T.cardAlt, color: T.ink, fontSize: 16, fontFamily: "inherit", marginBottom: 10, outline: "none" }} />
+              <datalist id="fm-foremen">{rosterNames.map(n => <option key={n} value={n} />)}</datalist>
+              <button disabled={!helperName.trim()} onClick={() => addHelper(helperName, helperFrom)}
+                style={{ width: "100%", minHeight: 50, borderRadius: 12, border: "none", background: helperName.trim() ? T.green : T.chip, color: helperName.trim() ? "#fff" : T.inkFaint, fontSize: 15, fontWeight: 800, cursor: helperName.trim() ? "pointer" : "default", fontFamily: "inherit" }}>
+                Add helper
+              </button>
+            </div>
           </div>
         </>
       )}
