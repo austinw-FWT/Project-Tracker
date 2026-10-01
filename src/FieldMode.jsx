@@ -3,6 +3,7 @@ import { LABOR_PHASES, genId } from "./App.jsx";
 import { remainingHours, bidHours, usedHours, laborTotals } from "./laborMath.js";
 import { uploadLogPhotos, describeUploadError } from "./photoUtils.js";
 import { scheduleEntries } from "./db.js";
+import { projectWarranty, WARRANTY_STATUS, daysLeftLabel, fmtDay } from "./warranty.js";
 import { crewLabel, guestFields, pastHelpers, resolveTypedMember } from "./guestCrew.js";
 
 /**
@@ -72,11 +73,17 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
   const [saveError, setSaveError] = useState("");
   const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
   const [detailId, setDetailId] = useState(null);
+  const [showWarranty, setShowWarranty] = useState(false);
   const fileRef = useRef(null);
   const camRef = useRef(null);
   const restored = useRef(false);
 
   const activeProjectsAll = (projects || []).filter(p => !p.movedToWarranty);
+  // Jobs handed off to warranty: off the active list, but still openable for
+  // callbacks — site info, docs, and history are exactly what a service visit needs.
+  const warrantyProjects = (projects || []).filter(p => p.movedToWarranty)
+    .map(p => ({ p, w: projectWarranty(p) }))
+    .sort((a, b) => (a.w.status === "expired") - (b.w.status === "expired") || (a.w.daysLeft ?? 1e9) - (b.w.daysLeft ?? 1e9));
   /* Techs shouldn't scroll 20 jobs to find today's. Rank: scheduled today,
      then scheduled anywhere this week, then jobs they're on the team for,
      then everything else. */
@@ -496,7 +503,7 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
   );
 
   /* ════════ PROJECTS ════════ */
-  const detail = activeProjects.find(p => p.id === detailId);
+  const detail = (projects || []).find(p => p.id === detailId);
 
   const ProjectDetailScreen = detail && (() => {
     const psi = detail.siteInfo || {};
@@ -512,7 +519,7 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
 
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        <button onClick={() => setDetailId(null)} style={{ alignSelf: "flex-start", display: "flex", alignItems: "center", gap: 6, padding: "9px 14px 9px 10px", borderRadius: 10, border: `1px solid ${T.line}`, background: T.card, color: T.inkSoft, fontSize: 13.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", minHeight: 42 }}>‹ All projects</button>
+        <button onClick={() => setDetailId(null)} style={{ alignSelf: "flex-start", display: "flex", alignItems: "center", gap: 6, padding: "9px 14px 9px 10px", borderRadius: 10, border: `1px solid ${T.line}`, background: T.card, color: T.inkSoft, fontSize: 13.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", minHeight: 42 }}>‹ {detail.movedToWarranty ? "Projects & warranty" : "All projects"}</button>
 
         {/* Header */}
         <div style={{ ...card, overflow: "hidden" }}>
@@ -531,6 +538,24 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
           )}
           {detail.siteAddress && <div style={{ padding: "0 16px 12px", fontSize: 12.5, color: T.inkSoft }}>📍 {detail.siteAddress}</div>}
         </div>
+
+        {/* Warranty status — warranty jobs only */}
+        {detail.movedToWarranty && (() => {
+          const w = projectWarranty(detail);
+          const st = WARRANTY_STATUS[w.status];
+          return (
+            <div style={{ ...card, padding: "13px 16px", borderLeft: `4px solid ${st.color}` }}>
+              <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
+                <div style={{ fontSize: 14.5, fontWeight: 800, color: T.ink }}>🛡 {w.status === "expired" ? "Warranty ended" : "In warranty"}</div>
+                <div style={{ fontSize: 13, fontWeight: 800, color: st.color }}>{daysLeftLabel(w)}</div>
+              </div>
+              <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 3 }}>{fmtDay(w.start)} → <strong style={{ color: T.ink }}>{fmtDay(w.end)}</strong></div>
+              <div style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 6 }}>
+                {w.status === "expired" ? "Out of warranty — service work here is billable. Check with the office before starting." : "Covered under FWT warranty. Check with the office before doing service work."}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Site brain */}
         {(siteRows.length > 0 || psi.parking) && (
@@ -676,7 +701,7 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
           </div>
         )}
 
-        <button onClick={() => startLog(detail.id)} style={{ width: "100%", minHeight: 52, borderRadius: 13, border: "none", background: T.green, color: "#fff", fontSize: 15.5, fontWeight: 800, fontFamily: "'Outfit',sans-serif", cursor: "pointer" }}>Log hours on this job</button>
+        {!detail.movedToWarranty && <button onClick={() => startLog(detail.id)} style={{ width: "100%", minHeight: 52, borderRadius: 13, border: "none", background: T.green, color: "#fff", fontSize: 15.5, fontWeight: 800, fontFamily: "'Outfit',sans-serif", cursor: "pointer" }}>Log hours on this job</button>}
         <div style={{ height: 4 }} />
       </div>
     );
@@ -706,6 +731,33 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
           </button>
         );
       })}
+
+      {warrantyProjects.length > 0 && (
+        <>
+          <button onClick={() => setShowWarranty(!showWarranty)} style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, padding: "12px 4px", minHeight: 46, background: "none", border: "none", borderTop: `1px solid ${T.line}`, cursor: "pointer", fontFamily: "inherit", textAlign: "left", width: "100%" }}>
+            <span style={{ fontSize: 15, fontWeight: 800, color: T.ink, flex: 1 }}>🛡 In warranty <span style={{ color: T.inkFaint, fontWeight: 700 }}>{warrantyProjects.length}</span></span>
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: T.inkSoft }}>{showWarranty ? "Hide ▲" : "Show ▼"}</span>
+          </button>
+          {showWarranty && warrantyProjects.map(({ p, w }) => {
+            const st = WARRANTY_STATUS[w.status];
+            return (
+              <button key={p.id} onClick={() => setDetailId(p.id)} style={{ ...card, padding: "13px 16px", cursor: "pointer", fontFamily: "inherit", textAlign: "left", width: "100%", borderLeft: `4px solid ${st.color}`, opacity: w.status === "expired" ? 0.75 : 1 }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                  {p.jobNumber && <span style={{ fontSize: 12.5, fontWeight: 800, color: T.green }}>#{p.jobNumber}</span>}
+                  <span style={{ fontSize: 15, fontWeight: 800, color: T.ink, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+                  <span style={{ color: T.inkFaint, fontWeight: 800 }}>›</span>
+                </div>
+                <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 2 }}>{p.customer}</div>
+                <div style={{ display: "flex", gap: 10, marginTop: 7, fontSize: 11.5, fontWeight: 700, flexWrap: "wrap" }}>
+                  <span style={{ color: st.color }}>{daysLeftLabel(w)}</span>
+                  <span style={{ color: T.inkFaint }}>Ends {fmtDay(w.end)}</span>
+                  {p.siteAddress && <span style={{ color: T.inkFaint }}>📍 {p.siteAddress.split(",")[0]}</span>}
+                </div>
+              </button>
+            );
+          })}
+        </>
+      )}
     </div>
   );
 

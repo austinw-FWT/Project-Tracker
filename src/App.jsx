@@ -750,7 +750,7 @@ function Tracker({ user, userRecord }) {
 
           {selectedProject ? (
             <button onClick={() => setSelectedProject(null)} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 13, fontFamily: "inherit" }}>
-              <ArrowLeft size={16} />{!isMobile && "Back to Board"}
+              <ArrowLeft size={16} />{!isMobile && `Back to ${view === "warranties" ? "Warranties" : view === "dashboard" ? "Dashboard" : "Board"}`}
             </button>
           ) : null}
 
@@ -787,7 +787,7 @@ function Tracker({ user, userRecord }) {
           ) : view === "contacts" ? (
             <Contacts contacts={data.contacts || []} projects={data.projects} onSave={c => saveSection("contacts", c, { ...latestData.current, contacts: c })} />
           ) : view === "warranties" ? (
-            <WarrantyTracker projects={data.projects} onUpdateProject={(pid, u) => updateProject(pid, u)} />
+            <WarrantyTracker projects={data.projects} onUpdateProject={(pid, u) => updateProject(pid, u)} onSelectProject={p => { setSelectedProject(p); setDetailTab("overview"); }} canManage={perms.isAdminRole} />
           ) : view === "myspace" && mySpaceTab === "briefing" ? (
             <Briefing data={data} myPrivate={getMyPrivate()} myName={myName} isMobile={isMobile}
               onUpdateProject={updateProject} onSaveMyPrivate={saveMyPrivate}

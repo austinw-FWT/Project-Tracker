@@ -4,6 +4,7 @@ import { PROJECT_TYPES, LABOR_PHASES, MATERIAL_STATUSES, TASK_CATEGORIES, genId 
 import { bidHours, usedHours, loggedHours, adjustment, remainingHours, laborTotals } from "./laborMath.js";
 import { storage, storageRef, uploadBytes, getDownloadURL } from "./firebase.js";
 import { uploadLogPhotos } from "./photoUtils.js";
+import { projectWarranty, WARRANTY_STATUS, WARRANTY_TERMS, daysLeftLabel, fmtDay, isoDay } from "./warranty.js";
 import { invoiceSnapshot } from "./InvoiceProgress.jsx";
 
 const iS = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1A3050", background: "#0F2444", color: "#e2e8f0", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none" };
@@ -28,6 +29,8 @@ async function callFunction(name, data) {
 
 export default function ProjectDetail({ project, phases, phaseMap, teamRoster, onUpdate, onDelete, detailTab, setDetailTab, assignTaskToMember, perms }) {
   const canSeeMoney = perms ? perms.seeFinancials : true;
+  const canManageWarranty = perms ? perms.isAdminRole : true;
+  const [editWarranty, setEditWarranty] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [form, setForm] = useState(project);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -123,13 +126,13 @@ export default function ProjectDetail({ project, phases, phaseMap, teamRoster, o
               Ready to hand off to warranty?
             </div>
             <div style={{ fontSize: 12, color: "#94a3b8" }}>
-              Removes the project from the Kanban board and transfers tracking to the Warranties section.
+              Takes it off the Kanban board and starts a 1-year warranty today (adjustable). The job stays viewable from Warranties, including in Field Mode.
             </div>
           </div>
           <button
             onClick={() => {
-              if (confirm(`Move "${project.name}" to warranty tracking?\n\nThis will remove it from the project board. You can return it to the board from the Warranties section if needed.`)) {
-                onUpdate({ movedToWarranty: true, warrantyStartDate: new Date().toISOString() });
+              if (confirm(`Move "${project.name}" to warranty tracking?\n\nIt comes off the project board, but stays viewable from Warranties (and in Field Mode for foremen). Warranty starts today for 1 year — you can change the dates afterward.`)) {
+                onUpdate({ movedToWarranty: true, warrantyStartDate: isoDay(new Date()) });
               }
             }}
             style={{
@@ -155,52 +158,64 @@ export default function ProjectDetail({ project, phases, phaseMap, teamRoster, o
         </div>
       )}
 
-      {/* Already in warranty — show banner with "return to active" option */}
-      {project.movedToWarranty && (
-        <div style={{
-          background: "#69BE2811",
-          borderLeft: "4px solid #69BE28",
-          borderRadius: 10,
-          padding: isMobile ? "12px 14px" : "14px 18px",
-          marginBottom: 14,
-          display: "flex",
-          flexDirection: isMobile ? "column" : "row",
-          alignItems: isMobile ? "stretch" : "center",
-          gap: 12,
-        }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: "#69BE28", marginBottom: 2, display: "flex", alignItems: "center", gap: 8 }}>
-              <ShieldCheck size={16} />
-              In Warranty Period
+      {/* Already in warranty — status, end date, and (admins) term editing */}
+      {project.movedToWarranty && (() => {
+        const w = projectWarranty(project);
+        const st = WARRANTY_STATUS[w.status];
+        const termValue = project.warrantyEndDate ? "custom" : String(w.months);
+        const btn = { padding: isMobile ? "12px 16px" : "9px 14px", borderRadius: 8, border: "1px solid #1A3050", background: "#0F2444", color: "#cbd5e1", fontSize: 12.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", minHeight: isMobile ? 44 : "auto", flexShrink: 0 };
+        const fld = { padding: "7px 10px", borderRadius: 8, border: "1px solid #1A3050", background: "#0A192F", color: "#e2e8f0", fontSize: 12.5, fontFamily: "inherit", outline: "none", colorScheme: "dark" };
+        return (
+          <div style={{ background: st.color + "11", borderLeft: `4px solid ${st.color}`, borderRadius: 10, padding: isMobile ? "12px 14px" : "14px 18px", marginBottom: 14 }}>
+            <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", alignItems: isMobile ? "stretch" : "center", gap: 12 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: st.color, marginBottom: 2, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <ShieldCheck size={16} />
+                  {w.status === "expired" ? "Warranty ended" : "In warranty"}
+                  <span style={{ fontSize: 12, fontWeight: 700 }}>· {daysLeftLabel(w)}</span>
+                </div>
+                <div style={{ fontSize: 12, color: "#94a3b8" }}>
+                  {fmtDay(w.start)} → <strong style={{ color: "#e2e8f0" }}>{fmtDay(w.end)}</strong>
+                  {w.custom ? " (custom end date)" : ` (${w.months % 12 === 0 ? `${w.months / 12}-year` : `${w.months}-month`} term)`}
+                  . Off the project board; open it any time from Warranties.
+                </div>
+              </div>
+              {canManageWarranty && (
+                <div style={{ display: "flex", gap: 8, flexDirection: isMobile ? "column" : "row" }}>
+                  <button onClick={() => setEditWarranty(!editWarranty)} style={btn}>{editWarranty ? "Done" : "Edit dates"}</button>
+                  <button onClick={() => { if (confirm("Return this project to the active board?")) onUpdate({ movedToWarranty: false }); }} style={btn}>Return to Active</button>
+                </div>
+              )}
             </div>
-            <div style={{ fontSize: 12, color: "#94a3b8" }}>
-              Started {project.warrantyStartDate ? new Date(project.warrantyStartDate).toLocaleDateString() : "—"}. This project is hidden from the Kanban board.
-            </div>
+            {canManageWarranty && editWarranty && (
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 12, paddingTop: 12, borderTop: "1px solid #1A305088", alignItems: "flex-end" }}>
+                <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 10, fontWeight: 600, color: "#64748b", textTransform: "uppercase" }}>
+                  Start date
+                  <input type="date" style={fld} value={isoDay(w.start)} onChange={e => e.target.value && onUpdate({ warrantyStartDate: e.target.value })} />
+                </label>
+                <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 10, fontWeight: 600, color: "#64748b", textTransform: "uppercase" }}>
+                  Term
+                  <select style={fld} value={termValue} onChange={e => {
+                    const v = e.target.value;
+                    if (v === "custom") onUpdate({ warrantyEndDate: isoDay(w.end || new Date()) });
+                    else onUpdate({ warrantyMonths: parseInt(v), warrantyEndDate: null });
+                  }}>
+                    {WARRANTY_TERMS.map(m => <option key={m} value={m}>{m / 12} year{m > 12 ? "s" : ""}{m === 12 ? " (standard)" : ""}</option>)}
+                    {!WARRANTY_TERMS.includes(w.months) && !project.warrantyEndDate && <option value={w.months}>{w.months} months</option>}
+                    <option value="custom">Custom end date…</option>
+                  </select>
+                </label>
+                {project.warrantyEndDate && (
+                  <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 10, fontWeight: 600, color: "#64748b", textTransform: "uppercase" }}>
+                    End date
+                    <input type="date" style={fld} value={isoDay(w.end)} onChange={e => e.target.value && onUpdate({ warrantyEndDate: e.target.value })} />
+                  </label>
+                )}
+              </div>
+            )}
           </div>
-          <button
-            onClick={() => {
-              if (confirm("Return this project to the active board?")) {
-                onUpdate({ movedToWarranty: false });
-              }
-            }}
-            style={{
-              padding: isMobile ? "12px 16px" : "10px 18px",
-              borderRadius: 8,
-              border: "1px solid #1A3050",
-              background: "#0F2444",
-              color: "#cbd5e1",
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: "pointer",
-              fontFamily: "inherit",
-              minHeight: isMobile ? 44 : "auto",
-              flexShrink: 0,
-            }}
-          >
-            Return to Active
-          </button>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Tabs — on mobile, single dropdown selector; on desktop, horizontal strip */}
       {isMobile ? (
