@@ -10,7 +10,7 @@ import Dashboard from "./Dashboard.jsx";
 import Contacts from "./Contacts.jsx";
 import WarrantyTracker from "./WarrantyTracker.jsx";
 import { localIso } from "./projectSchedule.js";
-import { assignedTasks, setTaskDone, newTaskCount } from "./myTasks.js";
+import { assignedTasks, setTaskDone, newTaskCount, clearFromBoard } from "./myTasks.js";
 import MigrationTool from "./MigrationTool.jsx";
 import FieldMode from "./FieldMode.jsx";
 import PriceBook from "./PriceBook.jsx";
@@ -485,6 +485,23 @@ function Tracker({ user, userRecord }) {
     const p = latestData.current.projects.find(x => x.id === pid);
     if (p) updateProject(pid, { tasks: setTaskDone(p, ref, done, myName) });
   }
+  /** Take completed tasks off my board — they stay in the project's Tasks tab as history. */
+  function clearLinkedTask(pid, ref) {
+    const p = latestData.current.projects.find(x => x.id === pid);
+    if (p) updateProject(pid, { tasks: clearFromBoard(p, ref) });
+  }
+  function clearAllDoneLinked() {
+    const done = assignedTasks(latestData.current.projects, myName).filter(l => l.task.done);
+    const byProject = {};
+    done.forEach(l => { (byProject[l.project.id] = byProject[l.project.id] || []).push(l.ref); });
+    Object.entries(byProject).forEach(([pid, refs]) => {
+      const p = latestData.current.projects.find(x => x.id === pid);
+      if (!p) return;
+      let tasks = p.tasks;
+      refs.forEach(r => { tasks = clearFromBoard({ tasks }, r); });
+      updateProject(pid, { tasks });
+    });
+  }
   function markTasksSeen() {
     const mine = assignedTasks(latestData.current.projects, myName);
     if (newTaskCount(mine, getMyPrivate().tasksSeenAt || "") > 0) saveMyPrivate({ tasksSeenAt: new Date().toISOString() });
@@ -607,6 +624,7 @@ function Tracker({ user, userRecord }) {
       linkedTasks={myLinkedTasks}
       tasksSeenAt={getMyPrivate().tasksSeenAt || ""}
       onToggleTask={toggleLinkedTask}
+      onClearTask={clearLinkedTask}
       onTasksSeen={markTasksSeen}
       projects={data.projects}
       teamRoster={data.teamRoster || []}
@@ -693,7 +711,7 @@ function Tracker({ user, userRecord }) {
           <button key={item.id} onClick={() => navigate("myspace", item.id)}
             style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: isMobile ? "12px 12px" : "8px 12px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 500, background: view === "myspace" && mySpaceTab === item.id ? "#1A3050" : "transparent", color: view === "myspace" && mySpaceTab === item.id ? "#fff" : "#64748b", marginBottom: 1, fontFamily: "inherit" }}>
             <span style={{ fontSize: 16 }}>{item.icon}</span>{item.label}
-            {item.id === "daily" && myNewTasks > 0 && !(view === "myspace" && mySpaceTab === "daily") && (
+            {item.id === "daily" && myNewTasks > 0 && !(view === "myspace" && mySpaceTab === "daily" && !selectedProject) && (
               <span title={`${myNewTasks} task${myNewTasks > 1 ? "s" : ""} newly assigned to you`} style={{ marginLeft: "auto", minWidth: 18, height: 18, padding: "0 5px", borderRadius: 9, background: "#ef4444", color: "#fff", fontSize: 11, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center", boxSizing: "border-box" }}>{myNewTasks}</span>
             )}
           </button>
@@ -841,7 +859,7 @@ function Tracker({ user, userRecord }) {
               onSelectProject={(p, tab) => { setSelectedProject(p); setDetailTab(tab || "overview"); }}
               onNavigate={navigate} />
           ) : view === "myspace" && mySpaceTab === "daily" ? (
-            <DailyTracker linkedTasks={myLinkedTasks} newSince={taskSeenBaseline ?? (getMyPrivate().tasksSeenAt || "")} onToggleLinked={toggleLinkedTask} onOpenProject={p => { markTasksSeen(); setSelectedProject(p); setDetailTab("tasks"); }} data={getMyPrivate().dailyTracker} archivedDays={getMyPrivate().archivedDays || []} onSave={dt => saveMyPrivate({ dailyTracker: dt })} onArchive={archive => saveMyPrivate({ archivedDays: archive })} />
+            <DailyTracker linkedTasks={myLinkedTasks} onClearLinked={clearLinkedTask} onClearAllDone={clearAllDoneLinked} newSince={taskSeenBaseline ?? (getMyPrivate().tasksSeenAt || "")} onToggleLinked={toggleLinkedTask} onOpenProject={p => { markTasksSeen(); setSelectedProject(p); setDetailTab("tasks"); }} data={getMyPrivate().dailyTracker} archivedDays={getMyPrivate().archivedDays || []} onSave={dt => saveMyPrivate({ dailyTracker: dt })} onArchive={archive => saveMyPrivate({ archivedDays: archive })} />
           ) : view === "myspace" && mySpaceTab === "dailylog" ? (
             <MyDailyLog dailyLogs={getMyPrivate().dailyLogs || []} projects={data.projects} teamRoster={data.teamRoster} myName={myName} myEmail={user.email} predefinedEmail={data.adminSettings?.predefinedEmail || ""}
               onSubmit={submitDailyLogs}

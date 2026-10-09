@@ -118,7 +118,7 @@ function rolloverDay(oldSections) {
  * linkedTasks: project tasks assigned to me (see myTasks.js). They render live
  * at the top of the Hot List; checking one off updates the project task.
  */
-export default function DailyTracker({ data, onSave, linkedTasks = [], newSince = "", onToggleLinked, onOpenProject }) {
+export default function DailyTracker({ data, onSave, linkedTasks = [], newSince = "", onToggleLinked, onOpenProject, onClearLinked, onClearAllDone }) {
   const trackerData = data || {};
   const today = todayStr();
   const isMobile = useIsMobile();
@@ -349,11 +349,20 @@ export default function DailyTracker({ data, onSave, linkedTasks = [], newSince 
                           {task.text}
                         </div>
                         <button onClick={() => onOpenProject && onOpenProject(project)} title="Open the project's Tasks tab" style={{ background: "none", border: "none", padding: 0, cursor: onOpenProject ? "pointer" : "default", fontFamily: "inherit", fontSize: 11, color: "#ffa94d", opacity: 0.85 }}>
-                          🏗️ {project.jobNumber ? `#${project.jobNumber} ` : ""}{project.name} · {task.assignedBy ? `from ${task.assignedBy.split(" ")[0]}` : "assigned to you"}
+                          🏗️ {project.jobNumber ? `#${project.jobNumber} ` : ""}{project.name}{task.done && task.doneBy ? ` · done by ${task.doneBy.split(" ")[0]}` : task.assignedBy ? ` · from ${task.assignedBy.split(" ")[0]}` : ""}
                         </button>
                       </div>
+                      {task.done && onClearLinked && (
+                        <button onClick={() => onClearLinked(project.id, ref)} title="Remove from my Hot List — it stays in the project's task history"
+                          style={{ background: "none", border: "none", color: "#6b6785", cursor: "pointer", padding: isMobile ? 8 : 4, flexShrink: 0 }}><X size={isMobile ? 16 : 14} /></button>
+                      )}
                     </div>
                   ))}
+                  {linkedHere.filter(l => l.task.done).length > 1 && onClearAllDone && (
+                    <button onClick={onClearAllDone} style={{ background: "none", border: "none", color: "#6b6785", fontSize: 11.5, cursor: "pointer", fontFamily: "inherit", padding: "6px 0", textDecoration: "underline" }}>
+                      Clear {linkedHere.filter(l => l.task.done).length} completed project tasks (kept in project history)
+                    </button>
+                  )}
                   {sec.items.map((item, ii) => isStaleCopy(item, linkedTasks) ? null : (
                     <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: isMobile ? "8px 0" : "6px 0", borderBottom: ii < sec.items.length - 1 ? "1px solid rgba(51,51,85,0.4)" : "none", minHeight: isMobile ? 52 : "auto" }}>
                       {sec.type === "tasks" ? (

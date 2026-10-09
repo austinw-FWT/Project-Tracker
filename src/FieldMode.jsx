@@ -51,7 +51,7 @@ const THEME_KEY = "fwt-fieldmode-theme";
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 const isoFor = (offset) => { const d = new Date(); d.setDate(d.getDate() + offset); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 
-export default function FieldMode({ projects, teamRoster, schedule, myName, myLogs, onSubmit, onOpenFullApp, onUpdateProject, isAdmin, perms, linkedTasks = [], tasksSeenAt = "", onToggleTask, onTasksSeen }) {
+export default function FieldMode({ projects, teamRoster, schedule, myName, myLogs, onSubmit, onOpenFullApp, onUpdateProject, isAdmin, perms, linkedTasks = [], tasksSeenAt = "", onToggleTask, onTasksSeen, onClearTask }) {
   // Foremen run the job and need to see where the hours stand; techs don't.
   // Rides on the same foreman/tech switch as financials — change this one
   // line if apprentices should see the burn too.
@@ -307,9 +307,13 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
                   {task.text}
                 </div>
                 <button onClick={() => { goTab("projects"); setDetailId(project.id); }} style={{ background: "none", border: "none", padding: 0, marginTop: 2, cursor: "pointer", fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, color: T.inkFaint, textAlign: "left" }}>
-                  {project.jobNumber ? `#${project.jobNumber} ` : ""}{project.name}{task.assignedBy ? ` · from ${task.assignedBy.split(" ")[0]}` : ""} ›
+                  {project.jobNumber ? `#${project.jobNumber} ` : ""}{project.name}{task.assignedBy && !task.done ? ` · from ${task.assignedBy.split(" ")[0]}` : ""} ›
                 </button>
               </div>
+              {task.done && onClearTask && (
+                <button onClick={() => onClearTask(project.id, ref)} aria-label="Remove from my list" title="Remove from my list — stays in the project's history"
+                  style={{ width: 34, height: 34, borderRadius: 9, border: "none", background: "transparent", color: T.inkFaint, fontSize: 16, cursor: "pointer", flexShrink: 0 }}>✕</button>
+              )}
             </div>
           ))}
         </div>

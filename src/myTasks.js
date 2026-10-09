@@ -7,8 +7,9 @@
  * it to the new person's board, and it shows up even for someone who has
  * never opened their board.
  *
- * Tasks done today stay visible (checked) until the day rolls over, so a
- * check-off doesn't vanish out from under your thumb.
+ * Completed tasks stay on your board (checked) until YOU remove them — the
+ * ✕ sets task.clearedFromBoard. That only hides it from your board; the task
+ * stays in the project's Tasks tab as history.
  */
 import { localIso } from "./projectSchedule.js";
 
@@ -16,15 +17,15 @@ import { localIso } from "./projectSchedule.js";
 export const taskRef = (t, i) => (t.id ? { id: t.id } : { index: i, text: t.text });
 const matches = (t, i, ref) => (ref.id ? t.id === ref.id : i === ref.index && t.text === ref.text);
 
-/** [{ project, task, ref }] for `name`, open first (by job), then done-today. */
-export function assignedTasks(projects, name, today = localIso(new Date())) {
+/** [{ project, task, ref }] for `name`: open first (by job), then completed-but-not-cleared. */
+export function assignedTasks(projects, name) {
   if (!name) return [];
   const out = [];
   for (const p of projects || []) {
     (p.tasks || []).forEach((t, i) => {
-      if (!t || t.assignee !== name) return;
-      const doneToday = t.done && !!t.doneAt && localIso(new Date(t.doneAt)) === today;   // local day, not UTC
-      if (t.done && !doneToday) return;
+      if (!t || t.assignee !== name || t.clearedFromBoard) return;
+      // Completed tasks with no doneAt were finished before boards showed them — keep those off.
+      if (t.done && !t.doneAt) return;
       out.push({ project: p, task: t, ref: taskRef(t, i) });
     });
   }
@@ -34,13 +35,18 @@ export function assignedTasks(projects, name, today = localIso(new Date())) {
 /** New tasks array for a project with one task checked/unchecked. */
 export function setTaskDone(project, ref, done, by) {
   return (project.tasks || []).map((t, i) => matches(t, i, ref)
-    ? { ...t, done, doneAt: done ? new Date().toISOString() : null, doneBy: done ? (by || "") : null }
+    ? { ...t, done, doneAt: done ? new Date().toISOString() : null, doneBy: done ? (by || "") : null, ...(done ? {} : { clearedFromBoard: false }) }
     : t);
 }
 
-/** Fields to stamp on a task when it's assigned. Assigning to yourself isn't "new". */
+/** Fields to stamp on a task when it's assigned — including to yourself, so it badges like any other. */
 export function assignmentStamp(assignee, by) {
-  return assignee && assignee !== by ? { assignedAt: new Date().toISOString(), assignedBy: by || "" } : { assignedAt: null, assignedBy: null };
+  return assignee ? { assignedAt: new Date().toISOString(), assignedBy: by || "", clearedFromBoard: false } : { assignedAt: null, assignedBy: null };
+}
+
+/** Take one completed task off the assignee's board. It stays in the project. */
+export function clearFromBoard(project, ref) {
+  return (project.tasks || []).map((t, i) => matches(t, i, ref) ? { ...t, clearedFromBoard: true } : t);
 }
 
 /** New tasks array with one task reassigned. */

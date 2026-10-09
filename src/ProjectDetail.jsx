@@ -601,18 +601,24 @@ function ScopeTab({ project, onUpdate }) {
 
 /* ── TASKS ── */
 function TasksTab({ project, onUpdate, teamRoster, myName }) {
-  /* Assigned tasks show up live on the assignee's Daily Task Board (Hot List)
-     and Field Mode Today screen — see myTasks.js. Nothing is copied, so
-     checking off or reassigning here updates their board immediately. */
-  const [nt, setNt] = useState(""); const [na, setNa] = useState(""); const [nc, setNc] = useState("projects");
+  /* Assigned tasks show up live in the assignee's 🔥 Hot List (Daily Task
+     Board) and Field Mode Today screen — see myTasks.js. Nothing is copied,
+     so checking off or reassigning here updates their board immediately.
+     Completed tasks stay here as the job's history; people clear them off
+     their own boards without touching this list. */
+  const [nt, setNt] = useState(""); const [na, setNa] = useState("");
+  const [showDone, setShowDone] = useState(true);
   const tasks = project.tasks || [];
+  const rows = tasks.map((t, i) => ({ t, i }));
+  const open = rows.filter(r => !r.t.done);
+  const done = rows.filter(r => r.t.done).sort((a, b) => (b.t.doneAt || "").localeCompare(a.t.doneAt || ""));
   function emailAssignee(task, name) {
     const member = teamRoster.find(t => t.name === name);
     if (member?.email && name !== myName) callFunction("emailTaskAssignment", { projectName: project.name, task, assigneeEmail: member.email });
   }
   function add() {
     if (!nt.trim()) return;
-    const task = { text: nt.trim(), assignee: na, category: nc, done: false, id: genId(), createdAt: new Date().toISOString(), ...(na ? assignmentStamp(na, myName) : {}) };
+    const task = { text: nt.trim(), assignee: na, category: "hotlist", done: false, id: genId(), createdAt: new Date().toISOString(), createdBy: myName || "", ...(na ? assignmentStamp(na, myName) : {}) };
     onUpdate({ tasks: [...tasks, task] });
     if (na) emailAssignee(task, na);
     setNt(""); setNa("");
@@ -621,31 +627,55 @@ function TasksTab({ project, onUpdate, teamRoster, myName }) {
     onUpdate({ tasks: setTaskAssignee(project, taskRef(t, i), name, myName) });
     if (name) emailAssignee(t, name);
   }
+  function remove(t, i) {
+    if (t.done && !confirm(`Delete "${t.text}" from this project's task history?\n\n(To just get it off someone's Hot List, they can clear it there — it stays here.)`)) return;
+    onUpdate({ tasks: tasks.filter((_, idx) => idx !== i) });
+  }
+  const fmt = iso => iso ? new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "";
+  const assigneeSelect = (t, i) => (
+    <select value={t.assignee || ""} onChange={e => reassign(t, i, e.target.value)} title="Assign — goes to their Hot List"
+      style={{ fontSize: 11, color: t.assignee ? "#cbd5e1" : "#475569", background: "#0A192F", border: "1px solid #1A3050", padding: "3px 6px", borderRadius: 10, fontFamily: "inherit", outline: "none", cursor: "pointer", maxWidth: 150 }}>
+      <option value="">Unassigned</option>
+      {teamRoster.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+      {t.assignee && !teamRoster.some(m => m.name === t.assignee) && <option value={t.assignee}>{t.assignee}</option>}
+    </select>
+  );
   return (<div>
-    <div style={{ fontSize: 11.5, color: "#64748b", marginBottom: 10 }}>Assigned tasks appear on that person's Daily Task Board under 🔥 Hot List (and on their Field Mode Today screen), with a red badge until they look.</div>
-    {tasks.map((t, i) => (
+    <div style={{ fontSize: 11.5, color: "#64748b", marginBottom: 10 }}>Assigned tasks go to that person's 🔥 Hot List with a red badge until they look. Completed tasks stay below as this job's history.</div>
+
+    {open.map(({ t, i }) => (
       <div key={t.id || i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 0", borderBottom: "1px solid #1A3050", flexWrap: "wrap" }}>
-        <button onClick={() => onUpdate({ tasks: setTaskDone(project, taskRef(t, i), !t.done, myName) })} style={{ background: "none", border: "none", cursor: "pointer", color: t.done ? "#10b981" : "#334155" }}>{t.done ? <CheckCircle2 size={18} /> : <Circle size={18} />}</button>
-        <span style={{ flex: 1, minWidth: 160, fontSize: 13, color: t.done ? "#64748b" : "#e2e8f0", textDecoration: t.done ? "line-through" : "none" }}>
-          {t.text}
-          {t.done && t.doneBy && <span style={{ fontSize: 10.5, color: "#475569", marginLeft: 6, textDecoration: "none", display: "inline-block" }}>✓ {t.doneBy}</span>}
-        </span>
-        {t.category && <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 10, background: "#0A192F", color: "#94a3b8" }}>{TASK_CATEGORIES.find(c => c.id === t.category)?.icon} {TASK_CATEGORIES.find(c => c.id === t.category)?.label || t.category}</span>}
-        <select value={t.assignee || ""} onChange={e => reassign(t, i, e.target.value)} title="Assign — shows on their Daily Task Board"
-          style={{ fontSize: 11, color: t.assignee ? "#cbd5e1" : "#475569", background: "#0A192F", border: "1px solid #1A3050", padding: "3px 6px", borderRadius: 10, fontFamily: "inherit", outline: "none", cursor: "pointer", maxWidth: 150 }}>
-          <option value="">Unassigned</option>
-          {teamRoster.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
-          {t.assignee && !teamRoster.some(m => m.name === t.assignee) && <option value={t.assignee}>{t.assignee}</option>}
-        </select>
-        <button onClick={() => onUpdate({ tasks: tasks.filter((_, idx) => idx !== i) })} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer" }}><X size={12} /></button>
+        <button onClick={() => onUpdate({ tasks: setTaskDone(project, taskRef(t, i), true, myName) })} style={{ background: "none", border: "none", cursor: "pointer", color: "#334155" }}><Circle size={18} /></button>
+        <span style={{ flex: 1, minWidth: 160, fontSize: 13, color: "#e2e8f0" }}>{t.text}</span>
+        {assigneeSelect(t, i)}
+        <button onClick={() => remove(t, i)} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer" }}><X size={12} /></button>
       </div>
     ))}
+    {open.length === 0 && <div style={{ fontSize: 12.5, color: "#475569", padding: "10px 0" }}>No open tasks.</div>}
+
     <div style={{ display: "flex", gap: 6, marginTop: 12, flexWrap: "wrap" }}>
-      <input style={{ ...iS, flex: 2, minWidth: 180 }} placeholder="New task..." value={nt} onChange={e => setNt(e.target.value)} onKeyDown={e => { if (e.key === "Enter") add(); }} />
-      <select style={{ ...iS, flex: 0.8 }} value={nc} onChange={e => setNc(e.target.value)}>{TASK_CATEGORIES.map(c => <option key={c.id} value={c.id}>{c.icon} {c.label}</option>)}</select>
-      <select style={{ ...iS, flex: 0.8 }} value={na} onChange={e => setNa(e.target.value)}><option value="">Unassigned</option>{teamRoster.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}</select>
+      <input style={{ ...iS, flex: 2, minWidth: 200 }} placeholder="New task..." value={nt} onChange={e => setNt(e.target.value)} onKeyDown={e => { if (e.key === "Enter") add(); }} />
+      <select style={{ ...iS, flex: 0.9, minWidth: 150 }} value={na} onChange={e => setNa(e.target.value)}><option value="">Unassigned</option>{teamRoster.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}</select>
       <button onClick={add} style={{ padding: "8px 12px", borderRadius: 8, border: "none", background: "#69BE28", color: "#fff", cursor: "pointer", flexShrink: 0 }}><Plus size={14} /></button>
     </div>
+
+    {done.length > 0 && (
+      <div style={{ marginTop: 22 }}>
+        <button onClick={() => setShowDone(!showDone)} style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 700, color: "#94a3b8", display: "flex", alignItems: "center", gap: 6 }}>
+          {showDone ? <ChevronDown size={13} /> : <ChevronDown size={13} style={{ transform: "rotate(-90deg)" }} />} Completed ({done.length})
+        </button>
+        {showDone && done.map(({ t, i }) => (
+          <div key={t.id || i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderBottom: "1px solid #13294d", flexWrap: "wrap" }}>
+            <button onClick={() => onUpdate({ tasks: setTaskDone(project, taskRef(t, i), false, myName) })} title="Reopen" style={{ background: "none", border: "none", cursor: "pointer", color: "#10b981" }}><CheckCircle2 size={17} /></button>
+            <span style={{ flex: 1, minWidth: 160, fontSize: 12.5, color: "#64748b", textDecoration: "line-through" }}>{t.text}</span>
+            <span style={{ fontSize: 11, color: "#475569" }}>
+              {t.doneBy ? `${t.doneBy.split(" ")[0]}` : ""}{t.doneAt ? `${t.doneBy ? " · " : ""}${fmt(t.doneAt)}` : ""}{t.assignee && t.assignee !== t.doneBy ? ` · for ${t.assignee.split(" ")[0]}` : ""}
+            </span>
+            <button onClick={() => remove(t, i)} title="Delete from history" style={{ background: "none", border: "none", color: "#334155", cursor: "pointer" }}><X size={11} /></button>
+          </div>
+        ))}
+      </div>
+    )}
   </div>);
 }
 
