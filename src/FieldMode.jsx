@@ -4,6 +4,8 @@ import { remainingHours, bidHours, usedHours, laborTotals } from "./laborMath.js
 import { uploadLogPhotos, describeUploadError } from "./photoUtils.js";
 import { scheduleEntries } from "./db.js";
 import { projectWarranty, WARRANTY_STATUS, daysLeftLabel, fmtDay } from "./warranty.js";
+import { isNewTask, newTaskCount } from "./myTasks.js";
+import { WRITE_IN_ID, WRITE_IN_KINDS, buildWriteInLog } from "./writeIns.js";
 import { crewLabel, guestFields, pastHelpers, resolveTypedMember } from "./guestCrew.js";
 
 /**
@@ -49,7 +51,7 @@ const THEME_KEY = "fwt-fieldmode-theme";
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 const isoFor = (offset) => { const d = new Date(); d.setDate(d.getDate() + offset); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 
-export default function FieldMode({ projects, teamRoster, schedule, myName, myLogs, onSubmit, onOpenFullApp, onUpdateProject, isAdmin, perms }) {
+export default function FieldMode({ projects, teamRoster, schedule, myName, myLogs, onSubmit, onOpenFullApp, onUpdateProject, isAdmin, perms, linkedTasks = [], tasksSeenAt = "", onToggleTask, onTasksSeen }) {
   // Foremen run the job and need to see where the hours stand; techs don't.
   // Rides on the same foreman/tech switch as financials — change this one
   // line if apprentices should see the burn too.
@@ -74,6 +76,12 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
   const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
   const [detailId, setDetailId] = useState(null);
   const [showWarranty, setShowWarranty] = useState(false);
+  // write-in job (not in the app)
+  const [wiName, setWiName] = useState("");
+  const [wiNumber, setWiNumber] = useState("");
+  const [wiKind, setWiKind] = useState("help");
+  // tasksSeenAt as it was when Field Mode opened — NEW tags stay put while you look
+  const [taskBaseline] = useState(tasksSeenAt);
   const fileRef = useRef(null);
   const camRef = useRef(null);
   const restored = useRef(false);
@@ -102,6 +110,14 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
   const rank = p => (p.id === todayIdForSort ? 0 : weekIds.has(p.id) ? 1 : (p.teamMembers || []).includes(myName) ? 2 : 3);
   const activeProjects = [...activeProjectsAll].sort((a, b) => rank(a) - rank(b) || (a.name || "").localeCompare(b.name || ""));
   const proj = activeProjects.find(p => p.id === projectId);
+  const isWriteIn = projectId === WRITE_IN_ID;
+  const logTarget = !!proj || isWriteIn;
+  const newTasks = newTaskCount(linkedTasks, tasksSeenAt);
+  // leaving the Today tab = you've seen the new assignments
+  function goTab(id) {
+    if (tab === "today" && id !== "today" && newTasks > 0 && onTasksSeen) onTasksSeen();
+    setTab(id);
+  }
   const today = todayIso();
   const todayEntries = scheduleEntries((schedule || {})[today]?.[myName]);
   const todayProjEntries = todayEntries.filter(e => e.type === "project" && activeProjects.some(p => p.id === e.id));
@@ -149,7 +165,7 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
   function startLog(pid) {
     setProjectId(pid);
     if (crew.length === 0) setCrew([{ id: genId(), name: myName, allocations: [{ id: genId(), hours: 0, category: LABOR_PHASES[0]?.id || "" }] }]);
-    setTab("log");
+    goTab("log");
   }
   function setAlloc(cid, aid, field, val) {
     setCrew(crew.map(c => c.id !== cid ? c : { ...c, allocations: c.allocations.map(a => a.id === aid ? { ...a, [field]: val } : a) }));
@@ -161,7 +177,8 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
     const last = (myLogs || [])[0];
     if (!last || !last.entries?.length) { setToast("No previous log to copy"); return; }
     const e = last.entries[0];
-    setProjectId(e.projectId || "");
+    setProjectId(e.writeIn ? WRITE_IN_ID : (e.projectId || ""));
+    if (e.writeIn) { setWiName(e.writeIn.name || ""); setWiNumber(e.writeIn.number || ""); setWiKind(e.writeIn.kind || "other"); }
     setCrew((e.crewMembers || []).map(c => ({
       id: genId(), name: c.name, ...guestFields(c),
       allocations: (c.allocations?.length ? c.allocations : [{ hours: 0, category: LABOR_PHASES[0]?.id || "" }]).map(a => ({ id: genId(), hours: parseFloat(a.hours) || 0, category: a.category || LABOR_PHASES[0]?.id || "" })),
@@ -174,7 +191,7 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
 
   /* ── submit ── */
   async function submit() {
-    if (!proj || totalHrs === 0 || submitting) return;
+    if (!logTarget || (isWriteIn && !wiName.trim()) || totalHrs === 0 || submitting) return;
     setSubmitting(true);
     try {
       const logId = genId();
@@ -183,7 +200,7 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
       if (photos.length) {
         setToast(`Uploading ${photos.length} photo${photos.length > 1 ? "s" : ""}…`);
         try {
-          photoUrls = await uploadLogPhotos(photos, proj.id, logId, (done, total) => setToast(`Uploading photos… ${done}/${total}`));
+          photoUrls = await uploadLogPhotos(photos, proj ? proj.id : "writein", logId, (done, total) => setToast(`Uploading photos… ${done}/${total}`));
         } catch (e) {
           const why = e?.message || describeUploadError(e);
           if (!confirm(`${why}\n\nSubmit the log WITHOUT photos?\n\nOK = submit now (photos can be added later from the project's Daily Log tab)\nCancel = keep everything and try again`)) {
@@ -202,7 +219,9 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
         allocations: c.allocations.filter(a => (parseFloat(a.hours) || 0) > 0).map(a => ({ hours: parseFloat(a.hours), category: a.category })),
       })).filter(c => c.allocations.length > 0);
 
-      const entry = { projectId: proj.id, activities, crewMembers };
+      const entry = proj
+        ? { projectId: proj.id, activities, crewMembers }
+        : { projectId: null, projectName: `✏ ${wiName.trim()}`, writeIn: { name: wiName.trim(), number: wiNumber.trim(), kind: wiKind }, activities, crewMembers };
       const personalLog = { id: genId(), date, submittedBy: myName, entries: [entry], createdAt: new Date().toISOString() };
 
       const crewLines = crewMembers.map(c => `${crewLabel(c)}: ${c.allocations.map(a => `${a.hours}h [${LABOR_PHASES.find(l => l.id === a.category)?.name || a.category}]`).join(" + ")}`);
@@ -217,7 +236,8 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
       // Wait for the ACTUAL write. Never clear the draft or claim success
       // until Firebase confirms — a dead zone must not silently eat hours.
       try {
-        await onSubmit([personalLog, ...(myLogs || [])], [{ pid: proj.id, log: projectLog }]);
+        const writeIn = isWriteIn ? buildWriteInLog({ id: logId, date, member: myName, jobName: wiName, jobNumber: wiNumber, kind: wiKind, crewMembers, activities, photos: photoUrls, phaseName: id => LABOR_PHASES.find(l => l.id === id)?.name || id }) : null;
+        await onSubmit([personalLog, ...(myLogs || [])], proj ? [{ pid: proj.id, log: projectLog }] : [], writeIn ? [writeIn] : []);
       } catch {
         setSaveError("Couldn't reach the server — your log is still here. Move to better signal and hit Submit again.");
         setSubmitting(false);
@@ -228,7 +248,8 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
       setSaveError("");
       setCrew([]); setActivities(""); setPhotos([]); setProjectId(""); setDate(todayIso());
       setTab("today");
-      setToast(`Log saved ✓ ${totalHrs}h on ${proj.jobNumber ? "#" + proj.jobNumber : proj.name}${photoUrls.length ? ` · ${photoUrls.length} photos` : ""}`);
+      setWiName(""); setWiNumber("");
+      setToast(`Log saved ✓ ${totalHrs}h on ${proj ? (proj.jobNumber ? "#" + proj.jobNumber : proj.name) : wiName.trim()}${photoUrls.length ? ` · ${photoUrls.length} photos` : ""}`);
     } finally { setSubmitting(false); }
   }
 
@@ -268,6 +289,31 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
         </div>
         <div style={{ fontSize: 13, color: T.inkSoft, marginTop: 3 }}>{new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</div>
       </div>
+
+      {linkedTasks.length > 0 && (
+        <div style={{ ...card, padding: "13px 16px", borderLeft: `4px solid ${newTasks > 0 ? T.red : T.amber}` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+            <div style={eyebrow}>🔥 Assigned to you</div>
+            {newTasks > 0 && <span style={{ fontSize: 10.5, fontWeight: 800, padding: "2px 8px", borderRadius: 10, background: T.red, color: "#fff" }}>{newTasks} NEW</span>}
+            <span style={{ marginLeft: "auto", fontSize: 11.5, color: T.inkFaint, fontWeight: 700 }}>{linkedTasks.filter(l => !l.task.done).length} open</span>
+          </div>
+          {linkedTasks.map(({ project, task, ref }) => (
+            <div key={`${project.id}-${ref.id || ref.index}`} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "9px 0", borderBottom: `1px solid ${T.line}` }}>
+              <button onClick={() => onToggleTask && onToggleTask(project.id, ref, !task.done)} aria-label={task.done ? "Mark not done" : "Mark done"}
+                style={{ width: 30, height: 30, borderRadius: 9, border: task.done ? "none" : `2px solid ${T.lineStrong}`, background: task.done ? T.green : "transparent", color: "#fff", fontSize: 15, fontWeight: 900, cursor: "pointer", flexShrink: 0 }}>{task.done ? "✓" : ""}</button>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: task.done ? T.inkFaint : T.ink, textDecoration: task.done ? "line-through" : "none" }}>
+                  {isNewTask(task, taskBaseline) && <span style={{ fontSize: 9.5, fontWeight: 800, padding: "1px 6px", borderRadius: 7, background: T.red, color: "#fff", marginRight: 6, verticalAlign: 2 }}>NEW</span>}
+                  {task.text}
+                </div>
+                <button onClick={() => { goTab("projects"); setDetailId(project.id); }} style={{ background: "none", border: "none", padding: 0, marginTop: 2, cursor: "pointer", fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, color: T.inkFaint, textAlign: "left" }}>
+                  {project.jobNumber ? `#${project.jobNumber} ` : ""}{project.name}{task.assignedBy ? ` · from ${task.assignedBy.split(" ")[0]}` : ""} ›
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {todaysProject && unloggedToday.length > 0 ? (
         <button onClick={() => startLog(unloggedToday[0].id)} style={{ ...card, border: `1.5px solid ${T.green}`, padding: "14px 16px", textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: 12, fontFamily: "inherit" }}>
@@ -408,9 +454,31 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
             </button>
           ))}
         </div>
+        <button onClick={() => startLog(WRITE_IN_ID)} style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", marginTop: 6, padding: "12px 13px", borderRadius: 11, border: isWriteIn ? `2px solid ${T.amber}` : `1.5px dashed ${T.lineStrong}`, background: isWriteIn ? T.amberWash : "transparent", cursor: "pointer", fontFamily: "inherit", minHeight: 52, textAlign: "left" }}>
+          <span style={{ fontSize: 16 }}>✏</span>
+          <span style={{ flex: 1 }}>
+            <span style={{ display: "block", fontSize: 14.5, fontWeight: 700, color: T.ink }}>Write-in job</span>
+            <span style={{ display: "block", fontSize: 11.5, color: T.inkFaint }}>Helped another crew, or a job that's not in the app</span>
+          </span>
+          {isWriteIn && <span style={{ color: T.amber, fontWeight: 900 }}>✓</span>}
+        </button>
+        {isWriteIn && (
+          <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {WRITE_IN_KINDS.map(k => (
+                <button key={k.id} onClick={() => setWiKind(k.id)} style={{ padding: "8px 12px", minHeight: 38, borderRadius: 20, border: wiKind === k.id ? `2px solid ${T.amber}` : `1px solid ${T.line}`, background: wiKind === k.id ? T.amberWash : "transparent", color: wiKind === k.id ? T.amber : T.inkSoft, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{k.label}</button>
+              ))}
+            </div>
+            <input value={wiName} onChange={e => setWiName(e.target.value)} autoCapitalize="words" placeholder={WRITE_IN_KINDS.find(k => k.id === wiKind)?.placeholder}
+              style={{ width: "100%", boxSizing: "border-box", minHeight: 48, padding: "0 14px", borderRadius: 11, border: `1px solid ${wiName.trim() ? T.line : T.amber}`, background: T.cardAlt, color: T.ink, fontSize: 16, fontFamily: "inherit", outline: "none" }} />
+            <input value={wiNumber} onChange={e => setWiNumber(e.target.value)} inputMode="numeric" placeholder="Job # (if you know it)"
+              style={{ width: "100%", boxSizing: "border-box", minHeight: 48, padding: "0 14px", borderRadius: 11, border: `1px solid ${T.line}`, background: T.cardAlt, color: T.ink, fontSize: 16, fontFamily: "inherit", outline: "none" }} />
+            <div style={{ fontSize: 11.5, color: T.inkFaint }}>Hours go to the office and count as your log for the day. They don't count against any project in the app.</div>
+          </div>
+        )}
       </div>
 
-      {proj && (
+      {logTarget && (
         <div style={{ ...card, padding: "13px 16px" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
             <div style={eyebrow}>Crew & hours</div>
@@ -429,7 +497,7 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
               </div>
 
               {c.allocations.map(a => {
-                const rem = remainingHours(proj, a.category);
+                const rem = proj ? remainingHours(proj, a.category) : 0;
                 const after = rem - (parseFloat(a.hours) || 0);
                 const over = (parseFloat(a.hours) || 0) > 0 && after < 0;
                 return (
@@ -446,7 +514,7 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
                         <button key={lp.id} onClick={() => setAlloc(c.id, a.id, "category", lp.id)} style={{ padding: "8px 12px", minHeight: 38, borderRadius: 20, border: a.category === lp.id ? `2px solid ${T.green}` : `1px solid ${T.line}`, background: a.category === lp.id ? T.greenWash : "transparent", color: a.category === lp.id ? T.green : T.inkSoft, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{lp.name}</button>
                       ))}
                     </div>
-                    {(parseFloat(a.hours) || 0) > 0 && (
+                    {proj && (parseFloat(a.hours) || 0) > 0 && (
                       <div style={{ marginTop: 7, fontSize: 12, fontWeight: 700, color: over ? T.red : after < rem * 0.2 ? T.amber : T.inkFaint }}>
                         {over ? `⚠ Overruns ${LABOR_PHASES.find(l => l.id === a.category)?.name || ""} by ${Math.abs(after).toFixed(1)}h — only ${rem.toFixed(1)}h remained` : `${rem.toFixed(1)}h left on ${LABOR_PHASES.find(l => l.id === a.category)?.name || ""} → ${after.toFixed(1)}h after this`}
                       </div>
@@ -462,7 +530,7 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
         </div>
       )}
 
-      {proj && (
+      {logTarget && (
         <div style={{ ...card, padding: "13px 16px" }}>
           <div style={{ ...eyebrow, marginBottom: 8 }}>Work performed</div>
           <textarea value={activities} onChange={e => setActivities(e.target.value)} placeholder="Finished Bldg C camera trim, terminated IDF-2, gate operator parts arrived…"
@@ -493,8 +561,8 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
           ⚠ {saveError}
         </div>
       )}
-      {proj && (
-        <button onClick={submit} disabled={totalHrs === 0 || submitting} style={{ width: "100%", minHeight: 56, borderRadius: 14, border: "none", background: totalHrs > 0 && !submitting ? T.green : T.chip, color: totalHrs > 0 && !submitting ? "#fff" : T.inkFaint, fontSize: 17, fontWeight: 800, fontFamily: "'Outfit',sans-serif", cursor: totalHrs > 0 && !submitting ? "pointer" : "default" }}>
+      {logTarget && (
+        <button onClick={submit} disabled={totalHrs === 0 || submitting || (isWriteIn && !wiName.trim())} style={{ width: "100%", minHeight: 56, borderRadius: 14, border: "none", background: totalHrs > 0 && !submitting ? T.green : T.chip, color: totalHrs > 0 && !submitting ? "#fff" : T.inkFaint, fontSize: 17, fontWeight: 800, fontFamily: "'Outfit',sans-serif", cursor: totalHrs > 0 && !submitting ? "pointer" : "default" }}>
           {submitting ? "Saving…" : `Submit log — ${totalHrs}h${photos.length ? ` · ${photos.length} photo${photos.length > 1 ? "s" : ""}` : ""}`}
         </button>
       )}
@@ -825,8 +893,9 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
 
       <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: T.card, borderTop: `1px solid ${T.line}`, display: "flex", paddingBottom: "max(8px, env(safe-area-inset-bottom))", zIndex: 30 }}>
         {TABS.map(t => (
-          <button key={t.id} onClick={() => { if (t.id === "projects" && tab === "projects") setDetailId(null); setTab(t.id); if (t.id === "log" && !projectId && todaysProject) startLog(todaysProject.id); }} style={{ flex: 1, minHeight: 58, border: "none", background: "transparent", cursor: "pointer", fontFamily: "inherit", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3 }}>
-            <span style={{ fontSize: 19, filter: tab === t.id ? "none" : "grayscale(1) opacity(0.55)" }}>{t.icon}</span>
+          <button key={t.id} onClick={() => { if (t.id === "projects" && tab === "projects") setDetailId(null); goTab(t.id); if (t.id === "log" && !projectId && todaysProject) startLog(todaysProject.id); }} style={{ position: "relative", flex: 1, minHeight: 58, border: "none", background: "transparent", cursor: "pointer", fontFamily: "inherit", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3 }}>
+            <span style={{ position: "relative", fontSize: 19, filter: tab === t.id ? "none" : "grayscale(1) opacity(0.55)" }}>{t.icon}</span>
+            {t.id === "today" && tab !== "today" && newTasks > 0 && <span style={{ position: "absolute", top: 5, left: "calc(50% + 6px)", minWidth: 18, height: 18, padding: "0 5px", borderRadius: 9, background: "#DC2626", color: "#fff", fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", boxSizing: "border-box" }}>{newTasks}</span>}
             <span style={{ fontSize: 11, fontWeight: 800, color: tab === t.id ? T.green : T.inkFaint }}>{t.label}</span>
           </button>
         ))}

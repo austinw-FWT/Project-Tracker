@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { Plus, X, CheckCircle2, Circle, Archive, ChevronDown, ChevronUp } from "lucide-react";
+import { isStaleCopy, isNewTask } from "./myTasks.js";
 
 export const TRACKER_SECTIONS = [
   { id: "priority", icon: "🎯", title: "Today's #1 Priority", color: "#ff6b6b", time: "Do this first", type: "tasks" },
@@ -113,7 +114,11 @@ function rolloverDay(oldSections) {
   });
 }
 
-export default function DailyTracker({ data, onSave }) {
+/**
+ * linkedTasks: project tasks assigned to me (see myTasks.js). They render live
+ * at the top of the Hot List; checking one off updates the project task.
+ */
+export default function DailyTracker({ data, onSave, linkedTasks = [], newSince = "", onToggleLinked, onOpenProject }) {
   const trackerData = data || {};
   const today = todayStr();
   const isMobile = useIsMobile();
@@ -197,9 +202,10 @@ export default function DailyTracker({ data, onSave }) {
 
   const { checked, total } = useMemo(() => {
     let c = 0, t = 0;
-    dailySections.forEach(s => { if (s.type === "tasks") s.items.forEach(it => { t++; if (it.done) c++; }); });
+    dailySections.forEach(s => { if (s.type === "tasks") s.items.forEach(it => { if (isStaleCopy(it, linkedTasks)) return; t++; if (it.done) c++; }); });
+    linkedTasks.forEach(l => { t++; if (l.task.done) c++; });
     return { checked: c, total: t };
-  }, [dailySections]);
+  }, [dailySections, linkedTasks]);
   const pct = total > 0 ? Math.round((checked / total) * 100) : 0;
 
   // Styles
@@ -295,8 +301,10 @@ export default function DailyTracker({ data, onSave }) {
 
       {/* Daily Sections */}
       {dailySections.map((sec, si) => {
-        const doneCount = sec.type === "tasks" ? sec.items.filter(i => i.done).length : 0;
-        const totalCount = sec.type === "tasks" ? sec.items.length : 0;
+        const linkedHere = sec.id === "hotlist" ? linkedTasks : [];
+        const shownItems = sec.items.filter(it => !isStaleCopy(it, linkedTasks));
+        const doneCount = sec.type === "tasks" ? shownItems.filter(i => i.done).length + linkedHere.filter(l => l.task.done).length : 0;
+        const totalCount = sec.type === "tasks" ? shownItems.length + linkedHere.length : 0;
         const isCollapsed = isMobile && collapsedSections[sec.id];
 
         return (
@@ -329,7 +337,24 @@ export default function DailyTracker({ data, onSave }) {
                   {!isMobile && (
                     <div style={{ fontSize: 11, color: "#6b6785", marginBottom: 10, paddingTop: 2 }}>{sec.time}</div>
                   )}
-                  {sec.items.map((item, ii) => (
+                  {linkedHere.map(({ project, task, ref }) => (
+                    <div key={`${project.id}-${ref.id || ref.index}`} style={{ display: "flex", alignItems: "center", gap: 10, padding: isMobile ? "8px 0" : "6px 0", borderBottom: "1px solid rgba(51,51,85,0.4)", minHeight: isMobile ? 52 : "auto" }}>
+                      <button onClick={() => onToggleLinked && onToggleLinked(project.id, ref, !task.done)}
+                        style={{ background: "none", border: "none", cursor: "pointer", color: task.done ? "#69db7c" : "#ffa94d", flexShrink: 0, padding: isMobile ? "4px" : "2px", minWidth: isMobile ? 36 : "auto", minHeight: isMobile ? 36 : "auto", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        {task.done ? <CheckCircle2 size={isMobile ? 22 : 18} /> : <Circle size={isMobile ? 22 : 18} />}
+                      </button>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 14, color: task.done ? "#5a5678" : "#e8e6f0", textDecoration: task.done ? "line-through" : "none" }}>
+                          {isNewTask(task, newSince) && <span style={{ fontSize: 9.5, fontWeight: 800, padding: "1px 6px", borderRadius: 8, background: "#ef4444", color: "#fff", marginRight: 7, verticalAlign: 2, letterSpacing: "0.04em" }}>NEW</span>}
+                          {task.text}
+                        </div>
+                        <button onClick={() => onOpenProject && onOpenProject(project)} title="Open the project's Tasks tab" style={{ background: "none", border: "none", padding: 0, cursor: onOpenProject ? "pointer" : "default", fontFamily: "inherit", fontSize: 11, color: "#ffa94d", opacity: 0.85 }}>
+                          🏗️ {project.jobNumber ? `#${project.jobNumber} ` : ""}{project.name} · {task.assignedBy ? `from ${task.assignedBy.split(" ")[0]}` : "assigned to you"}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {sec.items.map((item, ii) => isStaleCopy(item, linkedTasks) ? null : (
                     <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: isMobile ? "8px 0" : "6px 0", borderBottom: ii < sec.items.length - 1 ? "1px solid rgba(51,51,85,0.4)" : "none", minHeight: isMobile ? 52 : "auto" }}>
                       {sec.type === "tasks" ? (
                         <button

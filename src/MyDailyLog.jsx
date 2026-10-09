@@ -5,6 +5,7 @@ import { remainingHours } from "./laborMath.js";
 import { openOutlookCompose } from "./emailHelper.js";
 import { uploadLogPhotos, previewUrl, describeUploadError } from "./photoUtils.js";
 import { crewLabel, guestFields, pastHelpers, resolveTypedMember } from "./guestCrew.js";
+import { WRITE_IN_ID, WRITE_IN_KINDS, buildWriteInLog } from "./writeIns.js";
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 
@@ -112,6 +113,11 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
 
   // ── Add a project entry ──
   function addProjectEntry(projectId) {
+    if (projectId === WRITE_IN_ID) {
+      // Work that isn't a project in the app — several allowed per day
+      setEntries([...entries, { id: genId(), projectId: `${WRITE_IN_ID}:${genId()}`, projectName: "✏ Write-in job", writeIn: { name: "", number: "", kind: "help" }, crewMembers: [makeCrewMember(myName)], activities: "", photos: [] }]);
+      return;
+    }
     if (!projectId || entries.some(e => e.projectId === projectId)) return;
     const proj = projects.find(p => p.id === projectId);
     if (!proj) return;
@@ -230,6 +236,7 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
     if (entries.length === 0 || submitting) return;
     const validEntries = entries.filter(e => {
       const anyHours = e.crewMembers.some(c => getAllocations(c).some(a => a.hours > 0));
+      if (e.writeIn) return !!e.writeIn.name.trim() && anyHours;   // a write-in needs a name and hours
       return e.activities.trim() || anyHours || (e.photos || []).length > 0;
     });
     if (validEntries.length === 0) return;
@@ -246,7 +253,7 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
       const files = entry.photos || [];
       if (!files.length) { photoUrlsByEntry[entry.id] = []; continue; }
       try {
-        photoUrlsByEntry[entry.id] = await uploadLogPhotos(files, entry.projectId, logIds[entry.id], () => {
+        photoUrlsByEntry[entry.id] = await uploadLogPhotos(files, entry.writeIn ? "writein" : entry.projectId, logIds[entry.id], () => {
           uploaded++; setUploadMsg(`Uploading photos… ${uploaded}/${totalPhotos}`);
         });
       } catch (e) {
@@ -277,7 +284,13 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
     // these logs (see laborMath.js) — no balance is mutated here, so edits,
     // deletes, and double-submits can no longer corrupt the remaining hours.
     const projectLogs = [];
+    const writeInLogs = [];
     validEntries.forEach(entry => {
+      if (entry.writeIn) {
+        writeInLogs.push(buildWriteInLog({ id: logIds[entry.id], date, member: myName, jobName: entry.writeIn.name, jobNumber: entry.writeIn.number, kind: entry.writeIn.kind,
+          crewMembers: entry.crewMembers.map(c => ({ ...c, allocations: getAllocations(c) })), activities: entry.activities, photos: photoUrlsByEntry[entry.id] || [], phaseName: getCategoryName }));
+        return;
+      }
       const proj = projects.find(p => p.id === entry.projectId);
       if (!proj) return;
 
@@ -314,7 +327,7 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
     const updatedLogs = [log, ...logs];
     // Await the real write — never tell someone it saved when it didn't.
     try {
-      await onSubmit(updatedLogs, projectLogs);
+      await onSubmit(updatedLogs, projectLogs, writeInLogs);
       setSaveError("");
     } catch {
       setSaveError("Couldn't reach the server — nothing was lost, your entries are still here. Check your connection and hit Submit again.");
@@ -409,6 +422,7 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
             <select style={iS} value="" onChange={e => addProjectEntry(e.target.value)}>
               <option value="">Select a project...</option>
               {availableProjects.map(p => <option key={p.id} value={p.id}>{p.name} — {p.customer}</option>)}
+              <option value={WRITE_IN_ID}>✏ Write-in job (helped another crew / not in the app)…</option>
             </select>
           </div>
 
@@ -420,10 +434,27 @@ export default function MyDailyLog({ dailyLogs, projects, teamRoster, myName, my
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <Briefcase size={16} style={{ color: "#69BE28" }} />
-                    <span style={{ fontSize: 15, fontWeight: 700, color: "#fff" }}>{entry.projectName}</span>
+                    <span style={{ fontSize: 15, fontWeight: 700, color: entry.writeIn ? "#f0a93b" : "#fff" }}>{entry.writeIn ? `✏ ${entry.writeIn.name.trim() || "Write-in job"}` : entry.projectName}</span>
                   </div>
                   <button onClick={() => removeEntry(entry.id)} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer" }}><X size={16} /></button>
                 </div>
+                {entry.writeIn && (() => {
+                  const setWi = upd => updateEntry(entry.id, { writeIn: { ...entry.writeIn, ...upd }, projectName: `✏ ${(upd.name ?? entry.writeIn.name).trim() || "Write-in job"}` });
+                  return (
+                    <div style={{ background: "#f59e0b0c", border: "1px solid #f59e0b33", borderRadius: 8, padding: "10px 12px", marginBottom: 12 }}>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+                        {WRITE_IN_KINDS.map(k => (
+                          <button key={k.id} onClick={() => setWi({ kind: k.id })} style={{ padding: "4px 11px", borderRadius: 14, border: entry.writeIn.kind === k.id ? "1.5px solid #f59e0b" : "1px solid #1A3050", background: entry.writeIn.kind === k.id ? "#f59e0b22" : "transparent", color: entry.writeIn.kind === k.id ? "#f0a93b" : "#94a3b8", fontSize: 11.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{k.label}</button>
+                        ))}
+                      </div>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        <input style={{ ...iS, flex: 2, minWidth: 200, borderColor: entry.writeIn.name.trim() ? undefined : "#f59e0b88" }} placeholder={WRITE_IN_KINDS.find(k => k.id === entry.writeIn.kind)?.placeholder} value={entry.writeIn.name} onChange={e => setWi({ name: e.target.value })} />
+                        <input style={{ ...iS, flex: 0.7, minWidth: 110 }} placeholder="Job # (optional)" value={entry.writeIn.number} onChange={e => setWi({ number: e.target.value })} />
+                      </div>
+                      <div style={{ fontSize: 11, color: "#64748b", marginTop: 6 }}>Goes to the office and counts as your log for the day. Doesn't count against any project in the app.</div>
+                    </div>
+                  );
+                })()}
 
                 {/* Crew Members */}
                 <div style={{ marginBottom: 12 }}>

@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { localIso } from "./projectSchedule.js";
+import { writeInList, kindLabel } from "./writeIns.js";
 import { AlertCircle, Clock, DollarSign, CheckCircle2, Calendar, ArrowRight, TrendingUp, Package } from "lucide-react";
 import { laborTotals } from "./laborMath.js";
 import { scheduleEntries } from "./db.js";
@@ -79,7 +80,7 @@ export default function Dashboard({ data, myName, onSelectProject, onNavigate, p
       </div>
 
       {perms?.isAdminRole && <InvoiceProgress projects={data.projects} isMobile={isMobile} onSelectProject={onSelectProject} />}
-      {perms?.isAdminRole && <LogCompliance projects={data.projects} teamRoster={teamRoster || data.teamRoster} schedule={schedule} isMobile={isMobile} onSelectProject={onSelectProject} />}
+      {perms?.isAdminRole && <LogCompliance projects={data.projects} writeIns={writeInList(data.writeInLogs)} teamRoster={teamRoster || data.teamRoster} schedule={schedule} isMobile={isMobile} onSelectProject={onSelectProject} />}
 
       {/* Top Row: Today + Daily Progress */}
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, marginBottom: 12 }}>
@@ -206,7 +207,7 @@ export default function Dashboard({ data, myName, onSelectProject, onNavigate, p
  * A person counts as having logged when any project daily log for the date
  * carries their name as the submitting member. Reads existing data only.
  */
-function LogCompliance({ projects, teamRoster, schedule, isMobile, onSelectProject }) {
+function LogCompliance({ projects, teamRoster, schedule, isMobile, onSelectProject, writeIns = [] }) {
   const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   const today = iso(new Date());
   const isWorkday = d => d.getDay() !== 0 && d.getDay() !== 6;
@@ -221,6 +222,10 @@ function LogCompliance({ projects, teamRoster, schedule, isMobile, onSelectProje
   const foremen = (teamRoster || []).filter(m => (m.jobRole || "") === "foreman");
   const allLogs = [];
   (projects || []).forEach(p => (p.dailyLogs || []).forEach(l => allLogs.push({ ...l, projectId: p.id, projectName: p.name, jobNumber: p.jobNumber })));
+  // Write-in jobs (helped another crew / not in the app) count as a log for the day
+  writeIns.forEach(w => allLogs.push({ ...w, projectName: `✏ ${w.jobName}`, writeIn: true }));
+  const recentWriteIns = writeIns.filter(w => w.date >= days[0]);
+  const todaysLabels = name => allLogs.filter(l => l.member === name && l.date === today).map(l => l.writeIn ? `✏ ${l.jobName}` : (l.jobNumber ? "#" + l.jobNumber : l.projectName));
 
   const loggedOn = (name, date) => allLogs.some(l => l.member === name && l.date === date);
   const lastLogged = name => {
@@ -284,7 +289,7 @@ function LogCompliance({ projects, teamRoster, schedule, isMobile, onSelectProje
             })}
             <div style={{ fontSize: 11.5, color: okToday ? "#64748b" : "#f59e0b", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               {okToday
-                ? <span>Logged today{jobs.length ? ` · ${jobs.map(j => j.jobNumber ? "#" + j.jobNumber : j.name).join(", ")}` : ""}</span>
+                ? <span>Logged today · {[...new Set(todaysLabels(m.name))].join(", ")}</span>
                 : <span style={{ fontWeight: 700 }}>{last ? `Last log ${ago === 1 ? "yesterday" : ago + " days ago"}` : "No logs on record"}{jobs.length ? ` · scheduled at ${jobs.map(j => j.name).join(", ")}` : " · not scheduled today"}</span>}
               {!okToday && jobs.length > 0 && onSelectProject && (
                 <button onClick={() => onSelectProject(jobs[0])} style={{ padding: "3px 9px", borderRadius: 6, border: "1px solid #1A3050", background: "transparent", color: "#64748b", fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Open job</button>
@@ -293,6 +298,23 @@ function LogCompliance({ projects, teamRoster, schedule, isMobile, onSelectProje
           </div>
         );
       })}
+
+      {recentWriteIns.length > 0 && (
+        <div style={{ marginTop: 14 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
+            Write-in hours · last 5 workdays · {recentWriteIns.reduce((t, w) => t + (w.hours || 0), 0)}h
+          </div>
+          {recentWriteIns.map(w => (
+            <div key={w.id} title={w.activities || ""} style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "5px 0", fontSize: 12, color: "#94a3b8", borderBottom: "1px solid #13294d", flexWrap: "wrap" }}>
+              <span style={{ width: 82, color: "#64748b" }}>{new Date(w.date + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}</span>
+              <span style={{ color: "#e2e8f0", fontWeight: 600, minWidth: 90 }}>{(w.member || "").split(" ")[0]}</span>
+              <span style={{ flex: 1, minWidth: 160, color: "#f0a93b" }}>✏ {w.jobName}{w.jobNumber ? ` · #${w.jobNumber}` : ""}</span>
+              <span style={{ fontSize: 10.5, color: "#64748b" }}>{kindLabel(w.kind)}</span>
+              <span style={{ fontWeight: 800, color: "#f59e0b", width: 40, textAlign: "right" }}>{w.hours}h</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

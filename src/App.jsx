@@ -10,6 +10,7 @@ import Dashboard from "./Dashboard.jsx";
 import Contacts from "./Contacts.jsx";
 import WarrantyTracker from "./WarrantyTracker.jsx";
 import { localIso } from "./projectSchedule.js";
+import { assignedTasks, setTaskDone, newTaskCount } from "./myTasks.js";
 import MigrationTool from "./MigrationTool.jsx";
 import FieldMode from "./FieldMode.jsx";
 import PriceBook from "./PriceBook.jsx";
@@ -18,7 +19,7 @@ import { resolveJobRole, getPermissions, JOB_ROLES, ROLE_LABEL, ROLE_COLOR } fro
 import Briefing from "./Briefing.jsx";
 
 import {
-  FB_URL, dbGet, readTracker, putSection, putScheduleDay,
+  FB_URL, dbGet, readTracker, putSection, putScheduleDay, putWriteInLog,
   putProject, patchProject, deleteProject as dbDeleteProject,
   putProjectDailyLog, putMemberPrivate,
   putCatalogItem, deleteCatalogItem, putAssembly, deleteAssembly, putEstimatingDefaults,
@@ -264,6 +265,8 @@ function Tracker({ user, userRecord }) {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState("dashboard");
   const [mySpaceTab, setMySpaceTab] = useState("daily");
+  // tasksSeenAt as it was when the board was opened — drives the NEW tags while you look
+  const [taskSeenBaseline, setTaskSeenBaseline] = useState(null);
   const [selectedProject, setSelectedProject] = useState(null);
   const [detailTab, setDetailTab] = useState("overview");
   const [searchTerm, setSearchTerm] = useState("");
@@ -423,7 +426,7 @@ function Tracker({ user, userRecord }) {
   /** Returns a promise that REJECTS if the log did not actually reach
       Firebase. Callers must await it before telling a tech "saved" — a
       false confirmation in a dead zone loses hours and payroll data. */
-  async function submitDailyLogs(updatedPersonalLogs, projectLogs) {
+  async function submitDailyLogs(updatedPersonalLogs, projectLogs, writeInLogs = []) {
     const prev = latestData.current;
     const merged = { ...getMyPrivate(), dailyLogs: updatedPersonalLogs };
     let nd = { ...latestData.current, memberPrivate: { ...(latestData.current.memberPrivate || {}), [user.uid]: merged } };
@@ -431,6 +434,12 @@ function Tracker({ user, userRecord }) {
     (projectLogs || []).forEach(({ pid, log }) => {
       nd = { ...nd, projects: nd.projects.map(p => p.id === pid ? { ...p, dailyLogs: [log, ...(p.dailyLogs || [])], updatedAt: new Date().toISOString() } : p) };
       writes.push(putProjectDailyLog(pid, log));
+    });
+    // Write-in jobs (not in the app) go to a shared list — visible to the office,
+    // counted for log compliance, never mixed into a project's hours.
+    (writeInLogs || []).forEach(log => {
+      nd = { ...nd, writeInLogs: { ...(nd.writeInLogs || {}), [log.id]: log } };
+      writes.push(putWriteInLog(log.id, log));
     });
     applyLocal(nd);
     try {
@@ -471,6 +480,16 @@ function Tracker({ user, userRecord }) {
     }
   }
 
+  /* ── Project tasks assigned to me (live, see myTasks.js) ── */
+  function toggleLinkedTask(pid, ref, done) {
+    const p = latestData.current.projects.find(x => x.id === pid);
+    if (p) updateProject(pid, { tasks: setTaskDone(p, ref, done, myName) });
+  }
+  function markTasksSeen() {
+    const mine = assignedTasks(latestData.current.projects, myName);
+    if (newTaskCount(mine, getMyPrivate().tasksSeenAt || "") > 0) saveMyPrivate({ tasksSeenAt: new Date().toISOString() });
+  }
+
   /** Quick Add with no project → my private Daily Task Board.
       Internal/company items land in the chosen board section (created if the
       board has never been opened); notes are prefixed 📝. */
@@ -489,6 +508,10 @@ function Tracker({ user, userRecord }) {
 
   // Close sidebar when navigating on mobile
   function navigate(viewId, spaceTab) {
+    const onBoardNow = view === "myspace" && mySpaceTab === "daily" && !selectedProject;
+    const toBoard = viewId === "myspace" && spaceTab === "daily";
+    if (toBoard && !onBoardNow) { setTaskSeenBaseline(getMyPrivate().tasksSeenAt || ""); markTasksSeen(); }
+    else if (onBoardNow && !toBoard) markTasksSeen();   // clears anything assigned while you were looking
     setView(viewId);
     if (spaceTab) setMySpaceTab(spaceTab);
     setSelectedProject(null);
@@ -576,8 +599,15 @@ function Tracker({ user, userRecord }) {
     );
   }
 
+  const myLinkedTasks = assignedTasks(data.projects, myName);
+  const myNewTasks = newTaskCount(myLinkedTasks, getMyPrivate().tasksSeenAt || "");
+
   if (fieldModeOn) {
     return <FieldMode
+      linkedTasks={myLinkedTasks}
+      tasksSeenAt={getMyPrivate().tasksSeenAt || ""}
+      onToggleTask={toggleLinkedTask}
+      onTasksSeen={markTasksSeen}
       projects={data.projects}
       teamRoster={data.teamRoster || []}
       schedule={data.schedule || {}}
@@ -663,6 +693,9 @@ function Tracker({ user, userRecord }) {
           <button key={item.id} onClick={() => navigate("myspace", item.id)}
             style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: isMobile ? "12px 12px" : "8px 12px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 500, background: view === "myspace" && mySpaceTab === item.id ? "#1A3050" : "transparent", color: view === "myspace" && mySpaceTab === item.id ? "#fff" : "#64748b", marginBottom: 1, fontFamily: "inherit" }}>
             <span style={{ fontSize: 16 }}>{item.icon}</span>{item.label}
+            {item.id === "daily" && myNewTasks > 0 && !(view === "myspace" && mySpaceTab === "daily") && (
+              <span title={`${myNewTasks} task${myNewTasks > 1 ? "s" : ""} newly assigned to you`} style={{ marginLeft: "auto", minWidth: 18, height: 18, padding: "0 5px", borderRadius: 9, background: "#ef4444", color: "#fff", fontSize: 11, fontWeight: 800, display: "inline-flex", alignItems: "center", justifyContent: "center", boxSizing: "border-box" }}>{myNewTasks}</span>
+            )}
           </button>
         ))}
       </nav>
@@ -756,8 +789,9 @@ function Tracker({ user, userRecord }) {
         <div style={{ padding: isMobile ? "10px 16px" : "12px 24px", borderBottom: "1px solid #1A3050", display: "flex", alignItems: "center", gap: 10, background: "#0A192F", flexShrink: 0 }}>
           {/* Hamburger on mobile */}
           {isMobile && (
-            <button onClick={() => setSidebarOpen(true)} style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", padding: 4, flexShrink: 0 }}>
+            <button onClick={() => setSidebarOpen(true)} style={{ position: "relative", background: "none", border: "none", color: "#94a3b8", cursor: "pointer", padding: 4, flexShrink: 0 }}>
               <Menu size={22} />
+              {myNewTasks > 0 && <span style={{ position: "absolute", top: 0, right: -2, minWidth: 16, height: 16, padding: "0 4px", borderRadius: 8, background: "#ef4444", color: "#fff", fontSize: 10, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", boxSizing: "border-box" }}>{myNewTasks}</span>}
             </button>
           )}
 
@@ -807,7 +841,7 @@ function Tracker({ user, userRecord }) {
               onSelectProject={(p, tab) => { setSelectedProject(p); setDetailTab(tab || "overview"); }}
               onNavigate={navigate} />
           ) : view === "myspace" && mySpaceTab === "daily" ? (
-            <DailyTracker data={getMyPrivate().dailyTracker} archivedDays={getMyPrivate().archivedDays || []} onSave={dt => saveMyPrivate({ dailyTracker: dt })} onArchive={archive => saveMyPrivate({ archivedDays: archive })} />
+            <DailyTracker linkedTasks={myLinkedTasks} newSince={taskSeenBaseline ?? (getMyPrivate().tasksSeenAt || "")} onToggleLinked={toggleLinkedTask} onOpenProject={p => { markTasksSeen(); setSelectedProject(p); setDetailTab("tasks"); }} data={getMyPrivate().dailyTracker} archivedDays={getMyPrivate().archivedDays || []} onSave={dt => saveMyPrivate({ dailyTracker: dt })} onArchive={archive => saveMyPrivate({ archivedDays: archive })} />
           ) : view === "myspace" && mySpaceTab === "dailylog" ? (
             <MyDailyLog dailyLogs={getMyPrivate().dailyLogs || []} projects={data.projects} teamRoster={data.teamRoster} myName={myName} myEmail={user.email} predefinedEmail={data.adminSettings?.predefinedEmail || ""}
               onSubmit={submitDailyLogs}

@@ -5,6 +5,7 @@ import { bidHours, usedHours, loggedHours, adjustment, remainingHours, laborTota
 import { storage, storageRef, uploadBytes, getDownloadURL } from "./firebase.js";
 import { uploadLogPhotos } from "./photoUtils.js";
 import { WhereWeStand, ScheduleTab } from "./ProjectPlanning.jsx";
+import { taskRef, setTaskDone, setTaskAssignee, assignmentStamp } from "./myTasks.js";
 import { projectWarranty, WARRANTY_STATUS, WARRANTY_TERMS, daysLeftLabel, fmtDay, isoDay } from "./warranty.js";
 import { invoiceSnapshot } from "./InvoiceProgress.jsx";
 
@@ -257,7 +258,7 @@ export default function ProjectDetail({ project, phases, phaseMap, teamRoster, o
         {visibleTab === "invoices" && <InvoiceTab project={project} onUpdate={onUpdate} />}
         {visibleTab === "changeorders" && <ChangeOrdersTab project={project} onUpdate={onUpdate} />}
         {visibleTab === "scope" && <ScopeTab project={project} onUpdate={onUpdate} />}
-        {visibleTab === "tasks" && <TasksTab project={project} onUpdate={onUpdate} teamRoster={teamRoster} assignTaskToMember={assignTaskToMember} />}
+        {visibleTab === "tasks" && <TasksTab project={project} onUpdate={onUpdate} teamRoster={teamRoster} myName={myName} />}
         {visibleTab === "dailylog" && <DailyLogTab project={project} onUpdate={onUpdate} />}
         {visibleTab === "photos" && <PhotoLogTab project={project} onUpdate={onUpdate} />}
         {visibleTab === "rfis" && <RFITab project={project} onUpdate={onUpdate} />}
@@ -599,29 +600,44 @@ function ScopeTab({ project, onUpdate }) {
 }
 
 /* ── TASKS ── */
-function TasksTab({ project, onUpdate, teamRoster, assignTaskToMember }) {
+function TasksTab({ project, onUpdate, teamRoster, myName }) {
+  /* Assigned tasks show up live on the assignee's Daily Task Board (Hot List)
+     and Field Mode Today screen — see myTasks.js. Nothing is copied, so
+     checking off or reassigning here updates their board immediately. */
   const [nt, setNt] = useState(""); const [na, setNa] = useState(""); const [nc, setNc] = useState("projects");
+  const tasks = project.tasks || [];
+  function emailAssignee(task, name) {
+    const member = teamRoster.find(t => t.name === name);
+    if (member?.email && name !== myName) callFunction("emailTaskAssignment", { projectName: project.name, task, assigneeEmail: member.email });
+  }
   function add() {
     if (!nt.trim()) return;
-    const task = { text: nt.trim(), assignee: na, category: nc, done: false, id: genId() };
-    onUpdate({ tasks: [...(project.tasks || []), task] });
-    if (na && assignTaskToMember) {
-      assignTaskToMember(nt.trim(), na, nc);
-      const member = teamRoster.find(t => t.name === na);
-      if (member?.email) {
-        callFunction("emailTaskAssignment", { projectName: project.name, task, assigneeEmail: member.email });
-      }
-    }
+    const task = { text: nt.trim(), assignee: na, category: nc, done: false, id: genId(), createdAt: new Date().toISOString(), ...(na ? assignmentStamp(na, myName) : {}) };
+    onUpdate({ tasks: [...tasks, task] });
+    if (na) emailAssignee(task, na);
     setNt(""); setNa("");
   }
+  function reassign(t, i, name) {
+    onUpdate({ tasks: setTaskAssignee(project, taskRef(t, i), name, myName) });
+    if (name) emailAssignee(t, name);
+  }
   return (<div>
-    {(project.tasks || []).map((t, i) => (
-      <div key={t.id || i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 0", borderBottom: "1px solid #1A3050" }}>
-        <button onClick={() => { const nt2 = [...project.tasks]; nt2[i] = { ...nt2[i], done: !nt2[i].done }; onUpdate({ tasks: nt2 }); }} style={{ background: "none", border: "none", cursor: "pointer", color: t.done ? "#10b981" : "#334155" }}>{t.done ? <CheckCircle2 size={18} /> : <Circle size={18} />}</button>
-        <span style={{ flex: 1, fontSize: 13, color: t.done ? "#64748b" : "#e2e8f0", textDecoration: t.done ? "line-through" : "none" }}>{t.text}</span>
+    <div style={{ fontSize: 11.5, color: "#64748b", marginBottom: 10 }}>Assigned tasks appear on that person's Daily Task Board under 🔥 Hot List (and on their Field Mode Today screen), with a red badge until they look.</div>
+    {tasks.map((t, i) => (
+      <div key={t.id || i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 0", borderBottom: "1px solid #1A3050", flexWrap: "wrap" }}>
+        <button onClick={() => onUpdate({ tasks: setTaskDone(project, taskRef(t, i), !t.done, myName) })} style={{ background: "none", border: "none", cursor: "pointer", color: t.done ? "#10b981" : "#334155" }}>{t.done ? <CheckCircle2 size={18} /> : <Circle size={18} />}</button>
+        <span style={{ flex: 1, minWidth: 160, fontSize: 13, color: t.done ? "#64748b" : "#e2e8f0", textDecoration: t.done ? "line-through" : "none" }}>
+          {t.text}
+          {t.done && t.doneBy && <span style={{ fontSize: 10.5, color: "#475569", marginLeft: 6, textDecoration: "none", display: "inline-block" }}>✓ {t.doneBy}</span>}
+        </span>
         {t.category && <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 10, background: "#0A192F", color: "#94a3b8" }}>{TASK_CATEGORIES.find(c => c.id === t.category)?.icon} {TASK_CATEGORIES.find(c => c.id === t.category)?.label || t.category}</span>}
-        {t.assignee && <span style={{ fontSize: 11, color: "#64748b", background: "#0A192F", padding: "2px 8px", borderRadius: 10 }}>{t.assignee}</span>}
-        <button onClick={() => onUpdate({ tasks: project.tasks.filter((_, idx) => idx !== i) })} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer" }}><X size={12} /></button>
+        <select value={t.assignee || ""} onChange={e => reassign(t, i, e.target.value)} title="Assign — shows on their Daily Task Board"
+          style={{ fontSize: 11, color: t.assignee ? "#cbd5e1" : "#475569", background: "#0A192F", border: "1px solid #1A3050", padding: "3px 6px", borderRadius: 10, fontFamily: "inherit", outline: "none", cursor: "pointer", maxWidth: 150 }}>
+          <option value="">Unassigned</option>
+          {teamRoster.map(m => <option key={m.id} value={m.name}>{m.name}</option>)}
+          {t.assignee && !teamRoster.some(m => m.name === t.assignee) && <option value={t.assignee}>{t.assignee}</option>}
+        </select>
+        <button onClick={() => onUpdate({ tasks: tasks.filter((_, idx) => idx !== i) })} style={{ background: "none", border: "none", color: "#475569", cursor: "pointer" }}><X size={12} /></button>
       </div>
     ))}
     <div style={{ display: "flex", gap: 6, marginTop: 12, flexWrap: "wrap" }}>

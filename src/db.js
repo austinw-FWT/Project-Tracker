@@ -83,6 +83,10 @@ export const deleteProject = (pid)          => dbDelete(`${ROOT}/projects/${pid}
 export const putProjectDailyLog    = (pid, log)   => dbPut(`${ROOT}/projects/${pid}/dailyLogs/${log.id}`, log);
 export const deleteProjectDailyLog = (pid, logId) => dbDelete(`${ROOT}/projects/${pid}/dailyLogs/${logId}`);
 
+/* ── write-in logs: hours on work that isn't an app project (see writeIns.js) ── */
+export const putWriteInLog    = (id, log) => dbPut(`${ROOT}/writeInLogs/${id}`, log);
+export const deleteWriteInLog = (id)      => dbDelete(`${ROOT}/writeInLogs/${id}`);
+
 /* ── member private space (keyed by uid) ────────────────────────── */
 export const putMemberPrivate   = (uid, value)   => dbPut(`${ROOT}/memberPrivate/${uid}`, value);
 export const patchMemberPrivate = (uid, updates) => dbPatch(`${ROOT}/memberPrivate/${uid}`, updates);
