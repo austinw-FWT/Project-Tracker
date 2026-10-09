@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { localIso } from "./projectSchedule.js";
 import { CheckCircle2, Circle, ArrowRight, RotateCcw } from "lucide-react";
 import { scheduleEntries } from "./db.js";
 
@@ -33,7 +34,7 @@ const DAY_RITUALS = {
   5: { secId: "friday",    label: "Friday — close the week",  est: 60 },
 };
 
-function todayStr() { return new Date().toISOString().split("T")[0]; }
+function todayStr() { return localIso(new Date()); }   // local day, not UTC
 function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
 function daysAgoIso(n) { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().split("T")[0]; }
 

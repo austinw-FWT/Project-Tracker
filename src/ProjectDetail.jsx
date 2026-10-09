@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from "react";
-import { Plus, X, Edit2, Trash2, ClipboardList, Clock, Cable, CheckCircle2, Circle, FileText, Camera, MapPin, Phone, Mail, DollarSign, Building2, User, Layers, Package, Receipt, BookOpen, AlertTriangle, Image, FileSearch, TrendingUp, ClipboardCheck, Upload, Download, ExternalLink, ChevronDown, ShieldCheck } from "lucide-react";
+import { Plus, X, Edit2, Trash2, ClipboardList, Clock, Cable, CheckCircle2, Circle, FileText, Camera, MapPin, Phone, Mail, DollarSign, Building2, User, Layers, Package, Receipt, BookOpen, AlertTriangle, Image, FileSearch, TrendingUp, ClipboardCheck, Upload, Download, ExternalLink, ChevronDown, ShieldCheck, CalendarDays } from "lucide-react";
 import { PROJECT_TYPES, LABOR_PHASES, MATERIAL_STATUSES, TASK_CATEGORIES, genId } from "./App.jsx";
 import { bidHours, usedHours, loggedHours, adjustment, remainingHours, laborTotals } from "./laborMath.js";
 import { storage, storageRef, uploadBytes, getDownloadURL } from "./firebase.js";
 import { uploadLogPhotos } from "./photoUtils.js";
+import { WhereWeStand, ScheduleTab } from "./ProjectPlanning.jsx";
 import { projectWarranty, WARRANTY_STATUS, WARRANTY_TERMS, daysLeftLabel, fmtDay, isoDay } from "./warranty.js";
 import { invoiceSnapshot } from "./InvoiceProgress.jsx";
 
@@ -27,8 +28,10 @@ async function callFunction(name, data) {
   } catch (e) { console.error(`Function ${name} failed:`, e); return null; }
 }
 
-export default function ProjectDetail({ project, phases, phaseMap, teamRoster, onUpdate, onDelete, detailTab, setDetailTab, assignTaskToMember, perms }) {
+export default function ProjectDetail({ project, phases, phaseMap, teamRoster, onUpdate, onDelete, detailTab, setDetailTab, assignTaskToMember, perms, schedule, projects, onScheduleChange, myName }) {
   const canSeeMoney = perms ? perms.seeFinancials : true;
+  // Admins and foremen can put crew on a job; techs see the schedule read-only.
+  const canSchedule = !!onScheduleChange && (perms ? (perms.isAdminRole || perms.jobRole === "foreman") : true);
   const canManageWarranty = perms ? perms.isAdminRole : true;
   const [editWarranty, setEditWarranty] = useState(false);
   const [editMode, setEditMode] = useState(false);
@@ -46,6 +49,7 @@ export default function ProjectDetail({ project, phases, phaseMap, teamRoster, o
 
   const tabs = [
     { id: "overview", label: "Overview", icon: ClipboardList },
+    ...(schedule ? [{ id: "schedule", label: "Schedule", icon: CalendarDays }] : []),
     { id: "hours", label: "Hours", icon: Clock },
     { id: "materials", label: "Materials", icon: Package },
     ...(canSeeMoney ? [{ id: "invoices", label: "Invoices", icon: Receipt }] : []),
@@ -243,7 +247,11 @@ export default function ProjectDetail({ project, phases, phaseMap, teamRoster, o
       )}
 
       <div style={{ background: "#0F2444", borderRadius: 12, border: "1px solid #1A3050", padding: isMobile ? 14 : 20 }}>
-        {visibleTab === "overview" && <OverviewTab project={project} form={form} setForm={setForm} editMode={editMode} setEditMode={setEditMode} onUpdate={onUpdate} teamRoster={teamRoster} isMobile={isMobile} />}
+        {visibleTab === "overview" && <>
+          {!editMode && <WhereWeStand project={project} phaseMap={phaseMap} schedule={schedule || {}} canSeeMoney={canSeeMoney} laborPhases={LABOR_PHASES} onUpdate={onUpdate} myName={myName} onOpenTab={id => tabs.some(t => t.id === id) && setDetailTab(id)} isMobile={isMobile} />}
+          <OverviewTab project={project} form={form} setForm={setForm} editMode={editMode} setEditMode={setEditMode} onUpdate={onUpdate} teamRoster={teamRoster} isMobile={isMobile} canSeeMoney={canSeeMoney} />
+        </>}
+        {visibleTab === "schedule" && <ScheduleTab project={project} schedule={schedule || {}} teamRoster={teamRoster} projects={projects || []} onScheduleChange={onScheduleChange} canSchedule={canSchedule} isMobile={isMobile} />}
         {visibleTab === "hours" && <HoursTab project={project} onUpdate={onUpdate} />}
         {visibleTab === "materials" && <MaterialsTab canSeeMoney={canSeeMoney} project={project} onUpdate={onUpdate} />}
         {visibleTab === "invoices" && <InvoiceTab project={project} onUpdate={onUpdate} />}
@@ -345,6 +353,7 @@ function OverviewTab({ project, form, setForm, editMode, setEditMode, onUpdate, 
       <div><label style={lS}>Phone</label><input style={iS} value={form.contactPhone} onChange={e => setForm({ ...form, contactPhone: e.target.value })} /></div>
       <div><label style={lS}>Email</label><input style={iS} value={form.contactEmail} onChange={e => setForm({ ...form, contactEmail: e.target.value })} /></div>
       <div><label style={lS}>Site Address</label><input style={iS} value={form.siteAddress} onChange={e => setForm({ ...form, siteAddress: e.target.value })} /></div>
+      <div><label style={lS}>Anticipated Start</label><input type="date" style={{ ...iS, colorScheme: "dark" }} value={form.anticipatedStart || ""} onChange={e => setForm({ ...form, anticipatedStart: e.target.value })} /></div>
       <div><label style={lS}>Type</label><select style={iS} value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}><option value="retrofit">Retrofit</option><option value="new-construction">New Construction</option></select></div>
       <div><label style={lS}>Systems</label><div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>{PROJECT_TYPES.map(pt => (<button key={pt} onClick={() => { const t = form.projectTypes || []; setForm({ ...form, projectTypes: t.includes(pt) ? t.filter(x => x !== pt) : [...t, pt] }); }} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #1A3050", fontSize: 11, cursor: "pointer", fontFamily: "inherit", background: (form.projectTypes || []).includes(pt) ? "#69BE28" : "transparent", color: (form.projectTypes || []).includes(pt) ? "#fff" : "#94a3b8" }}>{pt}</button>))}</div></div>
       <div style={{ gridColumn: "1/-1", marginTop: 6 }}>
@@ -367,6 +376,7 @@ function OverviewTab({ project, form, setForm, editMode, setEditMode, onUpdate, 
       <IR icon={Building2} label="Customer" value={project.customer} /><IR icon={User} label="Contact" value={project.contactName} />
       <IR icon={Phone} label="Phone" value={project.contactPhone} /><IR icon={Mail} label="Email" value={project.contactEmail} />
       <IR icon={MapPin} label="Site Address" value={project.siteAddress} /><IR icon={Layers} label="Type" value={project.type === "retrofit" ? "Retrofit" : "New Construction"} />
+      <IR icon={CalendarDays} label="Anticipated Start" value={project.anticipatedStart ? new Date(project.anticipatedStart + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" }) : ""} />
       {canSeeMoney && <><IR icon={DollarSign} label="Bid Amount" value={project.bidAmount} /><IR icon={DollarSign} label="Contract Amount" value={project.contractAmount} /></>}
       {project.siteInfo && (project.siteInfo.gateCode || project.siteInfo.lockbox || project.siteInfo.siteContact || project.siteInfo.idf || project.siteInfo.parking) && (
         <div style={{ gridColumn: "1/-1", background: "#69BE2808", border: "1px solid #69BE2833", borderRadius: 10, padding: "12px 14px" }}>

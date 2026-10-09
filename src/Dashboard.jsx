@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { localIso } from "./projectSchedule.js";
 import { AlertCircle, Clock, DollarSign, CheckCircle2, Calendar, ArrowRight, TrendingUp, Package } from "lucide-react";
 import { laborTotals } from "./laborMath.js";
 import { scheduleEntries } from "./db.js";
@@ -16,7 +17,7 @@ export default function Dashboard({ data, myName, onSelectProject, onNavigate, p
   const projects = data.projects || [];
   const myPrivate = (data.memberPrivate || {})[myName] || {};
   const schedule = data.schedule || {};
-  const today = new Date().toISOString().split("T")[0];
+  const today = localIso(new Date());   // local day — UTC rolls to tomorrow after 5pm PT
 
   // My assigned projects
   const myProjects = projects.filter(p => (p.teamMembers || []).includes(myName));

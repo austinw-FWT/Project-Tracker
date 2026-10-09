@@ -9,6 +9,7 @@ import TimesheetView from "./TimesheetView.jsx";
 import Dashboard from "./Dashboard.jsx";
 import Contacts from "./Contacts.jsx";
 import WarrantyTracker from "./WarrantyTracker.jsx";
+import { localIso } from "./projectSchedule.js";
 import MigrationTool from "./MigrationTool.jsx";
 import FieldMode from "./FieldMode.jsx";
 import PriceBook from "./PriceBook.jsx";
@@ -376,6 +377,18 @@ function Tracker({ user, userRecord }) {
     applyLocal(nd);
     persist(patchProject(pid, denormalizeProjectUpdates(stamped)));
     setSelectedProject(prev => prev?.id === pid ? { ...prev, ...stamped } : prev);
+  }
+  /** Schedule edits made from inside a project. `fn(currentSchedule)` returns
+      { schedule, changedDates } (see projectSchedule.js); only those days are
+      written, so two people scheduling different days can't clobber each other. */
+  function changeSchedule(fn) {
+    const res = fn(latestData.current.schedule || {});
+    if (!res?.changedDates?.length) return;
+    applyLocal({ ...latestData.current, schedule: res.schedule });
+    persist(Promise.all(res.changedDates.map(d => {
+      const day = res.schedule[d];
+      return putScheduleDay(d, day && Object.keys(day).length ? day : null);
+    })));
   }
   function addProject(project) {
     const now = new Date().toISOString();
@@ -779,7 +792,7 @@ function Tracker({ user, userRecord }) {
         {/* Page content */}
         <div style={{ flex: 1, overflow: "auto" }}>
           {selectedProject ? (
-            <ProjectDetail perms={perms} project={selectedProject} phases={data.phases} phaseMap={phaseMap} teamRoster={data.teamRoster} onUpdate={u => updateProject(selectedProject.id, u)} onDelete={() => deleteProject(selectedProject.id)} detailTab={detailTab} setDetailTab={setDetailTab} assignTaskToMember={assignTaskToMember} />
+            <ProjectDetail perms={perms} project={selectedProject} phases={data.phases} phaseMap={phaseMap} teamRoster={data.teamRoster} schedule={data.schedule || {}} projects={data.projects} onScheduleChange={changeSchedule} myName={myName} onUpdate={u => updateProject(selectedProject.id, u)} onDelete={() => deleteProject(selectedProject.id)} detailTab={detailTab} setDetailTab={setDetailTab} assignTaskToMember={assignTaskToMember} />
           ) : view === "dashboard" ? (
             <Dashboard perms={perms} teamRoster={data.teamRoster || []} data={data} myName={myName} onSelectProject={p => { setSelectedProject(p); setDetailTab("overview"); }} onNavigate={(v, tab) => { setView(v); if (tab) setMySpaceTab(tab); }} />
           ) : view === "board" ? (
@@ -888,6 +901,10 @@ function KanbanBoard({ projects, phases, onSelectProject, onDragStart, onDrop, d
               <div style={{ fontSize: 11, color: "#64748b", marginBottom: 6 }}>{p.customer}</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>{p.projectTypes?.map(t => <span key={t} style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: "#1A3050", color: "#94a3b8" }}>{t}</span>)}</div>
               {p.tasks?.length > 0 && <div style={{ marginTop: 6, fontSize: 11, color: "#64748b" }}>✓ {p.tasks.filter(t => t.done).length}/{p.tasks.length} tasks</div>}
+              {p.anticipatedStart && !(p.dailyLogs || []).length && (() => {
+                const late = p.anticipatedStart < localIso(new Date());
+                return <div style={{ marginTop: 6, fontSize: 11, fontWeight: 600, color: late ? "#f59e0b" : "#64748b" }}>📅 {late ? "Was to start" : "Starts"} {new Date(p.anticipatedStart + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}</div>;
+              })()}
             </div>))}
             {pp.length === 0 && <div style={{ padding: 16, textAlign: "center", fontSize: 12, color: "#334155" }}>Drag projects here</div>}
           </div>
@@ -1091,8 +1108,10 @@ function KanbanListView({ projects, phases, orphaned, onSelectProject, onMovePha
 /* ═══ SCHEDULE VIEW ═══ */
 function ScheduleView({ schedule, teamRoster, projects, onUpdate }) {
   const [wo, setWo] = useState(0);
-  function getWeekDates(off) { const now = new Date(); const d = now.getDay(); const m = new Date(now); m.setDate(now.getDate() - (d === 0 ? 6 : d - 1) + off * 7); const ds = []; for (let i = 0; i < 7; i++) { const x = new Date(m); x.setDate(m.getDate() + i); ds.push(x.toISOString().split("T")[0]); } return ds; }
-  const dates = getWeekDates(wo); const today = new Date().toISOString().split("T")[0];
+  function getWeekDates(off) { const now = new Date(); const d = now.getDay(); const m = new Date(now); m.setDate(now.getDate() - (d === 0 ? 6 : d - 1) + off * 7); const ds = []; for (let i = 0; i < 7; i++) { const x = new Date(m); x.setDate(m.getDate() + i); ds.push(localIso(x)); } return ds; }
+  // Local calendar days — toISOString() is UTC and rolls to tomorrow after 5pm Pacific,
+  // which put office edits on a different day than Field Mode reads.
+  const dates = getWeekDates(wo); const today = localIso(new Date());
   const fmt = ds => new Date(ds + "T00:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
   const iS = { width: "100%", padding: "4px 6px", borderRadius: 6, border: "1px solid #1A3050", background: "#0A192F", color: "#e2e8f0", fontSize: 11, fontFamily: "'DM Sans',sans-serif", outline: "none" };
   return (<div style={{ padding: "20px 24px" }}>
