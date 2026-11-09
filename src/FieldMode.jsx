@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { LABOR_PHASES, genId } from "./App.jsx";
-import { remainingHours, bidHours, usedHours, laborTotals } from "./laborMath.js";
+import { remainingHours, bidHours, usedHours, laborTotals, changeOrderTotalHours } from "./laborMath.js";
 import { uploadLogPhotos, describeUploadError } from "./photoUtils.js";
 import { scheduleEntries } from "./db.js";
 import { projectWarranty, WARRANTY_STATUS, daysLeftLabel, fmtDay } from "./warranty.js";
@@ -364,6 +364,15 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
               <span style={{ fontFamily: "'Outfit',sans-serif", fontSize: 19, fontWeight: 800, color: "#fff" }}>{todaysProject.name}</span>
             </div>
             <div style={{ fontSize: 12.5, color: "#9FB1CC", marginTop: 2 }}>{todaysProject.customer}{todaysProject.siteAddress ? ` · ${todaysProject.siteAddress}` : ""}</div>
+            {(() => {
+              const n = (todaysProject.changeOrders || []).filter(c => c && c.status === "approved").length;
+              if (!n) return null;
+              return (
+                <button onClick={() => { goTab("projects"); setDetailId(todaysProject.id); }} style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 8, marginRight: 6, padding: "5px 10px", borderRadius: 16, background: "#F0A93B26", border: "1px solid #F0A93B66", color: "#F5C26B", fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>
+                  {n} CHANGE ORDER{n > 1 ? "S" : ""} · read scope ›
+                </button>
+              );
+            })()}
             {canSeeHours && (() => {
               const t = laborTotals(todaysProject, LABOR_PHASES);
               if (!t.bid) return null;
@@ -698,6 +707,42 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
             <div style={{ fontSize: 13.5, color: T.ink, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{detail.scopeNotes}</div>
           </div>
         )}
+
+        {/* Change orders: approved ones only. Pending and rejected change
+            orders are not work the crew should start on. No dollar amounts
+            here; added hours show to foremen, like the rest of the hours. */}
+        {(() => {
+          const all = detail.changeOrders || [];
+          const live = all.map((co, i) => ({ co, n: i + 1 })).filter(x => x.co && x.co.status === "approved");
+          if (!live.length) return null;
+          return (
+            <div style={{ ...card, padding: "13px 16px", borderLeft: `4px solid ${T.amber}` }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                <div style={eyebrow}>Change orders</div>
+                <span style={{ fontSize: 11, fontWeight: 800, color: T.amber, marginLeft: "auto" }}>{live.length} APPROVED</span>
+              </div>
+              {live.map(({ co, n }, i) => {
+                const h = changeOrderTotalHours(co);
+                const phases = LABOR_PHASES.filter(lp => parseFloat((co.hours || {})[lp.id]));
+                return (
+                  <div key={co.id || n} style={{ paddingBottom: i < live.length - 1 ? 12 : 0, marginBottom: i < live.length - 1 ? 12 : 0, borderBottom: i < live.length - 1 ? `1px solid ${T.line}` : "none" }}>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4 }}>
+                      <span style={{ fontSize: 11.5, fontWeight: 800, color: T.amber, flexShrink: 0 }}>CO-{n}</span>
+                      <span style={{ fontSize: 14.5, fontWeight: 800, color: T.ink, flex: 1 }}>{co.description}</span>
+                    </div>
+                    {(co.scope || "").trim()
+                      ? <div style={{ fontSize: 13.5, color: T.ink, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{co.scope}</div>
+                      : <div style={{ fontSize: 12.5, color: T.inkFaint }}>No scope written up yet. Ask the office before starting this work.</div>}
+                    <div style={{ fontSize: 11.5, color: T.inkFaint, marginTop: 6 }}>
+                      {co.date ? `Added ${co.date}` : ""}
+                      {canSeeHours && h !== 0 ? `${co.date ? " · " : ""}${h > 0 ? "+" : ""}${h}h (${phases.map(lp => `${lp.name} ${co.hours[lp.id]}h`).join(", ")})` : ""}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
 
         {/* My tasks */}
         {myTasks.length > 0 && (

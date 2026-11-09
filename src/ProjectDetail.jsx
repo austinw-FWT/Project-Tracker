@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Plus, X, Edit2, Trash2, ClipboardList, Clock, Cable, CheckCircle2, Circle, FileText, Camera, MapPin, Phone, Mail, DollarSign, Building2, User, Layers, Package, Receipt, BookOpen, AlertTriangle, Image, FileSearch, TrendingUp, ClipboardCheck, Upload, Download, ExternalLink, ChevronDown, ShieldCheck, CalendarDays } from "lucide-react";
 import { PROJECT_TYPES, LABOR_PHASES, MATERIAL_STATUSES, TASK_CATEGORIES, genId } from "./App.jsx";
-import { bidHours, usedHours, loggedHours, adjustment, remainingHours, laborTotals } from "./laborMath.js";
+import { bidHours, baseBidHours, changeOrderHours, changeOrderTotalHours, usedHours, loggedHours, adjustment, remainingHours, laborTotals } from "./laborMath.js";
 import { storage, storageRef, uploadBytes, getDownloadURL } from "./firebase.js";
 import { uploadLogPhotos } from "./photoUtils.js";
 import { WhereWeStand, ScheduleTab } from "./ProjectPlanning.jsx";
@@ -410,8 +410,8 @@ function HoursTab({ project, onUpdate }) {
   const t = laborTotals(project, LABOR_PHASES);
   const hS = { ...iS, background: "#0A192F", textAlign: "center" };
   return (<div>
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, marginBottom: 24 }}><SC label="Total Bid" value={`${t.bid.toFixed(1)}h`} color="#69BE28" /><SC label="Used" value={`${t.used.toFixed(1)}h`} color="#f59e0b" /><SC label="Remaining" value={`${t.remaining.toFixed(1)}h`} color={t.remaining < 0 ? "#ef4444" : "#10b981"} /><SC label="Complete" value={`${t.pctUsed}%`} color={t.pctUsed > 90 ? "#ef4444" : t.pctUsed > 70 ? "#f59e0b" : "#10b981"} /></div>
-    <div style={{ fontSize: 11, color: "#64748b", marginBottom: 12 }}>Used hours come from submitted daily logs and self-correct when logs are edited or deleted. Use Adjust (±) for manual true-ups — it adds to Used.</div>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, marginBottom: 24 }}><SC label={t.coHours ? "Bid + Change Orders" : "Total Bid"} value={`${t.bid.toFixed(1)}h`} color="#69BE28" /><SC label="Used" value={`${t.used.toFixed(1)}h`} color="#f59e0b" /><SC label="Remaining" value={`${t.remaining.toFixed(1)}h`} color={t.remaining < 0 ? "#ef4444" : "#10b981"} /><SC label="Complete" value={`${t.pctUsed}%`} color={t.pctUsed > 90 ? "#ef4444" : t.pctUsed > 70 ? "#f59e0b" : "#10b981"} /></div>
+    <div style={{ fontSize: 11, color: "#64748b", marginBottom: 12 }}>Used hours come from submitted daily logs and self-correct when logs are edited or deleted. Use Adjust (±) for manual true-ups — it adds to Used.{t.coHours ? ` Approved change orders add ${t.coHours}h to the ${t.baseBid}h original bid; edit those hours on the Change Orders tab.` : ""}</div>
     <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr 1fr", gap: 8, padding: "0 12px 10px", fontSize: 11, fontWeight: 600, color: "#64748b", textTransform: "uppercase" }}><span>Phase</span><span style={{ textAlign: "center" }}>Bid</span><span style={{ textAlign: "center" }}>Logged</span><span style={{ textAlign: "center" }}>Adjust ±</span><span style={{ textAlign: "center" }}>Remaining</span><span style={{ textAlign: "center" }}>%</span></div>
     {LABOR_PHASES.map(lp => {
       const b = bidHours(project, lp.id), lg = loggedHours(project, lp.id), a = adjustment(project, lp.id);
@@ -420,7 +420,10 @@ function HoursTab({ project, onUpdate }) {
       return (
       <div key={lp.id} style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr 1fr 1fr 1fr", gap: 8, alignItems: "center", padding: "10px 12px", background: "#0A192F", borderRadius: 8, marginBottom: 4, border: o ? "1px solid #7f1d1d" : "1px solid transparent" }}>
         <span style={{ fontSize: 13, fontWeight: 600, color: "#e2e8f0" }}>{lp.name}</span>
-        <input type="number" step="0.5" min="0" style={hS} value={b || ""} onChange={e => updBid(lp.id, e.target.value)} placeholder="0" />
+        <div>
+          <input type="number" step="0.5" min="0" style={hS} value={baseBidHours(project, lp.id) || ""} onChange={e => updBid(lp.id, e.target.value)} placeholder="0" />
+          {changeOrderHours(project, lp.id) !== 0 && <div title="Hours from approved change orders" style={{ textAlign: "center", fontSize: 10.5, fontWeight: 700, color: "#a78bfa", marginTop: 3 }}>{changeOrderHours(project, lp.id) > 0 ? "+" : ""}{changeOrderHours(project, lp.id)}h CO = {b}h</div>}
+        </div>
         <div style={{ textAlign: "center", fontSize: 13, color: lg > 0 ? "#f59e0b" : "#475569", fontWeight: 600 }}>{lg.toFixed(1)}h</div>
         <input type="number" step="0.5" style={hS} value={a || ""} onChange={e => updAdj(lp.id, e.target.value)} placeholder="0" />
         <div style={{ textAlign: "center", fontSize: 13, color: o ? "#ef4444" : "#10b981", fontWeight: 700 }}>{r.toFixed(1)}h</div>
@@ -551,34 +554,129 @@ function InvoiceTab({ project, onUpdate }) {
 
 /* ── CHANGE ORDERS ── */
 function ChangeOrdersTab({ project, onUpdate }) {
-  const [desc, setDesc] = useState(""); const [amt, setAmt] = useState(""); const [st, setSt] = useState("pending");
+  /* A change order carries three things the old one-line form had no room for:
+       scope  - what the crew is actually being asked to do; shown on the job
+                in Field Mode once the change order is approved
+       hours  - labor added per phase. They are NOT written into the bid. The
+                Hours tab computes budget = original bid + approved change
+                orders, so rejecting, editing or deleting one corrects it.
+       amount - unchanged; still feeds the adjusted contract total.            */
+  const blank = { description: "", amount: "", status: "pending", scope: "", hours: {} };
+  const [form, setForm] = useState(null);          // null = closed; otherwise the change order being added or edited
+  const [nudge, setNudge] = useState("");
   const cos = project.changeOrders || [];
   const approved = cos.filter(c => c.status === "approved");
   const totalApproved = approved.reduce((s, c) => s + (parseFloat(c.amount) || 0), 0);
   const origContract = parseFloat(project.contractAmount) || 0;
   const stC = { pending: "#f59e0b", approved: "#10b981", rejected: "#ef4444" };
-  function add() { if (!desc.trim()) return; onUpdate({ changeOrders: [...cos, { id: genId(), description: desc.trim(), amount: amt, status: st, date: new Date().toISOString().split("T")[0], createdAt: new Date().toISOString() }] }); setDesc(""); setAmt(""); }
+  const t = laborTotals(project, LABOR_PHASES);
+  const formHours = form ? changeOrderTotalHours(form) : 0;
+  const lS2 = { fontSize: 11, fontWeight: 600, color: "#64748b", marginBottom: 4, display: "block", textTransform: "uppercase", letterSpacing: "0.05em" };
+
+  function cleanHours(h) {
+    const out = {};
+    Object.entries(h || {}).forEach(([k, v]) => { const n = parseFloat(v); if (n) out[k] = n; });
+    return out;
+  }
+  function save() {
+    if (!form.description.trim()) return;
+    const rec = {
+      description: form.description.trim(), amount: form.amount, status: form.status,
+      scope: (form.scope || "").trim(), hours: cleanHours(form.hours),
+      updatedAt: new Date().toISOString(),
+    };
+    if (form.id) onUpdate({ changeOrders: cos.map(c => c.id === form.id ? { ...c, ...rec } : c) });
+    else onUpdate({ changeOrders: [...cos, { id: genId(), ...rec, date: new Date().toISOString().split("T")[0], createdAt: new Date().toISOString() }] });
+    setForm(null); setNudge("");
+  }
+  function setStatus(co, status) {
+    onUpdate({ changeOrders: cos.map(c => c.id === co.id ? { ...c, status } : c) });
+    // Approving is the moment the work becomes real. If the change order has
+    // no hours or no scope yet, open it so they get filled in now.
+    if (status === "approved" && (!changeOrderTotalHours(co) || !(co.scope || "").trim())) {
+      const missing = [!changeOrderTotalHours(co) && "labor hours", !(co.scope || "").trim() && "a scope of work"].filter(Boolean).join(" and ");
+      setNudge(`Approved. This change order has no ${missing} yet. Add ${missing.includes(" and ") ? "them" : "it"} so the Hours tab and the field crew are working from it.`);
+      setForm({ ...blank, ...co, status, hours: { ...(co.hours || {}) } });
+    }
+  }
+
   return (<div>
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 16 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, marginBottom: 16 }}>
       <SC label="Original Contract" value={origContract ? `$${origContract.toLocaleString()}` : "—"} color="#69BE28" />
       <SC label="Approved COs" value={`$${totalApproved.toLocaleString()}`} color="#10b981" />
       <SC label="Adjusted Total" value={`$${(origContract + totalApproved).toLocaleString()}`} color="#f59e0b" />
+      <SC label="CO Hours Added" value={`${t.coHours > 0 ? "+" : ""}${t.coHours}h`} color="#a78bfa" />
     </div>
-    {cos.map((co, idx) => (
-      <div key={co.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", background: "#0A192F", borderRadius: 10, border: "1px solid #1A3050", marginBottom: 6 }}>
-        <span style={{ fontSize: 11, fontWeight: 700, color: "#64748b" }}>CO-{idx + 1}</span>
-        <div style={{ flex: 1 }}><div style={{ fontSize: 13, fontWeight: 600, color: "#fff" }}>{co.description}</div><div style={{ fontSize: 11, color: "#64748b" }}>{co.date}</div></div>
-        {co.amount && <span style={{ fontSize: 13, fontWeight: 600, color: "#10b981" }}>${parseFloat(co.amount).toLocaleString()}</span>}
-        <select value={co.status} onChange={e => onUpdate({ changeOrders: cos.map((c, i) => i === idx ? { ...c, status: e.target.value } : c) })} style={{ padding: "4px 8px", borderRadius: 8, border: "1px solid #1A3050", background: (stC[co.status]) + "22", color: stC[co.status], fontSize: 11, fontWeight: 600, fontFamily: "inherit", outline: "none", cursor: "pointer" }}><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select>
-        <button onClick={() => onUpdate({ changeOrders: cos.filter((_, i) => i !== idx) })} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer" }}><X size={12} /></button>
+
+    {cos.map((co, idx) => {
+      const h = changeOrderTotalHours(co);
+      const isApproved = co.status === "approved";
+      const gaps = [!h && "no hours", !(co.scope || "").trim() && "no scope"].filter(Boolean);
+      return (
+      <div key={co.id} style={{ padding: "12px 14px", background: "#0A192F", borderRadius: 10, border: "1px solid #1A3050", marginBottom: 6 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: "#64748b" }}>CO-{idx + 1}</span>
+          <div style={{ flex: 1, minWidth: 160 }}><div style={{ fontSize: 13, fontWeight: 600, color: "#fff" }}>{co.description}</div><div style={{ fontSize: 11, color: "#64748b" }}>{co.date}</div></div>
+          {h !== 0 && <span title={isApproved ? "Added to the labor budget" : "Counts toward the labor budget once approved"} style={{ fontSize: 12, fontWeight: 700, color: isApproved ? "#a78bfa" : "#64748b" }}>{h > 0 ? "+" : ""}{h}h</span>}
+          {co.amount && <span style={{ fontSize: 13, fontWeight: 600, color: "#10b981" }}>${parseFloat(co.amount).toLocaleString()}</span>}
+          <select value={co.status} onChange={e => setStatus(co, e.target.value)} style={{ padding: "4px 8px", borderRadius: 8, border: "1px solid #1A3050", background: (stC[co.status]) + "22", color: stC[co.status], fontSize: 11, fontWeight: 600, fontFamily: "inherit", outline: "none", cursor: "pointer" }}><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select>
+          <button title="Edit scope and hours" onClick={() => { setNudge(""); setForm({ ...blank, ...co, hours: { ...(co.hours || {}) } }); }} style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer" }}><Edit2 size={13} /></button>
+          <button onClick={() => { if (confirm(`Delete CO-${idx + 1} "${co.description}"?${isApproved && h ? `\n\nIts ${h}h will come back out of the labor budget.` : ""}`)) onUpdate({ changeOrders: cos.filter((_, i) => i !== idx) }); }} style={{ background: "none", border: "none", color: "#334155", cursor: "pointer" }}><X size={12} /></button>
+        </div>
+        {(co.scope || "").trim() && <div style={{ fontSize: 12.5, color: "#94a3b8", whiteSpace: "pre-wrap", lineHeight: 1.55, marginTop: 8, paddingTop: 8, borderTop: "1px solid #13294d" }}>{co.scope}</div>}
+        {h !== 0 && <div style={{ fontSize: 11.5, color: "#64748b", marginTop: 6 }}>{LABOR_PHASES.filter(lp => parseFloat((co.hours || {})[lp.id])).map(lp => `${lp.name} ${co.hours[lp.id]}h`).join(" · ")}</div>}
+        {isApproved && gaps.length > 0 && <div style={{ fontSize: 11.5, color: "#f59e0b", fontWeight: 600, marginTop: 6 }}>Approved with {gaps.join(" and ")}. <button onClick={() => { setNudge(""); setForm({ ...blank, ...co, hours: { ...(co.hours || {}) } }); }} style={{ background: "none", border: "none", color: "#f59e0b", textDecoration: "underline", cursor: "pointer", fontFamily: "inherit", fontSize: 11.5, padding: 0 }}>Add now</button></div>}
+        {isApproved && (co.scope || "").trim() && <div style={{ fontSize: 10.5, color: "#475569", marginTop: 6 }}>Scope is showing on this job in Field Mode.</div>}
+      </div>);
+    })}
+    {cos.length === 0 && !form && <div style={{ textAlign: "center", padding: 20, color: "#334155", fontSize: 13 }}>No change orders.</div>}
+
+    {!form && <button onClick={() => { setNudge(""); setForm({ ...blank }); }} style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 14, padding: "9px 16px", borderRadius: 8, border: "none", background: "#69BE28", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}><Plus size={14} /> Add Change Order</button>}
+
+    {form && (
+      <div style={{ marginTop: 14, padding: 16, background: "#0F2444", borderRadius: 12, border: "1px solid #69BE2855" }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginBottom: 12 }}>{form.id ? "Edit change order" : "New change order"}</div>
+        {nudge && <div style={{ fontSize: 12.5, color: "#f0a93b", background: "#f59e0b12", border: "1px solid #f59e0b33", borderRadius: 8, padding: "9px 12px", marginBottom: 12, lineHeight: 1.5 }}>{nudge}</div>}
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, marginBottom: 12 }}>
+          <div style={{ gridColumn: "1 / -1" }}><label style={lS2}>Title *</label><input style={iS} placeholder="Add 4 cameras at the north gate" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></div>
+          <div><label style={lS2}>Amount</label><input type="number" step="0.01" style={iS} placeholder="$" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} /></div>
+          <div><label style={lS2}>Status</label><select style={iS} value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}><option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option></select></div>
+        </div>
+
+        <div style={{ marginBottom: 12 }}>
+          <label style={lS2}>Scope of work for the field crew</label>
+          <textarea style={{ ...iS, minHeight: 96, resize: "vertical", lineHeight: 1.5 }} placeholder={"What the crew needs to do, where, and anything different from the original scope.\nThe crew reads this on the job page in Field Mode once the change order is approved. Leave pricing out of it."} value={form.scope} onChange={e => setForm({ ...form, scope: e.target.value })} />
+        </div>
+
+        <div style={{ background: "#0A192F", borderRadius: 10, padding: "12px 14px", marginBottom: 14 }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 11, fontWeight: 700, color: "#a78bfa", textTransform: "uppercase", letterSpacing: "0.05em" }}>Labor hours this change order adds</span>
+            <span style={{ fontSize: 12, color: formHours ? "#e2e8f0" : "#475569", fontWeight: 700, marginLeft: "auto" }}>{formHours > 0 ? "+" : ""}{formHours}h</span>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(128px, 1fr))", gap: 8 }}>
+            {LABOR_PHASES.map(lp => (
+              <div key={lp.id}>
+                <label style={{ ...lS2, textTransform: "none", letterSpacing: 0, fontSize: 11.5 }}>{lp.name}</label>
+                <input type="number" step="0.5" style={{ ...iS, textAlign: "center" }} placeholder="0" value={form.hours[lp.id] ?? ""} onChange={e => setForm({ ...form, hours: { ...form.hours, [lp.id]: e.target.value } })} />
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 11.5, color: "#64748b", marginTop: 10, lineHeight: 1.5 }}>
+            {form.status === "approved"
+              ? `Saving puts these on the Hours tab: ${t.baseBid}h original bid plus approved change orders.`
+              : "These join the labor budget when the change order is marked Approved. Until then the Hours tab is unchanged."}
+            {" "}A deduct can be entered as a negative.
+          </div>
+        </div>
+
+        {!formHours && form.description.trim() && <div style={{ fontSize: 12, color: "#f59e0b", marginBottom: 10 }}>No labor hours entered. Fine for a material-only change order; otherwise add them above so the crew's budget moves with the scope.</div>}
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <button onClick={() => { setForm(null); setNudge(""); }} style={{ padding: "9px 16px", borderRadius: 8, border: "1px solid #1A3050", background: "transparent", color: "#94a3b8", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+          <button onClick={save} disabled={!form.description.trim()} style={{ padding: "9px 18px", borderRadius: 8, border: "none", background: form.description.trim() ? "#69BE28" : "#1A3050", color: form.description.trim() ? "#fff" : "#475569", fontSize: 13, fontWeight: 700, cursor: form.description.trim() ? "pointer" : "default", fontFamily: "inherit" }}>{form.id ? "Save changes" : "Add change order"}</button>
+        </div>
       </div>
-    ))}
-    {cos.length === 0 && <div style={{ textAlign: "center", padding: 20, color: "#334155", fontSize: 13 }}>No change orders.</div>}
-    <div style={{ display: "flex", gap: 6, marginTop: 14 }}>
-      <input style={{ ...iS, flex: 2 }} placeholder="Change order description *" value={desc} onChange={e => setDesc(e.target.value)} />
-      <input type="number" step="0.01" style={{ ...iS, flex: 0.8 }} placeholder="Amount" value={amt} onChange={e => setAmt(e.target.value)} />
-      <button onClick={add} style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: "#69BE28", color: "#fff", cursor: "pointer", flexShrink: 0, opacity: desc.trim() ? 1 : 0.4 }}><Plus size={14} /></button>
-    </div>
+    )}
   </div>);
 }
 

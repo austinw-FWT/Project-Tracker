@@ -37,8 +37,34 @@ export function adjustment(project, categoryId) {
   return parseFloat((project.laborAdjustments || {})[categoryId]) || 0;
 }
 
-export function bidHours(project, categoryId) {
+/** The original bid for a phase: the number typed on the Hours tab. */
+export function baseBidHours(project, categoryId) {
   return parseFloat((project.laborHours || {})[categoryId]?.bid) || 0;
+}
+
+/** Change orders that count toward hours. Only APPROVED ones do: pending and
+ *  rejected change orders are not work the crew should be burning hours on. */
+export function approvedChangeOrders(project) {
+  return (project.changeOrders || []).filter(c => c && c.status === "approved");
+}
+
+/** Hours added to a phase by approved change orders. Computed from the change
+ *  orders themselves, never written into the bid, so un-approving, editing or
+ *  deleting a change order corrects the budget by itself. */
+export function changeOrderHours(project, categoryId) {
+  let sum = 0;
+  for (const co of approvedChangeOrders(project)) sum += parseFloat((co.hours || {})[categoryId]) || 0;
+  return sum;
+}
+
+/** Hours on one change order, across every phase. */
+export function changeOrderTotalHours(co) {
+  return Object.values((co && co.hours) || {}).reduce((s, v) => s + (parseFloat(v) || 0), 0);
+}
+
+/** The working budget for a phase: original bid plus approved change orders. */
+export function bidHours(project, categoryId) {
+  return baseBidHours(project, categoryId) + changeOrderHours(project, categoryId);
 }
 
 /** used = logged + manual adjustment */
@@ -56,9 +82,14 @@ export function laborTotals(project, laborPhases) {
     ...Object.keys(project.laborHours || {}),
     ...(laborPhases || []).map(l => l.id),
   ]);
-  let bid = 0, used = 0;
-  cats.forEach(c => { bid += bidHours(project, c); used += usedHours(project, c); });
-  return { bid, used, remaining: bid - used, pctUsed: bid > 0 ? Math.round((used / bid) * 100) : 0 };
+  // a change order can add hours to a phase the original bid never had
+  approvedChangeOrders(project).forEach(co => Object.keys(co.hours || {}).forEach(c => cats.add(c)));
+  let bid = 0, used = 0, baseBid = 0, coHours = 0;
+  cats.forEach(c => {
+    bid += bidHours(project, c); used += usedHours(project, c);
+    baseBid += baseBidHours(project, c); coHours += changeOrderHours(project, c);
+  });
+  return { bid, used, baseBid, coHours, remaining: bid - used, pctUsed: bid > 0 ? Math.round((used / bid) * 100) : 0 };
 }
 
 /** Per-person hours on a project (for burn reporting / future autopsy report). */
