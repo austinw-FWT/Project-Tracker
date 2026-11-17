@@ -109,6 +109,36 @@ export const patchInvite  = (code, upd)   => dbPatch(`/invites/${code}`, upd);
 export const deleteInvite = (code)        => dbDelete(`/invites/${code}`);
 export const listInvites  = ()            => dbGet("/invites");
 
+/* ── guests ─────────────────────────────────────────────────────
+   Guest access to specific jobs. See guestAccess.js for the model and
+   database.rules.json for what each path allows. The record is keyed by the
+   code in the guest's link. */
+export const readGuest    = (code)      => dbGet(`/guests/${code}`);
+export const listGuests   = ()          => dbGet("/guests");
+export const putGuest     = (code, g)   => dbPut(`/guests/${code}`, g);
+export const patchGuest   = (code, upd) => dbPatch(`/guests/${code}`, upd);
+export const deleteGuest  = (code)      => dbDelete(`/guests/${code}`);
+
+/** A no-login link is claimed per device: each phone that opens it adds itself. */
+export const claimGuestDevice = (code, uid) => dbPut(`/guests/${code}/devices/${uid}`, true);
+
+/** Hours budget and burn for a shared job, readable only by guests with "show hours" on. */
+export const readGuestHours   = (pid)       => dbGet(`/guestHours/${pid}`);
+export const listGuestHours   = ()          => dbGet("/guestHours");
+export const putGuestHours    = (pid, view) => dbPut(`/guestHours/${pid}`, view);
+export const deleteGuestHours = (pid)       => dbDelete(`/guestHours/${pid}`);
+
+/** The cut-down copy of a job that guests read instead of the real project. */
+export const readGuestProject   = (pid)       => dbGet(`/guestProjects/${pid}`);
+export const listGuestProjects  = ()          => dbGet("/guestProjects");
+export const putGuestProject    = (pid, view) => dbPut(`/guestProjects/${pid}`, view);
+export const deleteGuestProject = (pid)       => dbDelete(`/guestProjects/${pid}`);
+
+/** A guest's own copy of their submitted logs, and their saved crew names. */
+export const readGuestPrivate   = (uid)          => dbGet(`/guestPrivate/${uid}`);
+export const putGuestPrivateLog = (uid, id, rec) => dbPut(`/guestPrivate/${uid}/logs/${id}`, rec);
+export const putGuestCrewNames  = (uid, names)   => dbPut(`/guestPrivate/${uid}/crew`, names);
+
 /** Short, unambiguous, hard to guess. No 0/O/1/I so it can be read aloud. */
 export function genInviteCode() {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";

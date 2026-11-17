@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Plus, X, Users, Settings, LayoutGrid, Search, ArrowLeft, Layers, CalendarDays, Wifi, WifiOff, RefreshCw, Zap, LogOut, Shield, UserCheck, UserX, User, Clock, ChevronDown, ChevronUp, Home, BookUser, ShieldCheck, Zap as ZapIcon, Copy, Menu } from "lucide-react";
-import { auth, googleProvider, signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithPopup, onAuthStateChanged, signOut, updateProfile } from "./firebase.js";
+import { auth, googleProvider, signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithPopup, signInAnonymously, onAuthStateChanged, signOut, updateProfile } from "./firebase.js";
 import DailyTracker from "./DailyTracker.jsx";
 import MyDailyLog from "./MyDailyLog.jsx";
 import Opportunities from "./Opportunities.jsx";
@@ -17,6 +17,9 @@ import PriceBook from "./PriceBook.jsx";
 import ProjectImport from "./ProjectImport.jsx";
 import { resolveJobRole, getPermissions, JOB_ROLES, ROLE_LABEL, ROLE_COLOR } from "./permissions.js";
 import Briefing from "./Briefing.jsx";
+import GuestMode from "./GuestMode.jsx";
+import GuestAdmin from "./GuestAdmin.jsx";
+import { captureGuestFromUrl, clearPendingGuest, peekPendingGuest, pendingGuestIsQuick, clearPendingQuick, guestAuthStep, planGuestPublish, planGuestHoursPublish, stableStringify, prune } from "./guestAccess.js";
 
 import {
   FB_URL, dbGet, readTracker, putSection, putScheduleDay, putWriteInLog,
@@ -24,6 +27,8 @@ import {
   putProjectDailyLog, putMemberPrivate,
   putCatalogItem, deleteCatalogItem, putAssembly, deleteAssembly, putEstimatingDefaults,
   readInvite, putInvite, patchInvite, deleteInvite, listInvites, genInviteCode,
+  readGuest, patchGuest, claimGuestDevice, listGuests, listGuestProjects, putGuestProject, deleteGuestProject,
+  listGuestHours, putGuestHours, deleteGuestHours,
   scheduleEntries,
   readUsers, putUser, deleteUser as dbDeleteUser,
   normalizeTracker, denormalizeProjectUpdates,
@@ -101,6 +106,13 @@ export default function App() {
           // Read only OUR record — security rules allow self-read but block
           // unapproved users from listing everyone.
           const existing = await dbGet(`/users/${u.uid}`);
+          // Guest links first. This never falls through to the pending queue:
+          // an admin approving a pending account hands over the whole tracker,
+          // which is the opposite of what a guest link is for.
+          const step = await guestAuthStep(u, existing, captureGuestFromUrl(), { readGuest, putUser: fbWriteUser, patchGuest, claimGuestDevice });
+          if (step.clear === "all") clearPendingGuest(); else if (step.clear === "quick") clearPendingQuick();
+          if (step.action === "signOut") { setCheckingApproval(false); await signOut(auth); return; }
+          if (step.action === "record") { setUserRecord(step.record); setCheckingApproval(false); setAuthLoading(false); return; }
           if (existing) {
             // Already signed up (probably sitting in the pending queue) and
             // now opening an invite link — redeem it rather than ignore it.
@@ -161,7 +173,17 @@ export default function App() {
           }
         } catch { setUserRecord({ status: "error" }); }
         setCheckingApproval(false);
-      } else { setUserRecord(null); }
+      } else {
+        setUserRecord(null);
+        captureGuestFromUrl();
+        if (pendingGuestIsQuick()) {
+          // No-login guest link: sign this phone in quietly and come back
+          // through this handler as that session. If quiet sign-in is not
+          // switched on, fall back to the normal sign-in screen.
+          try { await signInAnonymously(auth); return; }
+          catch { clearPendingQuick(); }
+        }
+      }
       setAuthLoading(false);
     });
     return unsub;
@@ -169,8 +191,25 @@ export default function App() {
 
   if (authLoading || checkingApproval) return <LoadingScreen text="Loading..." />;
   if (!user) return <LoginScreen />;
+  if (userRecord?.status === "guest") return <GuestMode user={user} userRecord={userRecord} />;
+  if (userRecord?.status === "guest-problem") return <GuestProblemScreen user={user} problem={userRecord.problem} />;
   if (!userRecord || userRecord.status === "pending") return <PendingScreen user={user} error={userRecord?.status === "error"} />;
+  // Anything that is not an approved account stops here. The database would
+  // refuse it anyway; this keeps the screen honest about why.
+  if (userRecord.status !== "approved") return <PendingScreen user={user} error />;
   return <Tracker user={user} userRecord={userRecord} />;
+}
+
+function GuestProblemScreen({ user, problem }) {
+  return (<div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: "#0A192F", fontFamily: "'DM Sans',sans-serif", padding: 16 }}>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet" />
+    <div style={{ width: "100%", maxWidth: 420, padding: 28, textAlign: "center", background: "#0F2444", borderRadius: 16, border: "1px solid #1A3050" }}>
+      <h2 style={{ fontSize: 21, fontWeight: 700, color: "#fff", fontFamily: "'Outfit',sans-serif", margin: "0 0 10px" }}>Guest link problem</h2>
+      <p style={{ fontSize: 14, color: "#94a3b8", lineHeight: 1.6, margin: "0 0 22px" }}>{problem}</p>
+      <button onClick={() => signOut(auth)} style={{ padding: "11px 22px", borderRadius: 10, border: "none", background: "#69BE28", color: "#fff", fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{user.isAnonymous ? "Close" : "Sign out"}</button>
+      {user.email && <div style={{ fontSize: 11.5, color: "#475569", marginTop: 16 }}>Signed in as {user.email}</div>}
+    </div>
+  </div>);
 }
 
 function LoadingScreen({ text }) {
@@ -224,6 +263,11 @@ function LoginScreen() {
           <h1 style={{ fontSize: 26, fontWeight: 800, color: "#fff", fontFamily: "'Outfit',sans-serif", margin: "0 0 4px", letterSpacing: "0.02em" }}>FWT Workspaces</h1>
           <p style={{ fontSize: 13, color: "#A5ACAF", margin: 0 }}>Far West Technologies Project Management</p>
         </div>
+        {(captureGuestFromUrl() || peekPendingGuest()) && (
+          <div style={{ background: "#69BE2814", border: "1px solid #69BE2855", borderRadius: 12, padding: "12px 16px", marginBottom: 14, fontSize: 13, color: "#c7e9b0", lineHeight: 1.55 }}>
+            <strong style={{ color: "#82CC4A" }}>You've been given guest access to an FWT job.</strong> Sign in with Google, or pick Register to make a login. You'll land on the job and your daily log.
+          </div>
+        )}
         <div style={{ background: "#0F2444", borderRadius: 16, border: "1px solid #1A3050", padding: 24 }}>
           <div style={{ display: "flex", gap: 4, marginBottom: 20 }}>
             {["login", "register"].map(m => (<button key={m} onClick={() => { setMode(m); setError(""); }} style={{ flex: 1, padding: 8, borderRadius: 8, border: "none", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", background: mode === m ? "#69BE28" : "transparent", color: mode === m ? "#fff" : "#64748b" }}>{m === "login" ? "Sign In" : "Register"}</button>))}
@@ -283,6 +327,11 @@ function Tracker({ user, userRecord }) {
   const eventSourceRef = useRef(null);
   const isSaving = useRef(false);
   const latestData = useRef(null);
+  const [guests, setGuests] = useState({});
+  const [guestLoadError, setGuestLoadError] = useState("");
+  const guestPublished = useRef(null);   // { pid: signature } of the cut-down copies known to be in the database
+  const guestHoursPublished = useRef(null);   // same, for the hours copies
+  const loadedOk = useRef(false);        // true once a real read of the tracker has succeeded
   const isAdmin = userRecord.role === "admin";
   const accountName = user.displayName || user.email;
   /* Resolve this account to a roster entry. Everything downstream — schedule
@@ -303,6 +352,7 @@ function Tracker({ user, userRecord }) {
         const remote = await fbRead();
         const d = normalizeTracker(remote, DEFAULTS);
         latestData.current = d;
+        loadedOk.current = true;
         if (alive) {
           setData(d); setSyncStatus("synced"); setLastSync(new Date()); setLoading(false);
           // Identity is resolved against the roster by uid → email → exact
@@ -361,6 +411,60 @@ function Tracker({ user, userRecord }) {
                  briefly suppress the SSE echo of our own write.
      No call here ever PUTs the root — concurrent users can no longer
      overwrite each other's data. */
+  /* ── GUESTS ───────────────────────────────────────────────────
+     Guests never read the tracker. They read a cut-down copy of each job
+     they are on (/guestProjects). Every full user's app keeps those copies
+     current: whenever a shared job changes, by anyone, on any screen, the
+     copy is rebuilt and rewritten if it differs. */
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const [g, pub, hrs] = await Promise.all([listGuests(), listGuestProjects(), listGuestHours()]);
+        if (!alive) return;
+        const sigs = {}, hsigs = {};
+        Object.entries(pub || {}).forEach(([pid, v]) => { sigs[pid] = stableStringify(prune(v)); });
+        Object.entries(hrs || {}).forEach(([pid, v]) => { hsigs[pid] = stableStringify(prune(v)); });
+        guestPublished.current = sigs;
+        guestHoursPublished.current = hsigs;
+        setGuests(g || {});
+      } catch {
+        // Rules for guests not published yet (or offline). Guest features stay
+        // off; nothing else in the app depends on them.
+        if (alive) setGuestLoadError("Guest access isn't available yet. Publish the database rules from this release, then reload.");
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  useEffect(() => {
+    // Never publish from a failed or empty load: an empty project list would
+    // look like "every shared job was deleted" and wipe the guests' copies.
+    if (!data || !loadedOk.current || !guestPublished.current || !guestHoursPublished.current) return;
+    const t = setTimeout(() => {
+      const plan = planGuestPublish(data.projects, guests, guestPublished.current);
+      plan.puts.forEach(({ pid, view, sig }) => {
+        guestPublished.current[pid] = sig;
+        putGuestProject(pid, view).catch(() => { if (guestPublished.current[pid] === sig) delete guestPublished.current[pid]; });
+      });
+      plan.deletes.forEach(pid => {
+        delete guestPublished.current[pid];
+        deleteGuestProject(pid).catch(() => {});
+      });
+      // Hours, for jobs where a guest has "show hours" switched on.
+      const hp = planGuestHoursPublish(data.projects, guests, guestHoursPublished.current, LABOR_PHASES);
+      hp.puts.forEach(({ pid, view, sig }) => {
+        guestHoursPublished.current[pid] = sig;
+        putGuestHours(pid, view).catch(() => { if (guestHoursPublished.current[pid] === sig) delete guestHoursPublished.current[pid]; });
+      });
+      hp.deletes.forEach(pid => {
+        delete guestHoursPublished.current[pid];
+        deleteGuestHours(pid).catch(() => {});
+      });
+    }, 700);
+    return () => clearTimeout(t);
+  }, [data, guests]);
+
   const applyLocal = useCallback(newData => { latestData.current = newData; setData(newData); }, []);
   const persist = useCallback(writePromise => {
     isSaving.current = true; setSyncStatus("saving");
@@ -886,7 +990,7 @@ function Tracker({ user, userRecord }) {
               onAdd={() => { if (!newTeamName.trim()) return; const r = [...data.teamRoster, { id: genId(), name: newTeamName.trim(), role: newTeamRole.trim() }]; saveSection("teamRoster", r, { ...latestData.current, teamRoster: r }); setNewTeamName(""); setNewTeamRole(""); }}
               onRemove={id => { const r = data.teamRoster.filter(t => t.id !== id); saveSection("teamRoster", r, { ...latestData.current, teamRoster: r }); }} />
           ) : view === "admin" && isAdmin ? (
-            <UserAdminView teamRoster={data.teamRoster || []} />
+            <UserAdminView teamRoster={data.teamRoster || []} guests={guests} onGuestsChange={setGuests} guestLoadError={guestLoadError} projects={data.projects || []} myName={myName} />
           ) : (
             <PhaseSettings phases={data.phases} newPhaseName={newPhaseName} setNewPhaseName={setNewPhaseName} newPhaseColor={newPhaseColor} setNewPhaseColor={setNewPhaseColor}
               onAdd={() => { if (!newPhaseName.trim()) return; const ph = [...data.phases, { id: genId(), name: newPhaseName.trim(), color: newPhaseColor }]; saveSection("phases", ph, { ...latestData.current, phases: ph }); setNewPhaseName(""); }}
@@ -1464,7 +1568,7 @@ function InvitePanel({ teamRoster }) {
   );
 }
 
-function UserAdminView({ teamRoster }) {
+function UserAdminView({ teamRoster, guests, onGuestsChange, guestLoadError, projects, myName }) {
   const [users, setUsers] = useState({}); const [loading, setLoading] = useState(true);
   useEffect(() => { load(); }, []);
   async function load() { setLoading(true); try { setUsers(await fbReadUsers() || {}); } catch {} setLoading(false); }
@@ -1478,6 +1582,7 @@ function UserAdminView({ teamRoster }) {
     <p style={{ fontSize: 13, color: "#64748b", marginBottom: 20 }}>Manage who can access FWT Workspaces.</p>
     <StorageCheck />
     <InvitePanel teamRoster={teamRoster} />
+    <GuestAdmin guests={guests || {}} projects={projects || []} myName={myName} onChange={onGuestsChange} loadError={guestLoadError} />
     <div style={{ background: "#0F2444", borderRadius: 12, border: "1px solid #1A3050", padding: 20, marginBottom: 24 }}>
       <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", marginBottom: 10, textTransform: "uppercase" }}>Email Notifications</div>
       <p style={{ fontSize: 12, color: "#64748b", marginBottom: 10 }}>Daily logs, timesheets, and task notifications are automatically emailed to all admins. Add an additional recipient below (e.g., office manager, payroll).</p>
