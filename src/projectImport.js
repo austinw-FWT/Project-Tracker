@@ -1,21 +1,26 @@
 /**
  * projectImport.js — turns a job folder's files into a project record.
  *
- * Parses the three FWT document types and merges them into one candidate
- * that the review queue displays before anything is created:
+ * You pick the files (any folder, any number of batches) and say what each
+ * one is for; the readers below pull the data out and the review screen shows
+ * exactly where it will land before anything is written:
  *
  *   PIF-<job>.xlsx       backbone — job #, PM, addresses, contacts, billing,
  *                        bid $/hours, and the Schedule of Values that drives
  *                        invoice progress. Fixed cell addresses, so these are
  *                        direct reads rather than pattern guesses.
  *   01_TAKEOFF… / 01_TO…   materials line items + labor hours by category.
- *   03_PRO… / …Proposal    scope narrative and, when the pricing table is inline
- *                        rather than an embedded image, the price breakdown.
+ *   03_PRO… / …Proposal    the full Scope of Work section (bullets and nesting
+ *                        kept, no length cap), the checked Exclusions, and the
+ *                        price breakdown when it's inline rather than an image.
+ *   Closeout invoices      invoice numbers/dates, amounts from the PIF's SOV.
+ *   Anything else          saved to Documents with a type and visibility.
  *
  * Everything runs in the browser: SheetJS for Excel, JSZip for .docx (both
  * already dependencies, both lazy-loaded so field techs never download them).
  *
- * Nothing here writes to the database. It returns a candidate for review.
+ * Nothing here writes to the database. buildProjectChanges() returns the
+ * record (new job) or update (existing job) and App.jsx writes it.
  */
 
 import { LABOR_PHASES, genId } from "./App.jsx";
@@ -237,7 +242,7 @@ export async function parsePIF(file) {
     customer: at("C42") || at("C19"),
     billingContact: at("C43"),
     billingEmail: at("C51"),
-    poNumber: at("C52"),
+    poNumber: /^(contract|n\/?a|none|tbd|pending|-+)$/i.test(String(at("C52")).trim()) ? "" : at("C52"),
     bidAmount: numAt("C68") || contractTotal,
     contractAmount: numAt("C69") || contractTotal,
     pifBidHours: numAt("C71"),
@@ -316,39 +321,138 @@ export async function parseTakeoff(file) {
 }
 
 /* ── Proposal (.docx) ─────────────────────────────────────────── */
-/** Minimal docx → text. Paragraphs become lines; table rows become
- *  pipe-delimited lines so the pricing table can be read positionally. */
-async function docxToLines(file) {
+const xmlText = frag => frag
+  .replace(/<w:instrText[\s\S]*?<\/w:instrText>/g, "")     // field codes, not content
+  .replace(/<w:tab\b[^>]*\/>/g, " ")
+  .replace(/<w:br\b[^>]*\/>/g, " ")
+  .replace(/<(?:[^>"']|"[^"]*"|'[^']*')*>/g, "")           // quote-aware tag strip
+  .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+  .replace(/&quot;/g, '"').replace(/&apos;|&#39;/g, "'").replace(/\s+/g, " ").trim();
+
+/** docx → structured lines, in document order.
+ *  Paragraph:  { text, list, level, fmt }  (list items keep their indent level)
+ *  Table row:  { text: "| a | b |", cells: [a, b] }
+ *  The pipe text keeps the header/pricing readers below working positionally. */
+export async function docxToBlocks(buf) {
   const JSZip = (await import("jszip")).default;
-  const zip = await JSZip.loadAsync(await file.arrayBuffer());
+  const zip = await JSZip.loadAsync(buf);
   const xml = await zip.file("word/document.xml").async("string");
-  const textOf = frag => frag
-    .replace(/<w:instrText[\s\S]*?<\/w:instrText>/g, "")     // field codes, not content
-    .replace(/<w:tab\b[^>]*\/>/g, " ")
-    .replace(/<(?:[^>"']|"[^"]*"|'[^']*')*>/g, "")           // quote-aware tag strip
 
-    .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/\s+/g, " ").trim();
+  // numbering.xml says whether a list is bullets or numbers, per level
+  const fmts = {};
+  const numXml = zip.file("word/numbering.xml") ? await zip.file("word/numbering.xml").async("string") : "";
+  if (numXml) {
+    const abs = {};
+    for (const a of numXml.match(/<w:abstractNum\b[\s\S]*?<\/w:abstractNum>/g) || []) {
+      const id = (a.match(/w:abstractNumId="(\d+)"/) || [])[1];
+      abs[id] = {};
+      for (const l of a.match(/<w:lvl\b[\s\S]*?<\/w:lvl>/g) || []) {
+        const lv = (l.match(/w:ilvl="(\d+)"/) || [])[1];
+        abs[id][lv] = (l.match(/<w:numFmt w:val="([^"]+)"/) || [])[1] || "bullet";
+      }
+    }
+    for (const n of numXml.match(/<w:num\b[\s\S]*?<\/w:num>/g) || []) {
+      const id = (n.match(/w:numId="(\d+)"/) || [])[1];
+      const a = (n.match(/<w:abstractNumId w:val="(\d+)"/) || [])[1];
+      if (id) fmts[id] = abs[a] || {};
+    }
+  }
 
-  const lines = [];
-  // Walk tables and paragraphs in document order
+  const out = [];
   const re = /<w:tbl>[\s\S]*?<\/w:tbl>|<w:p\b[\s\S]*?<\/w:p>/g;
   let m;
   while ((m = re.exec(xml))) {
     const chunk = m[0];
     if (chunk.startsWith("<w:tbl")) {
-      const rowRe = /<w:tr\b[\s\S]*?<\/w:tr>/g;
-      let rm;
-      while ((rm = rowRe.exec(chunk))) {
-        const cells = (rm[0].match(/<w:tc>[\s\S]*?<\/w:tc>/g) || []).map(textOf);
-        if (cells.some(Boolean)) lines.push("| " + cells.join(" | ") + " |");
+      for (const row of chunk.match(/<w:tr\b[\s\S]*?<\/w:tr>/g) || []) {
+        const cells = (row.match(/<w:tc>[\s\S]*?<\/w:tc>/g) || []).map(xmlText);
+        if (cells.some(Boolean)) out.push({ text: "| " + cells.join(" | ") + " |", cells });
       }
     } else {
-      const t = textOf(chunk);
-      if (t) lines.push(t);
+      const text = xmlText(chunk);
+      if (!text) continue;
+      const np = chunk.match(/<w:numPr>[\s\S]*?<\/w:numPr>/);
+      if (np) {
+        const level = parseInt((np[0].match(/<w:ilvl w:val="(\d+)"/) || [])[1] || "0", 10);
+        const numId = (np[0].match(/<w:numId w:val="(\d+)"/) || [])[1];
+        if (numId !== "0") { out.push({ text, list: true, level, numId, fmt: (fmts[numId] || {})[level] || "bullet" }); continue; }
+      }
+      out.push({ text });
     }
   }
-  return lines;
+  return out;
+}
+
+/* Section headings that end the Scope of Work. */
+const AFTER_SCOPE = /^(exclusions|terms\s*(&|and)\s*conditions|project pricing|pricing|customer acceptance|acceptance form)\b/i;
+const plain = t => String(t || "").replace(/\*+/g, "").trim();
+/** Text-box / image-anchor residue, e.g. "3013710889000504825153035". */
+const isJunk = t => /^[\d\s]{9,}$/.test(t);
+
+/**
+ * The full Scope of Work, formatted for reading on a phone:
+ * headings get a blank line before them, list items keep their nesting
+ * ("•" top level, "–" below, indented two spaces per level), numbered lists
+ * keep their numbers. No length cap — the field crew needs all of it.
+ */
+export function extractScope(blocks) {
+  const isHead = b => !b.list && !b.cells;
+  let s = blocks.findIndex(b => isHead(b) && /^scope of work\b/i.test(plain(b.text)));
+  // Fallback: scope heading styled as a list paragraph — skip the bare
+  // "Scope of Work" entry in the cover letter's table of contents.
+  if (s < 0) s = blocks.findIndex(b => /^scope of work\s*[–—-]/i.test(plain(b.text)));
+  if (s < 0) return { scope: "", exclusions: [] };
+  let e = blocks.findIndex((b, i) => i > s && isHead(b) && AFTER_SCOPE.test(plain(b.text)));
+  if (e < 0) e = blocks.length;
+
+  const counters = {};
+  const lines = [];
+  for (const b of blocks.slice(s, e)) {
+    const t = plain(b.text);
+    if (!t || isJunk(t)) continue;
+    if (b.cells) {
+      lines.push(b.cells.map(plain).filter(Boolean).join(" — "));
+    } else if (b.list) {
+      const pad = "  ".repeat(b.level);
+      let mark = b.level === 0 ? "•" : "–";
+      if (b.fmt && b.fmt !== "bullet" && b.fmt !== "none") {
+        const k = `${b.numId}:${b.level}`;
+        counters[k] = (counters[k] || 0) + 1;
+        // deeper levels restart when a shallower item appears
+        Object.keys(counters).forEach(key => { const [n, l] = key.split(":"); if (n === b.numId && +l > b.level) delete counters[key]; });
+        const c = counters[k];
+        mark = /letter/i.test(b.fmt) ? `${String.fromCharCode(96 + ((c - 1) % 26) + 1)}.` : /roman/i.test(b.fmt) ? `${["i","ii","iii","iv","v","vi","vii","viii","ix","x"][c - 1] || c}.` : `${c}.`;
+      }
+      lines.push(`${pad}${mark} ${t}`);
+    } else {
+      if (/^scope of work\b/i.test(t) && lines.length) lines.push("");
+      lines.push(t);
+    }
+  }
+  return { scope: lines.join("\n").replace(/\n{3,}/g, "\n\n").trim(), exclusions: extractExclusions(blocks) };
+}
+
+/** Checked rows (☒) in the Exclusions table — what is NOT in our scope. */
+export function extractExclusions(blocks) {
+  const s = blocks.findIndex(b => !b.list && !b.cells && /^exclusions\b/i.test(plain(b.text)));
+  if (s < 0) return [];
+  const out = [];
+  for (const b of blocks.slice(s + 1)) {
+    if (!b.cells && !b.list && AFTER_SCOPE.test(plain(b.text))) break;
+    if (!b.cells) continue;
+    const box = b.cells.findIndex(c => /[☒☑✓✔xX]/.test(c) && c.trim().length <= 2);
+    if (box < 0 || !/[☒☑✓✔]/.test(b.cells[box]) && !/^[xX]$/.test(b.cells[box].trim())) continue;
+    const label = b.cells.filter((_, i) => i !== box).map(plain).filter(Boolean).join(" ");
+    if (label) out.push(label);
+  }
+  return out;
+}
+
+/** Scope text as it lands on the project, with exclusions listed under it. */
+export function scopeWithExclusions(scope, exclusions) {
+  const s = String(scope || "").trim();
+  if (!exclusions || !exclusions.length) return s;
+  return `${s}${s ? "\n\n" : ""}NOT INCLUDED (proposal exclusions):\n${exclusions.map(x => `• ${x}`).join("\n")}`;
 }
 
 const moneyIn = t => {
@@ -357,7 +461,8 @@ const moneyIn = t => {
 };
 
 export async function parseProposal(file) {
-  const lines = await docxToLines(file);
+  const blocks = await docxToBlocks(await file.arrayBuffer());
+  const lines = blocks.map(b => b.text);
   const out = { pricingFound: false, pricingSource: null };
 
   // Header table: Date / Project Name / Prepared by (label spelling varies)
@@ -407,80 +512,187 @@ export async function parseProposal(file) {
     else if (lines.slice(pi, pi + 25).some(l => /attachment/i.test(l))) out.pricingSource = "attachment-image";
   }
 
-  // Scope narrative: Scope of Work → Exclusions
-  const s = lines.findIndex(l => /scope of work\s*\**\s*[–-]/i.test(l.replace(/\*/g, "")));
-  let e = -1;
-  lines.forEach((l, i) => { if (e < 0 && i > s && /^\**exclusions/i.test(l.replace(/\*/g, "").trim())) e = i; });
-  if (s >= 0) {
-    out.scopeNotes = lines.slice(s, e > s ? e : undefined)
-      .map(l => l.replace(/\*+/g, "").trim()).filter(Boolean).join("\n").slice(0, 4000);
-  }
+  // Scope narrative: the whole Scope of Work section, structure kept
+  const { scope, exclusions } = extractScope(blocks);
+  out.scopeNotes = scope;
+  out.exclusions = exclusions;
   return out;
 }
 
-/* ── Merge into one review candidate ──────────────────────────── */
-export async function buildCandidate(files, teamNames = DEFAULT_TEAM_NAMES) {
-  const cand = { id: genId(), files: [], warnings: [], takeoffScopes: [], subfolders: [] };
-  let pif = null, proposal = null;
-  const materials = [], labor = {}, invoiceFiles = [];
+/* ══════════════════════════════════════════════════════════════
+   File-by-file import
+   Every file the user picks becomes an ENTRY with two independent choices:
+     use      — what the app reads out of it (job info, scope, hours…)
+     keepDoc  — whether a copy is saved in the project's Documents, under
+                which type, and whether the field crew can see it.
+   The parse is rebuilt from the entries whenever a choice changes, so the
+   review always shows exactly what will be written.
+   ══════════════════════════════════════════════════════════════ */
 
-  for (const f of files) {
-    const kind = classifyFile(f.name, f.webkitRelativePath);
-    const rel = String(f.webkitRelativePath || "");
-    const sub = rel.split("/").slice(0, -1).pop() || "";
-    if (sub && !cand.subfolders.includes(sub)) cand.subfolders.push(sub);
-    cand.files.push({ name: f.name, kind, subfolder: sub, file: f, size: f.size || 0 });
+/** What a file can be used for, and where its information lands. */
+export const FILE_USES = [
+  { id: "pif",      label: "PIF",              lands: "Job info, contacts, billing, schedule of values" },
+  { id: "proposal", label: "Proposal",         lands: "Scope of work (+ price if it's in the document)" },
+  { id: "takeoff",  label: "Takeoff",          lands: "Materials list and bid hours" },
+  { id: "invoice",  label: "Invoice",          lands: "Invoices" },
+  { id: "doc",      label: "Document only",    lands: "Documents" },
+  { id: "skip",     label: "Don't import",     lands: "" },
+];
+/** Which uses each file type can be read as. */
+export function usesFor(name) {
+  const n = String(name || "").toLowerCase();
+  const u = ["doc", "skip"];
+  if (/\.xls[xm]?$/.test(n)) u.unshift("pif", "takeoff", "invoice");
+  else if (/\.docx$/.test(n)) u.unshift("proposal", "invoice");
+  else if (/\.pdf$/.test(n)) u.unshift("invoice");
+  return FILE_USES.filter(x => u.includes(x.id));
+}
+
+/** Document types — same values the Docs tab uses. */
+export const DOC_TYPES = [
+  { id: "proposal",  label: "Proposal" },
+  { id: "drawing",   label: "Drawing" },
+  { id: "submittal", label: "Submittal" },
+  { id: "contract",  label: "Contract" },
+  { id: "takeoff",   label: "Takeoff" },
+  { id: "invoice",   label: "Invoice" },
+  { id: "pif",       label: "PIF" },
+  { id: "closeout",  label: "Closeout Pkg" },
+  { id: "photo",     label: "Photo" },
+  { id: "document",  label: "Document" },
+];
+/** Types that carry pricing, hours, or margin — office only by default. */
+const OFFICE_ONLY_TYPES = new Set(["pif", "takeoff", "invoice", "contract"]);
+
+export function guessDocType(name, use, path) {
+  const n = `${path || ""}/${name || ""}`.toLowerCase();
+  const base = String(name || "").toLowerCase();
+  if (use === "pif" || use === "takeoff" || use === "invoice" || use === "proposal") return use;
+  if (/\.(jpe?g|png|heic|gif|webp)$/.test(base)) return "photo";
+  if (/submittal|cut ?sheet|data ?sheet|spec ?sheet|specification/.test(n)) return "submittal";
+  if (/\.dwg$|drawing|plans?\b|as[\s_-]?built|floor ?plan|riser|layout|(^|[^a-z])[et][-_ ]?\d{1,3}(\.\d+)?([^0-9]|$)/.test(base)) return "drawing";
+  if (/contract|subcontract|agreement|purchase order|(^|[^a-z])po[-_ #]?\d/.test(base)) return "contract";
+  if (/close[\s_-]?out|o\s?&\s?m|warranty/.test(n)) return "closeout";
+  return "document";
+}
+
+/** A fresh entry with sensible defaults.
+ *  fromFolderScan: unrecognised files in a scanned folder default to
+ *  "Don't import" (a job folder can hold hundreds of photos); files picked
+ *  one by one default to "Document only" — you picked them for a reason. */
+export function makeEntry(file, { fromFolderScan = false } = {}) {
+  const path = file.webkitRelativePath || "";
+  const kind = classifyFile(file.name, path);
+  const use = kind === "other" ? (fromFolderScan ? "skip" : "doc") : kind;
+  const docType = guessDocType(file.name, use, path);
+  return {
+    id: genId(),
+    file,
+    name: file.name,
+    path,
+    subfolder: path.split("/").slice(0, -1).pop() || "",
+    size: file.size || 0,
+    use,
+    keepDoc: use !== "skip" && use !== "pif",   // PIF carries margin — off unless asked
+    docType,
+    restricted: OFFICE_ONLY_TYPES.has(docType),
+  };
+}
+/** Changing a file's use re-guesses its document type and visibility. */
+export function setEntryUse(entry, use) {
+  const docType = guessDocType(entry.name, use, entry.path);
+  return {
+    ...entry, use, docType,
+    restricted: OFFICE_ONLY_TYPES.has(docType),
+    keepDoc: use === "skip" ? false : use === "doc" ? true : use === "pif" ? false : (entry.use === "skip" ? true : entry.keepDoc),
+  };
+}
+export function setEntryDocType(entry, docType) {
+  return { ...entry, docType, restricted: OFFICE_ONLY_TYPES.has(docType) };
+}
+
+/* Parsing is the slow part (SheetJS / JSZip). Cache by file + use so
+   flipping a checkbox doesn't re-read every spreadsheet. */
+const parseCache = new WeakMap();
+async function parseAs(file, use) {
+  let byUse = parseCache.get(file);
+  if (!byUse) { byUse = {}; parseCache.set(file, byUse); }
+  if (!byUse[use]) {
+    byUse[use] = (use === "pif" ? parsePIF(file)
+      : use === "takeoff" ? parseTakeoff(file)
+      : use === "proposal" ? parseProposal(file)
+      : use === "invoice" ? Promise.resolve(parseInvoiceFile(file))
+      : Promise.resolve(null)).catch(err => { delete byUse[use]; throw err; });
+  }
+  return byUse[use];
+}
+
+/** Read every entry according to its use and merge into one review draft. */
+export async function parseEntries(entries, teamNames = DEFAULT_TEAM_NAMES) {
+  const cand = { warnings: [], takeoffScopes: [], proposals: [] };
+  let pif = null;
+  const materials = [], labor = {}, invoiceFiles = [];
+  const pifs = entries.filter(e => e.use === "pif");
+
+  for (const e of entries) {
+    if (e.use === "skip" || e.use === "doc") continue;
     try {
-      if (kind === "pif" && !pif) pif = await parsePIF(f);
-      else if (kind === "takeoff") {
-        const t = await parseTakeoff(f);
-        materials.push(...t.materials);
-        Object.entries(t.labor).forEach(([k, v]) => { labor[k] = (labor[k] || 0) + v; });
-        cand.takeoffScopes.push({ scope: t.scope, items: t.materials.length, hours: t.totalHours });
-      } else if (kind === "proposal" && !proposal) proposal = await parseProposal(f);
+      const r = await parseAs(e.file, e.use);
+      if (e.use === "pif") { if (!pif) pif = r; }
+      else if (e.use === "takeoff") {
+        materials.push(...r.materials.map(m => ({ ...m })));
+        Object.entries(r.labor).forEach(([k, v]) => { labor[k] = (labor[k] || 0) + v; });
+        cand.takeoffScopes.push({ file: e.name, scope: r.scope, items: r.materials.length, hours: r.totalHours });
+      } else if (e.use === "proposal") cand.proposals.push({ file: e.name, ...r });
+      else if (e.use === "invoice") invoiceFiles.push(r);
     } catch (err) {
-      cand.warnings.push(`Couldn't read ${f.name}: ${err.message}`);
+      cand.warnings.push(`Couldn't read ${e.name} as a ${FILE_USES.find(u => u.id === e.use)?.label || e.use}: ${err.message}`);
     }
   }
-
-  if (!pif) {
-    cand.warnings.push("No PIF found — job number, contacts, and invoicing can't be filled in.");
-    cand.jobNumber = jobNumberFromName(files[0]?.name || "", files[0]?.webkitRelativePath) || "";
-  }
+  if (pifs.length > 1) cand.warnings.push(`${pifs.length} files are set as the PIF — only ${pifs[0].name} is used.`);
 
   const p = pif || {};
+  const proposal = cand.proposals[0] || null;
   const pm = String(p.projectManager || "");
+  cand.hasPif = !!pif;
   cand.projectManager = pm;
   cand.assignedToTeam = !pm || teamNames.some(t => pm.toLowerCase().includes(t.toLowerCase()));
-  cand.jobNumber = p.jobNumber || cand.jobNumber || "";
+  cand.jobNumber = p.jobNumber || entries.map(e => jobNumberFromName(e.name, e.path)).find(Boolean) || "";
   cand.name = p.name || proposal?.projectName || "";
   cand.customer = p.customer || proposal?.customer || "";
   cand.siteAddress = p.siteAddress || proposal?.siteAddress || "";
-  cand.contacts = p.contacts || (proposal?.contactName ? [{ id: genId(), name: proposal.contactName, email: "", phone: "", primary: true }] : []);
-  cand.scopeNotes = proposal?.scopeNotes || p.pifScope || "";
+  cand.contacts = p.contacts?.length ? p.contacts
+    : (proposal?.contactName ? [{ id: genId(), name: proposal.contactName, email: "", phone: "", primary: true }] : []);
   cand.prevailingWage = !!p.prevailingWage;
   cand.poNumber = p.poNumber || "";
   cand.billingContact = p.billingContact || "";
   cand.billingEmail = p.billingEmail || "";
   cand.invoicing = p.invoicing || null;
-  cand.materials = materials;
 
+  // Scope: every proposal's full scope; several proposals are labelled
+  const scoped = cand.proposals.filter(x => x.scopeNotes);
+  cand.scopeText = scoped.length > 1
+    ? scoped.map(x => `── ${x.file.replace(/\.[^.]+$/, "")} ──\n${x.scopeNotes}`).join("\n\n")
+    : (scoped[0]?.scopeNotes || p.pifScope || "");
+  cand.scopeSource = scoped.length ? scoped.map(x => x.file).join(", ") : (p.pifScope ? "PIF" : "");
+  const ex = [];
+  cand.proposals.forEach(x => (x.exclusions || []).forEach(t => { if (!ex.includes(t)) ex.push(t); }));
+  cand.exclusions = ex;
+  if (cand.proposals.length && !scoped.length) cand.warnings.push("No \"Scope of Work\" heading found in the proposal — type or paste the scope below.");
+
+  cand.materials = materials;
   const rec = reconcileInvoices(p, invoiceFiles);
   cand.invoices = rec.records;
-  cand.invoiceFiles = invoiceFiles;
   rec.warnings.forEach(w => cand.warnings.push(w));
 
-  // Price: PIF is authoritative; proposal fills in when the PIF has none
   cand.bidAmount = p.bidAmount || proposal?.totalPrice || 0;
   cand.contractAmount = p.contractAmount || proposal?.totalPrice || 0;
   cand.proposalPricing = proposal && proposal.pricingFound
-    ? { total: proposal.totalPrice, material: proposal.materialPrice, labor: proposal.laborPrice }
-    : null;
-  if (proposal && proposal.pricingSource === "attachment-image") {
-    cand.warnings.push("Proposal pricing is an embedded image (Attachment A) — using the PIF figure instead.");
+    ? { total: proposal.totalPrice, material: proposal.materialPrice, labor: proposal.laborPrice } : null;
+  if (proposal && proposal.pricingSource === "attachment-image" && !pif) {
+    cand.warnings.push("Proposal pricing is an embedded image (Attachment A) — add the contract amount by hand or include the PIF.");
   }
 
-  // Labor: takeoff hours become the bid per phase
   cand.laborHours = {};
   Object.entries(labor).forEach(([cat, hrs]) => { cand.laborHours[cat] = { bid: Math.round(hrs * 10) / 10 }; });
   cand.takeoffHours = Math.round(Object.values(labor).reduce((a, b) => a + b, 0) * 10) / 10;
@@ -488,90 +700,179 @@ export async function buildCandidate(files, teamNames = DEFAULT_TEAM_NAMES) {
   if (cand.pifBidHours && cand.takeoffHours && Math.abs(cand.pifBidHours - cand.takeoffHours) > 0.5) {
     cand.warnings.push(`Takeoff hours (${cand.takeoffHours}) don't match the PIF's bid hours (${cand.pifBidHours}).`);
   }
-  if (!cand.jobNumber) cand.warnings.push("No job number found — set one before adding.");
   return cand;
 }
 
-/** Which file kinds go to the project's Documents section by default.
- *  The PIF is deliberately OFF: it carries bid pricing, hours, and margin,
- *  and the Documents section is visible to the field team. It can still be
- *  ticked on, and it is marked restricted so only foremen and admins see it. */
-export const DOC_KINDS = [
-  { kind: "proposal", label: "Proposal", type: "Proposal", default: true, restricted: false },
-  { kind: "takeoff",  label: "Takeoffs", type: "Takeoff",  default: true, restricted: true  },
-  { kind: "invoice",  label: "Invoices", type: "Invoice",  default: true, restricted: true  },
-  { kind: "pif",      label: "PIF",      type: "PIF",      default: false, restricted: true },
+/** Fields the job-info section fills in. */
+export const INFO_FIELDS = [
+  ["jobNumber", "Job #"], ["name", "Project name"], ["customer", "Customer"], ["siteAddress", "Site address"],
+  ["projectManager", "PM"], ["poNumber", "PO #"], ["contractAmount", "Contract $"], ["bidAmount", "Bid $"],
 ];
+const infoValue = (c, k) => {
+  if (k === "bidAmount" || k === "contractAmount") return c[k] ? String(c[k]) : "";
+  return c[k] || "";
+};
+
+/** Default choices for each section, given the target project (or null for new). */
+export function defaultApplyOptions(cand, existing) {
+  if (!existing) return { info: "all", scope: "replace", exclusions: true, hours: true, materials: true, invoices: true, sov: true };
+  const hasBid = Object.values(existing.laborHours || {}).some(v => parseFloat(v?.bid) > 0);
+  return {
+    info: "blanks",
+    scope: String(existing.scopeNotes || "").trim() ? "keep" : "replace",
+    exclusions: true,
+    hours: !hasBid,
+    materials: !(existing.materials || []).length,
+    invoices: true,
+    sov: true,
+  };
+}
+
+/** Same line from the same takeoff = duplicate (a re-import). The same part
+ *  on a different takeoff is a separate quantity and is kept. */
+const matKey = m => [m.item, m.partNumber, m.qtyNeeded, m.notes].map(v => String(v ?? "").trim().toLowerCase()).join("|");
 
 /**
- * Upload the selected files into the project's Documents section.
- * Returns document records in the same shape the Docs tab writes, so imported
- * documents behave exactly like ones added by hand.
+ * What gets written. Returns the full new project (existing = null) or the
+ * update object for an existing project. Pure — the screen previews it and
+ * App writes it. `scopeText` is the (possibly edited) scope from the screen.
  */
-export async function uploadCandidateDocuments(cand, projectId, selectedKinds, onProgress) {
+export function buildProjectChanges(cand, opts, existing, { scopeText, uploadedDocs = [], entries = [] } = {}) {
+  const o = { ...defaultApplyOptions(cand, existing), ...(opts || {}) };
+  const scope = scopeWithExclusions(scopeText ?? cand.scopeText, o.exclusions ? cand.exclusions : []);
+  const stamp = { files: entries.filter(e => e.use !== "skip").map(e => e.name), importedAt: new Date().toISOString() };
+
+  if (!existing) {
+    return {
+      name: cand.name || (cand.jobNumber ? `Job ${cand.jobNumber}` : "Imported job"),
+      jobNumber: cand.jobNumber || "",
+      customer: cand.customer || "",
+      contactName: cand.contacts?.[0]?.name || "",
+      contactPhone: cand.contacts?.[0]?.phone || "",
+      contactEmail: cand.contacts?.[0]?.email || "",
+      contacts: cand.contacts || [],
+      siteAddress: cand.siteAddress || "",
+      scopeNotes: o.scope === "keep" ? "" : scope,
+      bidAmount: cand.bidAmount ? String(cand.bidAmount) : "",
+      contractAmount: cand.contractAmount ? String(cand.contractAmount) : "",
+      prevailingWage: !!cand.prevailingWage,
+      poNumber: cand.poNumber || "",
+      projectManager: cand.projectManager || "",
+      laborHours: o.hours && Object.keys(cand.laborHours || {}).length ? cand.laborHours : null,
+      materials: o.materials ? (cand.materials || []) : [],
+      invoicing: o.sov ? (cand.invoicing || null) : null,
+      invoices: o.invoices ? (cand.invoices || []) : [],
+      documents: uploadedDocs,
+      importedFrom: stamp,
+    };
+  }
+
+  const up = {};
+  // Job info
+  if (o.info !== "none") {
+    for (const [k] of INFO_FIELDS) {
+      const v = infoValue(cand, k);
+      if (!v) continue;
+      if (o.info === "all" || !String(existing[k] || "").trim()) if (String(existing[k] || "") !== v) up[k] = v;
+    }
+    const have = existing.contacts || [];
+    const key = c => (c.email || c.name || "").toLowerCase();
+    const add = (cand.contacts || []).filter(c => key(c) && !have.some(h => key(h) === key(c)));
+    if (add.length) up.contacts = [...have, ...add.map(c => ({ ...c, primary: have.length ? false : c.primary }))];
+    if (!have.length && cand.contacts?.[0]) {
+      if (!existing.contactName) up.contactName = cand.contacts[0].name || "";
+      if (!existing.contactEmail) up.contactEmail = cand.contacts[0].email || "";
+      if (!existing.contactPhone) up.contactPhone = cand.contacts[0].phone || "";
+    }
+  }
+  // Scope
+  if (scope && o.scope === "replace") up.scopeNotes = scope;
+  else if (scope && o.scope === "append") {
+    const cur = String(existing.scopeNotes || "").trim();
+    up.scopeNotes = cur ? `${cur}\n\n${scope}` : scope;
+  }
+  // Bid hours — set phase bids from the takeoffs, keep every other phase
+  if (o.hours && Object.keys(cand.laborHours || {}).length) {
+    const lh = { ...(existing.laborHours || {}) };
+    Object.entries(cand.laborHours).forEach(([cat, v]) => { lh[cat] = { ...(lh[cat] || {}), bid: v.bid }; });
+    up.laborHours = lh;
+  }
+  // Materials — append, skipping lines already on the project
+  if (o.materials && cand.materials?.length) {
+    const have = {};
+    (existing.materials || []).forEach(m => { const k = matKey(m); have[k] = (have[k] || 0) + 1; });
+    const add = cand.materials.filter(m => { const k = matKey(m); if (have[k] > 0) { have[k]--; return false; } return true; });
+    if (add.length) up.materials = [...(existing.materials || []), ...add];
+  }
+  // Invoices — append, skipping numbers already recorded
+  if (o.invoices && cand.invoices?.length) {
+    const have = new Set((existing.invoices || []).map(i => String(i.invoiceNumber || "").toLowerCase()).filter(Boolean));
+    const add = cand.invoices.filter(i => !have.has(String(i.invoiceNumber || "").toLowerCase()));
+    if (add.length) up.invoices = [...(existing.invoices || []), ...add];
+  }
+  if (o.sov && cand.invoicing) up.invoicing = cand.invoicing;
+  if (uploadedDocs.length) up.documents = [...(existing.documents || []), ...uploadedDocs];
+  if (Object.keys(up).length) {
+    const prev = existing.importedFrom;
+    up.importedFrom = { ...stamp, files: [...new Set([...(prev?.files || []), ...stamp.files])] };
+  }
+  return up;
+}
+
+/** Counts for the review: what each section will actually change. */
+export function summarizeChanges(cand, opts, existing, scopeText) {
+  const ch = buildProjectChanges(cand, opts, existing, { scopeText });
+  const before = existing || {};
+  return {
+    info: existing ? INFO_FIELDS.filter(([k]) => k in ch).map(([k, l]) => ({ key: k, label: l, from: before[k] || "", to: ch[k] })) : null,
+    newContacts: existing ? Math.max(0, (ch.contacts?.length || 0) - (before.contacts?.length || 0)) : (cand.contacts?.length || 0),
+    materialsAdded: existing ? (ch.materials ? ch.materials.length - (before.materials || []).length : 0) : (ch.materials?.length || 0),
+    materialsDup: existing && opts?.materials ? (cand.materials || []).length - (ch.materials ? ch.materials.length - (before.materials || []).length : 0) : 0,
+    invoicesAdded: existing ? (ch.invoices ? ch.invoices.length - (before.invoices || []).length : 0) : (ch.invoices?.length || 0),
+    invoicesDup: existing && opts?.invoices ? (cand.invoices || []).length - (ch.invoices ? ch.invoices.length - (before.invoices || []).length : 0) : 0,
+  };
+}
+
+/** Upload the entries marked "save a copy" into the project's Documents.
+ *  Same record shape the Docs tab writes, so they behave identically. */
+export async function uploadEntryDocuments(entries, projectId, onProgress) {
   const { storage, storageRef, uploadBytes, getDownloadURL } = await import("./firebase.js");
-  const wanted = (cand.files || []).filter(f => f.file && selectedKinds.includes(f.kind));
+  const wanted = entries.filter(e => e.keepDoc && e.use !== "skip" && e.file);
   const docs = [];
   for (let i = 0; i < wanted.length; i++) {
-    const f = wanted[i];
-    if (onProgress) onProgress(i, wanted.length, f.name);
-    const meta = DOC_KINDS.find(d => d.kind === f.kind);
+    const e = wanted[i];
+    if (onProgress) onProgress(i, wanted.length, e.name);
     try {
-      const safe = f.name.replace(/[^\w.\- ]+/g, "_");
+      const safe = e.name.replace(/[^\w.\- ]+/g, "_");
       const ref = storageRef(storage, `projects/${projectId}/docs/${Date.now()}_${safe}`);
-      await uploadBytes(ref, f.file);
+      await uploadBytes(ref, e.file);
       docs.push({
-        name: f.name.replace(/\.[^.]+$/, ""),
-        type: meta?.type || "Document",
-        restricted: !!meta?.restricted,
+        name: e.name.replace(/\.[^.]+$/, ""),
+        type: e.docType || "document",
+        restricted: !!e.restricted,
         addedAt: new Date().toISOString(),
         fileUrl: await getDownloadURL(ref),
-        fileName: f.name,
-        fileSize: f.size || 0,
+        fileName: e.name,
+        fileSize: e.size || 0,
         source: "import",
       });
-    } catch (e) {
-      const err = new Error(`Couldn't upload ${f.name}: ${e?.code || e?.message || "unknown error"}`);
-      err.uploaded = docs;
-      throw err;
+    } catch (err) {
+      const x = new Error(`Couldn't upload ${e.name}: ${err?.code || err?.message || "unknown error"}`);
+      x.uploaded = docs;
+      throw x;
     }
   }
   if (onProgress) onProgress(wanted.length, wanted.length, "");
   return docs;
 }
 
-/** Candidate → the app's project record. */
-export function candidateToProject(c, uploadedDocs) {
-  return {
-    id: c.projectId || undefined,
-    name: c.name || `Job ${c.jobNumber}`,
-    jobNumber: c.jobNumber || "",
-    customer: c.customer || "",
-    contactName: c.contacts?.[0]?.name || "",
-    contactPhone: c.contacts?.[0]?.phone || "",
-    contactEmail: c.contacts?.[0]?.email || "",
-    contacts: c.contacts || [],
-    siteAddress: c.siteAddress || "",
-    scopeNotes: c.scopeNotes || "",
-    bidAmount: c.bidAmount ? String(c.bidAmount) : "",
-    contractAmount: c.contractAmount ? String(c.contractAmount) : "",
-    prevailingWage: !!c.prevailingWage,
-    poNumber: c.poNumber || "",
-    projectManager: c.projectManager || "",
-    laborHours: Object.keys(c.laborHours || {}).length ? c.laborHours : null,
-    materials: c.materials || [],
-    invoicing: c.invoicing || null,
-    invoices: (c.invoices || []).map(({ file, ...rest }) => rest),
-    documents: uploadedDocs && uploadedDocs.length ? uploadedDocs : (c.invoiceFiles || []).map(f => ({
-      name: f.number ? `Invoice ${f.number}` : f.fileName,
-      type: "Invoice",
-      restricted: true,
-      fileName: f.fileName,
-      sourcePath: f.path,
-      addedAt: new Date().toISOString(),
-    })),
-    importedFrom: { files: (c.files || []).map(f => f.name), importedAt: new Date().toISOString() },
-  };
+/** Group a folder scan into one entry list per job (see groupFilesByJob). */
+export function entriesFromFolderScan(files) {
+  const groups = groupFilesByJob(files);
+  return [...groups.entries()].map(([folder, list]) => ({
+    folder: folder && folder !== "__unmatched__" ? folder.split("/").pop() : "",
+    entries: list.map(f => makeEntry(f, { fromFolderScan: true })),
+  }));
 }
 
 export { LABOR_PHASES };

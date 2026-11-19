@@ -969,7 +969,8 @@ function Tracker({ user, userRecord }) {
               onSubmit={submitDailyLogs}
               onDeleteLog={logs => saveMyPrivate({ dailyLogs: logs })} />
           ) : view === "myspace" && mySpaceTab === "import" && perms.seeEstimating ? (
-            <ProjectImport existingProjects={data.projects} isMobile={isMobile} onAddProject={addProject} />
+            <ProjectImport existingProjects={data.projects} isMobile={isMobile} onAddProject={addProject} onUpdateProject={updateProject}
+              onOpenProject={pid => { const p = latestData.current.projects.find(x => x.id === pid); if (p) { setSelectedProject(p); setDetailTab("overview"); } }} />
           ) : view === "myspace" && mySpaceTab === "pricebook" && perms.seeEstimating ? (
             <PriceBook catalog={data.catalog || {}} assemblies={data.assemblies || {}} defaults={data.estimatingDefaults || {}} isMobile={isMobile}
               onSaveItem={item => { applyLocal({ ...latestData.current, catalog: { ...(latestData.current.catalog || {}), [item.id]: item } }); persist(putCatalogItem(item.id, item)); }}

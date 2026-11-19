@@ -685,7 +685,7 @@ function ScopeTab({ project, onUpdate }) {
   const [ndN, setNdN] = useState(""); const [ndQ, setNdQ] = useState(""); const [ndL, setNdL] = useState("");
   const [ncT, setNcT] = useState(""); const [ncQ, setNcQ] = useState(""); const [ncF, setNcF] = useState(""); const [ncTo, setNcTo] = useState("");
   return (<div>
-    <div style={{ marginBottom: 24 }}><label style={lS}>Scope Notes</label><textarea style={{ ...iS, minHeight: 80, resize: "vertical" }} value={project.scopeNotes || ""} onChange={e => onUpdate({ scopeNotes: e.target.value })} placeholder="Describe scope..." /></div>
+    <div style={{ marginBottom: 24 }}><label style={lS}>Scope Notes</label><textarea rows={Math.min(28, Math.max(4, String(project.scopeNotes || "").split("\n").length + 1))} style={{ ...iS, minHeight: 80, resize: "vertical", lineHeight: 1.5, whiteSpace: "pre-wrap" }} value={project.scopeNotes || ""} onChange={e => onUpdate({ scopeNotes: e.target.value })} placeholder="Describe scope..." /></div>
     <div style={{ marginBottom: 24 }}><div style={{ ...lS, marginBottom: 10 }}>Device Schedule</div>
       {(project.devices || []).map((d, i) => (<div key={i} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, fontSize: 13 }}><span style={{ color: "#94a3b8", minWidth: 30, textAlign: "right" }}>{d.qty}x</span><span style={{ color: "#e2e8f0", flex: 1 }}>{d.name}</span><span style={{ color: "#64748b", fontSize: 11 }}>{d.location}</span><button onClick={() => onUpdate({ devices: project.devices.filter((_, idx) => idx !== i) })} style={{ background: "none", border: "none", color: "#64748b", cursor: "pointer" }}><X size={13} /></button></div>))}
       <div style={{ display: "flex", gap: 6, marginTop: 8 }}><input style={{ ...iS, flex: 0.5 }} placeholder="Qty" value={ndQ} onChange={e => setNdQ(e.target.value)} /><input style={{ ...iS, flex: 2 }} placeholder="Device" value={ndN} onChange={e => setNdN(e.target.value)} /><input style={{ ...iS, flex: 1.5 }} placeholder="Location" value={ndL} onChange={e => setNdL(e.target.value)} /><button onClick={() => { if (!ndN.trim()) return; onUpdate({ devices: [...(project.devices || []), { name: ndN.trim(), qty: ndQ || "1", location: ndL.trim() }] }); setNdN(""); setNdQ(""); setNdL(""); }} style={{ padding: "8px 12px", borderRadius: 8, border: "none", background: "#69BE28", color: "#fff", cursor: "pointer" }}><Plus size={14} /></button></div>
@@ -1081,6 +1081,7 @@ function DocsTab({ project, onUpdate }) {
         <select style={{ ...iS, flex: 0.8 }} value={type} onChange={e => setType(e.target.value)}>
           <option value="document">Document</option><option value="photo">Photo</option><option value="drawing">Drawing</option>
           <option value="proposal">Proposal</option><option value="contract">Contract</option><option value="submittal">Submittal</option><option value="closeout">Closeout Pkg</option>
+          <option value="takeoff">Takeoff</option><option value="invoice">Invoice</option><option value="pif">PIF</option>
         </select>
       </div>
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
