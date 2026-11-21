@@ -621,6 +621,21 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
             </div>
           )}
           {detail.siteAddress && <div style={{ padding: "0 16px 12px", fontSize: 12.5, color: T.inkSoft }}>📍 {detail.siteAddress}</div>}
+          {(() => {
+            const primary = String(detail.contactName || "").trim().toLowerCase();
+            const others = (detail.contacts || []).filter(c => c && c.name && c.name.trim().toLowerCase() !== primary && (c.phone || c.email));
+            if (!others.length) return null;
+            return (
+              <div style={{ padding: "0 16px 12px", display: "flex", flexDirection: "column", gap: 6 }}>
+                {others.map((c, i) => (
+                  <div key={c.id || i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: T.ink }}>
+                    <span style={{ flex: 1 }}><strong>{c.name}</strong>{c.role ? <span style={{ color: T.inkFaint }}> · {c.role}</span> : null}</span>
+                    {c.phone && <a href={`tel:${String(c.phone).replace(/[^\d+]/g, "")}`} style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${T.line}`, color: T.green, fontWeight: 800, fontSize: 12.5, textDecoration: "none" }}>Call</a>}
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
         </div>
 
         {/* Warranty status — warranty jobs only */}

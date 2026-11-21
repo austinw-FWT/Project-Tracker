@@ -374,6 +374,24 @@ function OverviewTab({ project, form, setForm, editMode, setEditMode, onUpdate, 
           <div style={{ gridColumn: "1/-1" }}><label style={lS}>Parking / Access Warning</label><input style={iS} value={form.siteInfo?.parking || ""} onChange={e => setForm({ ...form, siteInfo: { ...(form.siteInfo || {}), parking: e.target.value } })} placeholder="Behind Bldg D — towing enforced" /></div>
         </div>
       </div>
+      <div><label style={lS}>Project Manager</label><input style={iS} value={form.projectManager || ""} onChange={e => setForm({ ...form, projectManager: e.target.value })} placeholder="Austin" /></div>
+      <div><label style={lS}>Estimator</label><input style={iS} value={form.estimator || ""} onChange={e => setForm({ ...form, estimator: e.target.value })} placeholder="Tim" /></div>
+      <div><label style={lS}>Target Completion</label><input type="date" style={{ ...iS, colorScheme: "dark" }} value={form.targetCompletion || ""} onChange={e => setForm({ ...form, targetCompletion: e.target.value })} /></div>
+      <div><label style={lS}>Permit # / AHJ</label><input style={iS} value={form.permitNumber || ""} onChange={e => setForm({ ...form, permitNumber: e.target.value })} placeholder="ELEC-26-0412 · City of University Place" /></div>
+      <OtherContactsEditor form={form} setForm={setForm} isMobile={isMobile} />
+      {canSeeMoney && (
+        <div style={{ gridColumn: "1/-1", marginTop: 6 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Contract & billing</div>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 }}>
+            <div><label style={lS}>PO / Contract #</label><input style={iS} value={form.poNumber || ""} onChange={e => setForm({ ...form, poNumber: e.target.value })} placeholder="PO 4471 or executed contract #" /></div>
+            <div><label style={lS}>Payment Terms</label><input style={iS} value={form.paymentTerms || ""} onChange={e => setForm({ ...form, paymentTerms: e.target.value })} placeholder="Net 30, progress billing" /></div>
+            <div><label style={lS}>Billing Contact</label><input style={iS} value={form.billingContact || ""} onChange={e => setForm({ ...form, billingContact: e.target.value })} /></div>
+            <div><label style={lS}>Invoices To (email)</label><input style={iS} value={form.billingEmail || ""} onChange={e => setForm({ ...form, billingEmail: e.target.value })} placeholder="invoices@customer.com" /></div>
+            <div style={{ gridColumn: "1/-1" }}><label style={lS}>Billing Address</label><input style={iS} value={form.billingAddress || ""} onChange={e => setForm({ ...form, billingAddress: e.target.value })} /></div>
+            <div><label style={lS}>Sales Tax</label><label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#e2e8f0", cursor: "pointer", padding: "9px 0" }}><input type="checkbox" checked={!!form.taxable} onChange={e => setForm({ ...form, taxable: e.target.checked })} /> Taxable job <span style={{ color: "#64748b", fontSize: 11.5 }}>(WA sales tax on each invoice)</span></label></div>
+          </div>
+        </div>
+      )}
       <div><label style={lS}>Bid Amount</label><input style={iS} value={form.bidAmount} onChange={e => setForm({ ...form, bidAmount: e.target.value })} placeholder="$" /></div>
       <div><label style={lS}>Contract Amount</label><input style={iS} value={form.contractAmount} onChange={e => setForm({ ...form, contractAmount: e.target.value })} placeholder="$" /></div>
       <div style={{ gridColumn: "1/-1", display: "flex", gap: 8, justifyContent: "flex-end" }}><button onClick={() => setEditMode(false)} style={{ padding: "8px 20px", borderRadius: 8, border: "1px solid #1A3050", background: "transparent", color: "#94a3b8", fontSize: 13, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button><button onClick={() => { onUpdate(form); setEditMode(false); }} style={{ padding: "8px 20px", borderRadius: 8, border: "none", background: "#69BE28", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Save</button></div>
@@ -385,7 +403,37 @@ function OverviewTab({ project, form, setForm, editMode, setEditMode, onUpdate, 
       <IR icon={Phone} label="Phone" value={project.contactPhone} /><IR icon={Mail} label="Email" value={project.contactEmail} />
       <IR icon={MapPin} label="Site Address" value={project.siteAddress} /><IR icon={Layers} label="Type" value={(project.type === "retrofit" ? "Retrofit" : "New Construction") + (project.prevailingWage ? " · Prevailing wage" : "")} />
       <IR icon={CalendarDays} label="Anticipated Start" value={project.anticipatedStart ? new Date(project.anticipatedStart + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" }) : ""} />
+      {project.targetCompletion && <IR icon={CalendarDays} label="Target Completion" value={new Date(project.targetCompletion + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" })} />}
+      {(project.projectManager || project.estimator) && <IR icon={User} label="PM / Estimator" value={[project.projectManager, project.estimator].filter(Boolean).join(" · ")} />}
+      {project.permitNumber && <IR icon={FileText} label="Permit # / AHJ" value={project.permitNumber} />}
       {canSeeMoney && <><IR icon={DollarSign} label="Bid Amount" value={project.bidAmount} /><IR icon={DollarSign} label="Contract Amount" value={project.contractAmount} /></>}
+      {otherContacts(project).length > 0 && (
+        <div style={{ gridColumn: "1/-1" }}>
+          <div style={lS}>Other Contacts</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {otherContacts(project).map((c, i) => (
+              <div key={c.id || i} style={{ display: "flex", gap: 10, flexWrap: "wrap", fontSize: 13, color: "#e2e8f0" }}>
+                <strong>{c.name}</strong>{c.role && <span style={{ color: "#94a3b8" }}>{c.role}</span>}
+                {c.phone && <a href={`tel:${String(c.phone).replace(/[^\d+]/g, "")}`} style={{ color: "#82CC4A" }}>{c.phone}</a>}
+                {c.email && <a href={`mailto:${c.email}`} style={{ color: "#82CC4A" }}>{c.email}</a>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {canSeeMoney && (project.poNumber || project.billingContact || project.billingEmail || project.billingAddress || project.paymentTerms || project.taxable) && (
+        <div style={{ gridColumn: "1/-1", background: "#0A192F", border: "1px solid #1A3050", borderRadius: 10, padding: "12px 14px" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Contract & billing</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 20px", fontSize: 12.5, color: "#94a3b8" }}>
+            <span>PO / Contract # <strong style={{ color: project.poNumber ? "#e2e8f0" : "#f59e0b" }}>{project.poNumber || "not entered"}</strong></span>
+            {project.paymentTerms && <span>Terms <strong style={{ color: "#e2e8f0" }}>{project.paymentTerms}</strong></span>}
+            <span>Sales tax <strong style={{ color: "#e2e8f0" }}>{project.taxable ? "Taxable" : "Not taxable"}</strong></span>
+            {project.billingContact && <span>Billing <strong style={{ color: "#e2e8f0" }}>{project.billingContact}</strong></span>}
+            {project.billingEmail && <span>Invoices to <a href={`mailto:${project.billingEmail}`} style={{ color: "#82CC4A" }}>{project.billingEmail}</a></span>}
+            {project.billingAddress && <span>{project.billingAddress}</span>}
+          </div>
+        </div>
+      )}
       {project.siteInfo && (project.siteInfo.gateCode || project.siteInfo.lockbox || project.siteInfo.siteContact || project.siteInfo.idf || project.siteInfo.parking) && (
         <div style={{ gridColumn: "1/-1", background: "#69BE2808", border: "1px solid #69BE2833", borderRadius: 10, padding: "12px 14px" }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: "#69BE28", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>⚡ Site Info (Field Mode)</div>
@@ -1284,6 +1332,37 @@ function RecapModal({ project, onClose }) {
         </div>
         <div style={{ fontSize: 11, color: "#64748b", marginTop: 10 }}>Tip: Preview → print → "Save as PDF" if the customer prefers a PDF attachment. Photos load from secure FWT links.</div>
       </div>
+    </div>
+  );
+}
+
+
+/* Contacts besides the primary one (the PIF often lists several). */
+export function otherContacts(p) {
+  const primary = String(p.contactName || "").trim().toLowerCase();
+  return (p.contacts || []).filter(c => c && c.name && c.name.trim().toLowerCase() !== primary);
+}
+
+function OtherContactsEditor({ form, setForm, isMobile }) {
+  const primary = String(form.contactName || "").trim().toLowerCase();
+  const all = form.contacts || [];
+  const isPrimary = c => c && c.name && c.name.trim().toLowerCase() === primary;
+  const others = all.filter(c => !isPrimary(c));
+  const setOthers = list => setForm({ ...form, contacts: [...all.filter(isPrimary), ...list] });
+  const upd = (i, k, v) => setOthers(others.map((c, j) => j === i ? { ...c, [k]: v } : c));
+  return (
+    <div style={{ gridColumn: "1/-1" }}>
+      <label style={lS}>Other Contacts</label>
+      {others.map((c, i) => (
+        <div key={c.id || i} style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1.2fr 1fr 1fr 1.4fr auto", gap: 6, marginBottom: 6 }}>
+          <input style={iS} value={c.name || ""} onChange={e => upd(i, "name", e.target.value)} placeholder="Name" />
+          <input style={iS} value={c.role || ""} onChange={e => upd(i, "role", e.target.value)} placeholder="Role (site mgr, IT, GC…)" />
+          <input style={iS} value={c.phone || ""} onChange={e => upd(i, "phone", e.target.value)} placeholder="Phone" />
+          <input style={iS} value={c.email || ""} onChange={e => upd(i, "email", e.target.value)} placeholder="Email" />
+          <button onClick={() => setOthers(others.filter((_, j) => j !== i))} title="Remove contact" style={{ background: "none", border: "1px solid #1A3050", borderRadius: 8, color: "#94a3b8", cursor: "pointer", padding: "0 10px" }}><X size={14} /></button>
+        </div>
+      ))}
+      <button onClick={() => setOthers([...others, { id: genId(), name: "", role: "", phone: "", email: "" }])} style={{ fontSize: 12.5, padding: "6px 12px", borderRadius: 8, border: "1px dashed #69BE28", background: "transparent", color: "#82CC4A", cursor: "pointer", fontFamily: "inherit" }}>+ Add contact</button>
     </div>
   );
 }

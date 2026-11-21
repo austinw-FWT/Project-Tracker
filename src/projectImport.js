@@ -242,7 +242,8 @@ export async function parsePIF(file) {
     customer: at("C42") || at("C19"),
     billingContact: at("C43"),
     billingEmail: at("C51"),
-    poNumber: /^(contract|n\/?a|none|tbd|pending|-+)$/i.test(String(at("C52")).trim()) ? "" : at("C52"),
+    // "CONTRACT TBP", "TBD", "N/A" and similar are placeholders, not numbers
+    poNumber: /^(contract|n\/?a|none|tbd|tbp|pending|-+)$|\b(tbd|tbp|pending|to be (provided|determined))\b/i.test(String(at("C52")).trim()) ? "" : at("C52"),
     bidAmount: numAt("C68") || contractTotal,
     contractAmount: numAt("C69") || contractTotal,
     pifBidHours: numAt("C71"),
@@ -665,6 +666,7 @@ export async function parseEntries(entries, teamNames = DEFAULT_TEAM_NAMES) {
     : (proposal?.contactName ? [{ id: genId(), name: proposal.contactName, email: "", phone: "", primary: true }] : []);
   cand.prevailingWage = !!p.prevailingWage;
   cand.poNumber = p.poNumber || "";
+  cand.taxable = p.taxable;
   cand.billingContact = p.billingContact || "";
   cand.billingEmail = p.billingEmail || "";
   cand.invoicing = p.invoicing || null;
@@ -707,6 +709,7 @@ export async function parseEntries(entries, teamNames = DEFAULT_TEAM_NAMES) {
 export const INFO_FIELDS = [
   ["jobNumber", "Job #"], ["name", "Project name"], ["customer", "Customer"], ["siteAddress", "Site address"],
   ["projectManager", "PM"], ["poNumber", "PO #"], ["contractAmount", "Contract $"], ["bidAmount", "Bid $"],
+  ["billingContact", "Billing contact"], ["billingEmail", "Invoices to"],
 ];
 const infoValue = (c, k) => {
   if (k === "bidAmount" || k === "contractAmount") return c[k] ? String(c[k]) : "";
@@ -756,6 +759,9 @@ export function buildProjectChanges(cand, opts, existing, { scopeText, uploadedD
       bidAmount: cand.bidAmount ? String(cand.bidAmount) : "",
       contractAmount: cand.contractAmount ? String(cand.contractAmount) : "",
       prevailingWage: !!cand.prevailingWage,
+      ...(cand.taxable !== undefined ? { taxable: !!cand.taxable } : {}),
+      billingContact: cand.billingContact || "",
+      billingEmail: cand.billingEmail || "",
       poNumber: cand.poNumber || "",
       projectManager: cand.projectManager || "",
       laborHours: o.hours && Object.keys(cand.laborHours || {}).length ? cand.laborHours : null,
@@ -775,6 +781,7 @@ export function buildProjectChanges(cand, opts, existing, { scopeText, uploadedD
       if (!v) continue;
       if (o.info === "all" || !String(existing[k] || "").trim()) if (String(existing[k] || "") !== v) up[k] = v;
     }
+    if (cand.taxable !== undefined && existing.taxable === undefined) up.taxable = !!cand.taxable;
     const have = existing.contacts || [];
     const key = c => (c.email || c.name || "").toLowerCase();
     const add = (cand.contacts || []).filter(c => key(c) && !have.some(h => key(h) === key(c)));

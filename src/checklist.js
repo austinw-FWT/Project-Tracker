@@ -53,8 +53,8 @@ export const STANDARD_ITEMS = [
   { id: "k-hours", phase: "kickoff", owner: "pm", auto: "hours", text: "Bid hours entered by phase" },
   { id: "k-docs", phase: "kickoff", owner: "pm", auto: "docs",
     text: "Drawings / markups and proposal in Docs", detail: "Anything the crew needs on site, set to Field visibility." },
-  { id: "k-po", phase: "kickoff", owner: "office", text: "PO or executed contract number received",
-    detail: "Needed before the first progress invoice." },
+  { id: "k-po", phase: "kickoff", owner: "office", auto: "po", text: "PO or executed contract on the job",
+    detail: "Enter it on Overview → Edit → PO / Contract #, or upload the signed contract to Docs with type Contract. Needed before the first progress invoice." },
   { id: "k-contact", phase: "kickoff", owner: "pm", auto: "contact", text: "Customer and on-site contact on the job" },
   { id: "k-access", phase: "kickoff", owner: "pm", auto: "siteinfo",
     text: "Site access info for the crew", detail: "Gate codes, keys/badges, lockbox, parking, after-hours contact — in Site Info." },
@@ -101,8 +101,8 @@ export const STANDARD_ITEMS = [
     detail: "Cloud licenses, monitoring, hosting. Mark N/A if the job has none." },
 
   // Permits & inspection
-  { id: "i-permit", phase: "inspect", owner: "pm", text: "Permit requirement confirmed (AHJ, L&I) and permit pulled",
-    detail: "Record the permit number in the item note. Mark N/A if none is required." },
+  { id: "i-permit", phase: "inspect", owner: "pm", auto: "permit", text: "Permit requirement confirmed (AHJ, L&I) and permit pulled",
+    detail: "Enter it on Overview → Edit → Permit # / AHJ and this checks itself. Mark N/A if no permit is required." },
   { id: "i-rough", phase: "inspect", owner: "field", hold: true,
     text: "Rough-in inspection scheduled before anything is covered",
     detail: "Record inspector, date and result in the note." },
@@ -179,6 +179,8 @@ export function autoChecks(project, { schedule } = {}) {
     siteinfo: !!(si.gateCode || si.lockbox || si.siteContact || si.parking || si.idf || si.notes),
     scheduled,
     warranty: !!p.movedToWarranty,
+    po: !!String(p.poNumber || "").trim() || (p.documents || []).some(d => d && String(d.type || "").toLowerCase() === "contract"),
+    permit: !!String(p.permitNumber || "").trim(),
   };
 }
 
