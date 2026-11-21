@@ -10,7 +10,7 @@
  * This module writes only the path that changed:
  *   - adding a daily log writes /tracker/projects/{pid}/dailyLogs/{logId}
  *   - editing a project field PATCHes /tracker/projects/{pid}
- *   - personal data writes /tracker/memberPrivate/{uid}
+ *   - personal data writes /private/{uid}; job money writes /money/{pid}
  *
  * Projects and their dailyLogs are stored as KEYED OBJECTS in the database
  * (not arrays). Arrays in RTDB get rewritten wholesale and re-index on
@@ -36,17 +36,42 @@ async function token() {
   return await auth.currentUser.getIdToken();
 }
 
+/* ── write tracking ────────────────────────────────────────────────
+   The live mirror (liveSync.js) needs two things from every write:
+   - when it's CONFIRMED, apply it to the mirror (no flicker back to old data)
+   - while ANY write is in flight, hold off redrawing from the mirror, so a
+     half-saved state never replaces what the user is looking at. */
+let pendingWrites = 0;
+const ackListeners = new Set();
+const idleListeners = new Set();
+export const onWriteAck = fn => { ackListeners.add(fn); return () => ackListeners.delete(fn); };
+export const onWritesIdle = fn => { idleListeners.add(fn); return () => idleListeners.delete(fn); };
+export const writesPending = () => pendingWrites;
+
 async function req(path, method, body) {
-  const t = await token();
-  const url = `${FB_URL}${path}.json${t ? `?auth=${t}` : ""}`;
-  const r = await fetch(url, {
-    method,
-    headers: method !== "GET" && method !== "DELETE" ? { "Content-Type": "application/json" } : undefined,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-  if (!r.ok) throw new Error(`${method} ${path} failed (${r.status})`);
-  if (method === "GET") return await r.json();
-  return true;
+  const write = method !== "GET";
+  if (write) pendingWrites++;
+  let ok = false;
+  try {
+    const t = await token();
+    const url = `${FB_URL}${path}.json${t ? `?auth=${t}` : ""}`;
+    const r = await fetch(url, {
+      method,
+      headers: write && method !== "DELETE" ? { "Content-Type": "application/json" } : undefined,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    if (!r.ok) throw Object.assign(new Error(`${method} ${path} failed (${r.status})`), { status: r.status });
+    if (!write) return await r.json();
+    ok = true;
+    return true;
+  } finally {
+    if (write) {
+      if (ok) ackListeners.forEach(fn => { try { fn({ path, method, value: body === undefined ? null : body }); } catch { /* listener bug must not fail the write */ } });
+      pendingWrites--;
+      if (pendingWrites === 0) idleListeners.forEach(fn => { try { fn({ failed: !ok }); } catch { /* ignore */ } });
+      else if (!ok) idleListeners.forEach(fn => { try { fn({ failed: true, partial: true }); } catch { /* ignore */ } });
+    }
+  }
 }
 
 /* ── generic path ops ───────────────────────────────────────────── */
@@ -75,9 +100,12 @@ export function scheduleEntries(raw) {
 export const putScheduleDay = (dateIso, value) => dbPut(`${ROOT}/schedule/${dateIso}`, value);
 
 /* ── projects (keyed object in DB) ──────────────────────────────── */
-export const putProject    = (pid, project) => dbPut(`${ROOT}/projects/${pid}`, project);
-export const patchProject  = (pid, updates) => dbPatch(`${ROOT}/projects/${pid}`, updates);
-export const deleteProject = (pid)          => dbDelete(`${ROOT}/projects/${pid}`);
+export const putProject    = (pid, project) => routeProject(pid, project, true);
+export const patchProject  = (pid, updates) => routeProject(pid, updates, false);
+export const deleteProject = (pid)          => Promise.all([
+  dbDelete(`${ROOT}/projects/${pid}`),
+  moneyAccess ? dbDelete(`${MONEY_ROOT}/${pid}`).catch(() => true) : true,
+]).then(() => true);
 
 /** Surgical add — two foremen can submit logs to the same job at the same second safely. */
 export const putProjectDailyLog    = (pid, log)   => dbPut(`${ROOT}/projects/${pid}/dailyLogs/${log.id}`, log);
@@ -87,16 +115,100 @@ export const deleteProjectDailyLog = (pid, logId) => dbDelete(`${ROOT}/projects/
 export const putWriteInLog    = (id, log) => dbPut(`${ROOT}/writeInLogs/${id}`, log);
 export const deleteWriteInLog = (id)      => dbDelete(`${ROOT}/writeInLogs/${id}`);
 
-/* ── member private space (keyed by uid) ────────────────────────── */
-export const putMemberPrivate   = (uid, value)   => dbPut(`${ROOT}/memberPrivate/${uid}`, value);
-export const patchMemberPrivate = (uid, updates) => dbPatch(`${ROOT}/memberPrivate/${uid}`, updates);
+/* ── personal space: /private/{uid} ──────────────────────────────
+   Each person's own board, logs, timesheets and opportunities. Only that
+   person (and admins, for support) can read it — it is no longer part of
+   the tracker every phone downloads. */
+export const PRIVATE_ROOT = "/private";
+export const putMemberPrivate   = (uid, value)   => dbPut(`${PRIVATE_ROOT}/${uid}`, value);
+export const patchMemberPrivate = (uid, updates) => dbPatch(`${PRIVATE_ROOT}/${uid}`, updates);
+/** Hand someone a task without being able to read their board: it lands in
+    their inbox and their own app moves it onto the board. */
+export const putInboxTask    = (uid, id, task) => dbPut(`${PRIVATE_ROOT}/${uid}/inbox/${id}`, task);
+export const deleteInboxTask = (uid, id)       => dbDelete(`${PRIVATE_ROOT}/${uid}/inbox/${id}`);
 
-/* ── estimating: price book, assemblies, defaults ───────────────── */
-export const putCatalogItem    = (id, item) => dbPut(`${ROOT}/catalog/${id}`, item);
-export const deleteCatalogItem = (id)       => dbDelete(`${ROOT}/catalog/${id}`);
-export const putAssembly       = (id, asm)  => dbPut(`${ROOT}/assemblies/${id}`, asm);
-export const deleteAssembly    = (id)       => dbDelete(`${ROOT}/assemblies/${id}`);
-export const putEstimatingDefaults = (d)    => dbPut(`${ROOT}/estimatingDefaults`, d);
+/* ── estimating: price book, assemblies, defaults (admins only) ─── */
+export const EST_ROOT = "/estimating";
+export const putCatalogItem    = (id, item) => dbPut(`${EST_ROOT}/catalog/${id}`, item);
+export const deleteCatalogItem = (id)       => dbDelete(`${EST_ROOT}/catalog/${id}`);
+export const putAssembly       = (id, asm)  => dbPut(`${EST_ROOT}/assemblies/${id}`, asm);
+export const deleteAssembly    = (id)       => dbDelete(`${EST_ROOT}/assemblies/${id}`);
+export const putEstimatingDefaults = (d)    => dbPut(`${EST_ROOT}/estimatingDefaults`, d);
+
+/* ── job money: /money/{pid} (admins and foremen only) ────────────
+   Bid and contract amounts, invoices, the PIF billing schedule, material
+   unit costs and change order amounts. Everything else about a job stays in
+   /tracker where the whole crew can read it. The split happens here, on the
+   way out, so screens keep working with one project object. */
+export const MONEY_ROOT = "/money";
+export const MONEY_KEYS = ["bidAmount", "contractAmount", "invoices", "invoicing"];
+let moneyAccess = false;
+/** Set once this device has loaded /money. Until then (and always for
+    technicians) money is never written — a device that can't see the costs
+    must not overwrite them with blanks. */
+export const setMoneyAccess = v => { moneyAccess = !!v; };
+export const hasMoneyAccess = () => moneyAccess;
+
+const blank = v => v === undefined || v === null || v === "";
+/** Project fields → { pub: crew-visible part, money: money part }. Lines in
+    materials / changeOrders get ids so their costs can be matched back. */
+export function splitProjectMoney(updates) {
+  const pub = { ...updates };
+  const money = {};
+  MONEY_KEYS.forEach(k => { if (k in pub) { money[k] = pub[k] === "" ? null : pub[k]; delete pub[k]; } });
+  if (Array.isArray(pub.materials)) {
+    const costs = {};
+    pub.materials = pub.materials.map(m => {
+      if (!m || typeof m !== "object") return m;
+      const { cost, ...rest } = m;
+      const id = m.id || genId();
+      if (!blank(cost)) costs[id] = cost;
+      return { ...rest, id };
+    });
+    money.materialCost = Object.keys(costs).length ? costs : null;
+  }
+  if (Array.isArray(pub.changeOrders)) {
+    const amts = {};
+    pub.changeOrders = pub.changeOrders.map(c => {
+      if (!c || typeof c !== "object") return c;
+      const { amount, ...rest } = c;
+      const id = c.id || genId();
+      if (!blank(amount)) amts[id] = amount;
+      return { ...rest, id };
+    });
+    money.coAmount = Object.keys(amts).length ? amts : null;
+  }
+  return { pub, money };
+}
+
+/** Put a job's money back onto the project object the screens use. */
+export function mergeProjectMoney(p, m) {
+  if (!p || !m) return p;
+  const out = { ...p };
+  MONEY_KEYS.forEach(k => { if (m[k] !== undefined && m[k] !== null) out[k] = m[k]; });
+  if (Array.isArray(out.materials) && m.materialCost) {
+    out.materials = out.materials.map(x => (x && x.id && m.materialCost[x.id] !== undefined ? { ...x, cost: m.materialCost[x.id] } : x));
+  }
+  if (Array.isArray(out.changeOrders) && m.coAmount) {
+    out.changeOrders = out.changeOrders.map(x => (x && x.id && m.coAmount[x.id] !== undefined ? { ...x, amount: m.coAmount[x.id] } : x));
+  }
+  return out;
+}
+
+/** A device without money access writes the project as it has it (before the
+    data move a technician's copy still carries costs; after it, it has none).
+    A device with access sends money to /money and the rest to /tracker. */
+function routeProject(pid, updates, whole) {
+  if (!moneyAccess) return whole ? dbPut(`${ROOT}/projects/${pid}`, updates) : dbPatch(`${ROOT}/projects/${pid}`, updates);
+  const { pub, money } = splitProjectMoney(updates);
+  const writes = [];
+  if (whole) writes.push(dbPut(`${ROOT}/projects/${pid}`, pub));
+  else if (Object.keys(pub).length) writes.push(dbPatch(`${ROOT}/projects/${pid}`, pub));
+  const mKeys = Object.keys(money);
+  if (whole) { if (mKeys.some(k => money[k] !== null)) writes.push(dbPut(`${MONEY_ROOT}/${pid}`, money)); }
+  else if (mKeys.length) writes.push(dbPatch(`${MONEY_ROOT}/${pid}`, money));
+  return Promise.all(writes).then(() => true);
+}
 
 /* ── invites ────────────────────────────────────────────────────
    Invites live OUTSIDE /tracker because an invitee must read theirs
@@ -189,6 +301,32 @@ export function normalizeTracker(remote, defaults) {
   d.projects = projects
     .map(normalizeProject)
     .sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""));
+  return d;
+}
+
+/**
+ * All the mirrored branches → the one data object the screens use.
+ * The new locations win; the old ones are read only until the admin runs
+ * the data move (so nothing disappears in between).
+ *   tracker     /tracker (everyone)
+ *   money       /money (admins + foremen), merged into each project
+ *   estimating  /estimating (admins) → catalog, assemblies, estimatingDefaults
+ *   privateMine /private/{uid} → memberPrivate[uid]
+ *   privateAll  /private (admins only, for the team timesheet view)
+ */
+export function normalizeAll({ tracker, money, estimating, privateMine, privateAll, uid }, defaults) {
+  const d = normalizeTracker(tracker, defaults);
+  if (estimating) ["catalog", "assemblies", "estimatingDefaults"].forEach(k => { if (estimating[k] !== undefined) d[k] = estimating[k]; });
+  // Layered over the old record (per top-level key) until the move removes
+  // it — a task handed to me early must not hide the rest of my board.
+  // Admins mirror everyone's (team timesheet view); same layering per person
+  if (privateAll) {
+    const mp = { ...(d.memberPrivate || {}) };
+    Object.entries(privateAll).forEach(([k, v]) => { if (v && typeof v === "object") mp[k] = { ...(mp[k] || {}), ...v }; });
+    d.memberPrivate = mp;
+  }
+  if (uid && privateMine && !privateAll) d.memberPrivate = { ...(d.memberPrivate || {}), [uid]: { ...((d.memberPrivate || {})[uid] || {}), ...privateMine } };
+  if (money) d.projects = d.projects.map(p => mergeProjectMoney(p, money[p.id]));
   return d;
 }
 

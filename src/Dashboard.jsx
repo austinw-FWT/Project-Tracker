@@ -7,7 +7,7 @@ import { scheduleEntries } from "./db.js";
 import { resolveJobRole } from "./permissions.js";
 import InvoiceProgress from "./InvoiceProgress.jsx";
 
-export default function Dashboard({ data, myName, onSelectProject, onNavigate, perms, teamRoster }) {
+export default function Dashboard({ data, myName, onSelectProject, onNavigate, perms, teamRoster, myUid }) {
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768);
   useEffect(() => {
     const handler = () => setIsMobile(window.innerWidth < 768);
@@ -16,7 +16,7 @@ export default function Dashboard({ data, myName, onSelectProject, onNavigate, p
   }, []);
 
   const projects = data.projects || [];
-  const myPrivate = (data.memberPrivate || {})[myName] || {};
+  const myPrivate = (data.memberPrivate || {})[myUid] || (data.memberPrivate || {})[myName] || {};
   const schedule = data.schedule || {};
   const today = localIso(new Date());   // local day — UTC rolls to tomorrow after 5pm PT
 

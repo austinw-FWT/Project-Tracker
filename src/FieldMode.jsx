@@ -7,6 +7,8 @@ import { projectWarranty, WARRANTY_STATUS, daysLeftLabel, fmtDay } from "./warra
 import { isNewTask, newTaskCount } from "./myTasks.js";
 import { WRITE_IN_ID, WRITE_IN_KINDS, buildWriteInLog } from "./writeIns.js";
 import { crewLabel, guestFields, pastHelpers, resolveTypedMember } from "./guestCrew.js";
+import ChecklistTab from "./ChecklistTab.jsx";
+import { checklistState, checklistProgress, isMine } from "./checklist.js";
 
 /**
  * FieldMode — the technician's home screen.
@@ -51,11 +53,12 @@ const THEME_KEY = "fwt-fieldmode-theme";
 const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 const isoFor = (offset) => { const d = new Date(); d.setDate(d.getDate() + offset); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 
-export default function FieldMode({ projects, teamRoster, schedule, myName, myLogs, onSubmit, onOpenFullApp, onUpdateProject, isAdmin, perms, linkedTasks = [], tasksSeenAt = "", onToggleTask, onTasksSeen, onClearTask }) {
+export default function FieldMode({ projects, teamRoster, schedule, myName, myLogs, onSubmit, onOpenFullApp, onUpdateProject, isAdmin, perms, linkedTasks = [], tasksSeenAt = "", onToggleTask, onTasksSeen, onClearTask, onChecklistSet }) {
   // Foremen run the job and need to see where the hours stand; techs don't.
   // Rides on the same foreman/tech switch as financials — change this one
   // line if apprentices should see the burn too.
   const canSeeHours = perms ? perms.seeFinancials : true;
+  const [showChecklist, setShowChecklist] = useState(false);
   const [themeKey, setThemeKey] = useState(() => { try { return localStorage.getItem(THEME_KEY) || "daylight"; } catch { return "daylight"; } });
   const T = THEMES[themeKey] || THEMES.daylight;
   const [tab, setTab] = useState("today");
@@ -740,6 +743,33 @@ export default function FieldMode({ projects, teamRoster, schedule, myName, myLo
                   </div>
                 );
               })}
+            </div>
+          );
+        })()}
+
+        {/* Completion checklist — field items for this job */}
+        {onChecklistSet && (() => {
+          const jr = perms?.jobRole || "tech";
+          const st = checklistState(detail, { schedule }).filter(x => isMine(x, jr === "admin" ? "foreman" : jr));
+          const pg = checklistProgress(st);
+          const holds = st.filter(x => x.hold && !x.done && !x.na).length;
+          const theme = { text: T.ink, sub: T.inkSoft, mute: T.inkFaint, card: T.cardAlt, line: T.line, track: T.chip, input: T.card, green: T.greenBright, boxLine: T.lineStrong, holdText: T.red };
+          return (
+            <div style={{ ...card, padding: "13px 16px" }}>
+              <button onClick={() => setShowChecklist(v => !v)} style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ ...eyebrow, marginBottom: 4 }}>Job checklist</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: T.ink }}>{pg.done} of {pg.total} done{holds ? <span style={{ color: T.red }}> · {holds} hold point{holds > 1 ? "s" : ""} open</span> : ""}</div>
+                  <div style={{ height: 6, borderRadius: 3, background: T.chip, marginTop: 7, overflow: "hidden" }}><div style={{ width: `${pg.pct}%`, height: "100%", background: T.greenBright }} /></div>
+                </div>
+                <span style={{ fontSize: 13, fontWeight: 700, color: T.green }}>{showChecklist ? "Close" : "Open ›"}</span>
+              </button>
+              {showChecklist && (
+                <div style={{ marginTop: 12 }}>
+                  <ChecklistTab compact project={detail} jobRole={jr === "admin" ? "foreman" : jr} myName={myName} schedule={schedule} theme={theme}
+                    onSet={(k, v) => onChecklistSet(detail.id, k, v)} />
+                </div>
+              )}
             </div>
           );
         })()}

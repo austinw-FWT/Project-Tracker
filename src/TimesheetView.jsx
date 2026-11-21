@@ -3,6 +3,7 @@ import { Plus, X, Clock, Users, Send, ChevronDown, ChevronUp, Download } from "l
 import JSZip from "jszip";
 import { LABOR_PHASES } from "./App.jsx";
 import { openOutlookCompose } from "./emailHelper.js";
+import { planWeekFill, logLinesForWeek, dayCompare, weekStart as monOf, OT_THRESHOLD } from "./timesheetFill.js";
 
 
 const DEPARTMENTS = ["Brandon", "Justin", "Service", "Steve", "Tim", "Todd", "Overhead", "Tech Staffing"];
@@ -243,7 +244,7 @@ function useIsMobile() {
   return isMobile;
 }
 
-export default function TimesheetView({ timesheets, projects, myName, myEmail, predefinedEmail, isAdmin, allMemberPrivate, teamRoster, onAdd, onRemove }) {
+export default function TimesheetView({ timesheets, projects, myName, myEmail, predefinedEmail, isAdmin, allMemberPrivate, teamRoster, onAdd, onRemove, writeIns, onReplaceAll, genId }) {
   const isMobile = useIsMobile();
 
   const [jobName, setJobName] = useState("");
@@ -464,6 +465,11 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
   return (
     <div style={{ maxWidth: 900, margin: "0 auto", padding: isMobile ? "16px 12px 100px" : "24px" }}>
 
+      {viewMode === "mine" && onReplaceAll && (
+        <FillFromLogs timesheets={timesheets} projects={projects} writeIns={writeIns || []} myName={myName} isMobile={isMobile}
+          genId={genId} onSave={list => { onReplaceAll(list); }} onShowWeek={w => setFilterWeek(w)} />
+      )}
+
       {isAdmin && (
         <div style={{ display: "flex", gap: 4, marginBottom: 16 }}>
           {[{ id: "mine", label: "My Timesheets" }, { id: "team", label: "Team" }].map(v => (
@@ -597,3 +603,80 @@ export default function TimesheetView({ timesheets, projects, myName, myEmail, p
     </div>
   );
 }
+
+
+/* ── Fill a week from my daily logs ─────────────────────────────
+   The hours foremen already logged for me, by day, job and phase, become
+   timesheet lines. Overtime after 40 WORKED hours in the week (holiday/PTO
+   don't count toward 40). Prevailing wage comes from the job (PIF). */
+function FillFromLogs({ timesheets, projects, writeIns, myName, isMobile, genId, onSave, onShowWeek }) {
+  const thisMon = monOf(localDay(new Date()));
+  const weeks = [0, 1, 2, 3].map(n => { const d = new Date(thisMon + "T12:00:00"); d.setDate(d.getDate() - 7 * n); return localDay(d); });
+  const [week, setWeek] = useState(thisMon);
+  const [open, setOpen] = useState(false);
+  const [saved, setSaved] = useState("");
+  const lines = logLinesForWeek(myName, projects, writeIns, week);
+  const plan = planWeekFill({ timesheets, name: myName, projects, writeIns, monIso: week, genId: genId || (() => Math.random().toString(36).slice(2)), nowIso: new Date().toISOString() });
+  const currentWeek = (timesheets || []).filter(e => monOf(e.date) === week);
+  const compare = dayCompare(currentWeek, lines, week);
+  const mismatch = compare.filter(d => Math.abs(d.diff) > 0.01 && (d.logged || d.onSheet));
+  const wd = ds => new Date(ds + "T12:00:00").toLocaleDateString("en-US", { weekday: "short" });
+  const label = w => w === thisMon ? "This week" : `Week of ${new Date(w + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+  const nothing = !plan.added.length;
+  const card = { background: "#0F2444", border: "1px solid #1A3050", borderRadius: 12, padding: isMobile ? 14 : 16, marginBottom: 16 };
+  return (
+    <div style={card}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 14.5, fontWeight: 800, color: "#fff", flex: 1 }}>Fill from my daily logs</span>
+        <select aria-label="Week to fill" value={week} onChange={e => { setWeek(e.target.value); setSaved(""); }} style={{ padding: "7px 9px", borderRadius: 8, border: "1px solid #1A3050", background: "#0A192F", color: "#e2e8f0", fontSize: 12.5, fontFamily: "inherit" }}>
+          {weeks.map(w => <option key={w} value={w}>{label(w)}</option>)}
+        </select>
+        <button onClick={() => setOpen(!open)} style={{ padding: "7px 12px", borderRadius: 8, border: "1px solid #1A3050", background: "transparent", color: "#94a3b8", fontSize: 12, cursor: "pointer", fontFamily: "inherit" }}>{open ? "Hide" : "Preview"}</button>
+      </div>
+
+      {/* Logs vs timesheet, by day */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginTop: 10 }}>
+        {compare.map(d => {
+          const off = Math.abs(d.diff) > 0.01 && (d.logged || d.onSheet);
+          return (
+            <div key={d.date} title={`Logs ${d.logged}h · timesheet ${d.onSheet}h`} style={{ textAlign: "center", padding: "6px 2px", borderRadius: 7, background: off ? "#f59e0b14" : "#0A192F", border: `1px solid ${off ? "#f59e0b55" : "#1A3050"}` }}>
+              <div style={{ fontSize: 10.5, color: "#64748b", fontWeight: 700 }}>{wd(d.date)}</div>
+              <div style={{ fontSize: 13, color: d.logged ? "#e2e8f0" : "#334155", fontWeight: 700 }}>{d.logged || "–"}</div>
+              <div style={{ fontSize: 10, color: off ? "#f59e0b" : "#64748b" }}>{d.onSheet ? `sheet ${d.onSheet}` : ""}</div>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ fontSize: 11.5, color: "#64748b", marginTop: 6 }}>
+        Top number: hours in daily logs. {mismatch.length ? <span style={{ color: "#f59e0b" }}>{mismatch.length} day{mismatch.length > 1 ? "s" : ""} where the timesheet doesn't match the logs.</span> : lines.length ? "Timesheet matches the logs." : "No logged hours for you this week yet."}
+      </div>
+
+      {open && (
+        <div style={{ marginTop: 12, fontSize: 12.5, color: "#e2e8f0", lineHeight: 1.6 }}>
+          {plan.added.length > 0 && (
+            <div style={{ marginBottom: 8 }}>
+              {plan.added.map(e => (
+                <div key={e.id} style={{ color: "#cbd5e1" }}>{wd(e.date)} · {e.jobName}{e.jobNumber ? ` #${e.jobNumber}` : ""} · {e.hours}h{e.category ? ` · ${(LABOR_PHASES.find(l => l.id === e.category)?.name) || e.category}` : ""}{e.prevailingWage ? <strong style={{ color: "#fbbf24" }}> · PW</strong> : ""}</div>
+              ))}
+            </div>
+          )}
+          {plan.skipped.length > 0 && <div style={{ color: "#94a3b8" }}>Skipped {plan.skipped.length} line{plan.skipped.length > 1 ? "s" : ""} — you already have an entry for that day and job.</div>}
+          {plan.changedManual > 0 && <div style={{ color: "#f59e0b" }}>{plan.changedManual} entr{plan.changedManual > 1 ? "ies" : "y"} you typed will be re-marked regular/OT to follow the {OT_THRESHOLD}-hour rule.</div>}
+        </div>
+      )}
+
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
+        <div style={{ fontSize: 12.5, color: "#94a3b8", flex: 1 }}>
+          After filling: <strong style={{ color: "#e2e8f0" }}>{plan.totals.worked}h worked</strong> = {plan.totals.regular} regular + <span style={{ color: plan.totals.overtime ? "#f59e0b" : "inherit" }}>{plan.totals.overtime} OT</span>
+          {plan.totals.timeOff ? ` · ${plan.totals.timeOff}h holiday/PTO (straight time, not counted toward ${OT_THRESHOLD})` : ""}
+        </div>
+        <button disabled={nothing} onClick={() => { onSave([...plan.others, ...plan.week]); setSaved(`Added ${plan.added.length} line${plan.added.length > 1 ? "s" : ""}.`); onShowWeek && onShowWeek(week); }}
+          style={{ padding: "10px 16px", borderRadius: 9, border: "none", background: nothing ? "#1A3050" : "#69BE28", color: nothing ? "#475569" : "#fff", fontSize: 13, fontWeight: 700, cursor: nothing ? "default" : "pointer", fontFamily: "inherit" }}>
+          {nothing ? "Nothing new to add" : `Add ${plan.totals.fromLogs}h from logs`}
+        </button>
+      </div>
+      {saved && <div style={{ fontSize: 12, color: "#82CC4A", marginTop: 6 }}>✓ {saved} Check it below, then download or email as usual.</div>}
+    </div>
+  );
+}
+function localDay(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }

@@ -18,11 +18,18 @@ import ProjectImport from "./ProjectImport.jsx";
 import { resolveJobRole, getPermissions, JOB_ROLES, ROLE_LABEL, ROLE_COLOR } from "./permissions.js";
 import Briefing from "./Briefing.jsx";
 import GuestMode from "./GuestMode.jsx";
+import { openLive, setIn } from "./liveSync.js";
+import { holdsBlocking } from "./checklist.js";
+import { writeInList } from "./writeIns.js";
+import DataSplitPanel from "./DataSplitPanel.jsx";
+import { planRoleSync } from "./dataSplit.js";
 import GuestAdmin from "./GuestAdmin.jsx";
 import { captureGuestFromUrl, clearPendingGuest, peekPendingGuest, pendingGuestIsQuick, clearPendingQuick, guestAuthStep, planGuestPublish, planGuestHoursPublish, stableStringify, prune } from "./guestAccess.js";
 
 import {
-  FB_URL, dbGet, readTracker, putSection, putScheduleDay, putWriteInLog,
+  FB_URL, dbGet, dbPut, readTracker, putSection, putScheduleDay, putWriteInLog,
+  normalizeAll, patchMemberPrivate, onWriteAck, onWritesIdle, writesPending, setMoneyAccess, putInboxTask, deleteInboxTask,
+  MONEY_ROOT, PRIVATE_ROOT, EST_ROOT,
   putProject, patchProject, deleteProject as dbDeleteProject,
   putProjectDailyLog, putMemberPrivate,
   putCatalogItem, deleteCatalogItem, putAssembly, deleteAssembly, putEstimatingDefaults,
@@ -324,8 +331,6 @@ function Tracker({ user, userRecord }) {
   const [lastSync, setLastSync] = useState(null);
   const [syncPulse, setSyncPulse] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const eventSourceRef = useRef(null);
-  const isSaving = useRef(false);
   const latestData = useRef(null);
   const [guests, setGuests] = useState({});
   const [guestLoadError, setGuestLoadError] = useState("");
@@ -345,64 +350,115 @@ function Tracker({ user, userRecord }) {
   const perms = getPermissions(jobRole);
   const isMobile = useIsMobile();
 
-  useEffect(() => {
-    let es = null, alive = true;
-    async function init() {
-      try {
-        const remote = await fbRead();
-        const d = normalizeTracker(remote, DEFAULTS);
-        latestData.current = d;
-        loadedOk.current = true;
-        if (alive) {
-          setData(d); setSyncStatus("synced"); setLastSync(new Date()); setLoading(false);
-          // Identity is resolved against the roster by uid → email → exact
-          // name (see rosterEntry below). We deliberately do NOT auto-create
-          // a roster row from the account's display name: that produced a
-          // duplicate ("Dennis" typed by the office vs "Dennis Martinez" from
-          // Google), and since the schedule is keyed by roster name, the
-          // duplicate left the tech with a permanently empty Today screen.
-          // Unmatched users get the link screen instead.
-        }
-        if (!remote) await putSection("phases", DEFAULT_PHASES);
-      } catch { if (alive) { setData(DEFAULTS); setSyncStatus("error"); setLoading(false); } }
-      try {
-        const token = await getToken();
-        es = new EventSource(`${FB_URL}${DB_PATH}.json${token ? `?auth=${token}` : ""}`);
-        eventSourceRef.current = es;
-        es.onopen = () => { if (alive) setSyncStatus("synced"); };
-        const handleUpdate = () => {
-          if (!alive || isSaving.current) return;
-          fbRead().then(full => {
-            if (!alive || isSaving.current) return;
-            const nd = normalizeTracker(full, DEFAULTS);
-            latestData.current = nd; setData(nd);
-            setSelectedProject(prev => prev ? nd.projects?.find(p => p.id === prev.id) || null : null);
-            setSyncPulse(true); setTimeout(() => setSyncPulse(false), 1200); setLastSync(new Date());
-          }).catch(() => {});
-        };
-        es.addEventListener("put", handleUpdate);
-        es.addEventListener("patch", handleUpdate);
-        es.onerror = () => { if (alive) setSyncStatus("reconnecting"); };
-      } catch {}
-    }
-    init();
-    return () => { alive = false; if (es) es.close(); };
-  }, []);
+  /* ── LIVE DATA ────────────────────────────────────────────────
+     Each branch this person may read is mirrored on the device and kept
+     current from Firebase's change stream (see liveSync.js): the change is
+     applied, nothing is re-downloaded. Branches:
+       /tracker        everyone      jobs, schedule, roster, contacts…
+       /private/{uid}  just me       my board, logs, timesheets, opportunities
+       /money          admin+foreman bid/contract, invoices, costs, CO amounts
+       /estimating     admin         price book, assemblies, defaults
+     Which branches open comes from the account record, because that is what
+     the database rules check. */
+  const mirror = useRef({});
+  const streams = useRef([]);
+  const redrawWanted = useRef(false);
+  const redrawTimer = useRef(null);
+  const canReadMoney = userRecord.role === "admin" || userRecord.jobRole === "admin" || userRecord.jobRole === "foreman";
+  const canReadEstimating = userRecord.role === "admin" || userRecord.jobRole === "admin";
+
+  const buildData = useCallback(() => normalizeAll({
+    tracker: mirror.current.tracker,
+    money: mirror.current.money,
+    estimating: mirror.current.estimating,
+    privateMine: mirror.current.private,
+    privateAll: mirror.current.privateAll,
+    uid: user.uid,
+  }, DEFAULTS), [user.uid]);
+
+  /** Redraw from the mirror — but never while one of my writes is in flight,
+      or a half-saved state would replace what I'm looking at. */
+  const redraw = useCallback(() => {
+    clearTimeout(redrawTimer.current);
+    redrawTimer.current = setTimeout(() => {
+      if (writesPending() > 0) { redrawWanted.current = true; return; }
+      redrawWanted.current = false;
+      const nd = buildData();
+      latestData.current = nd; setData(nd);
+      setSelectedProject(prev => prev ? nd.projects?.find(p => p.id === prev.id) || null : null);
+      setLastSync(new Date());
+    }, 80);
+  }, [buildData]);
 
   useEffect(() => {
-    const interval = setInterval(async () => {
-      if (eventSourceRef.current) eventSourceRef.current.close();
-      try {
-        const token = await getToken();
-        const es = new EventSource(`${FB_URL}${DB_PATH}.json${token ? `?auth=${token}` : ""}`);
-        eventSourceRef.current = es;
-        es.onopen = () => setSyncStatus("synced");
-        const h = () => { if (isSaving.current) return; fbRead().then(full => { const nd = normalizeTracker(full, DEFAULTS); latestData.current = nd; setData(nd); setSyncPulse(true); setTimeout(() => setSyncPulse(false), 1200); setLastSync(new Date()); }).catch(() => {}); };
-        es.addEventListener("put", h); es.addEventListener("patch", h);
-        es.onerror = () => setSyncStatus("reconnecting");
-      } catch {}
-    }, 50 * 60 * 1000);
-    return () => clearInterval(interval);
+    let alive = true;
+    const open = (key, path) => {
+      const s = openLive(FB_URL, path, {
+        getToken,
+        onStatus: st => { if (alive && key === "tracker") setSyncStatus(st); },
+        onChange: (tree, info) => {
+          mirror.current[key] = tree;
+          if (key === "privateAll") mirror.current.private = (tree && tree[user.uid]) || null;
+          if (!info.own) { setSyncPulse(true); setTimeout(() => setSyncPulse(false), 1200); }
+          if (loadedOk.current) redraw();
+        },
+      });
+      s.key = key; s.root = path;
+      streams.current.push(s);
+      return s.ready.then(t => {
+        mirror.current[key] = t;
+        if (key === "privateAll") mirror.current.private = (t && t[user.uid]) || null;
+        return true;
+      }, () => false);
+    };
+    async function init() {
+      // Admins read the whole private area (team timesheet view); everyone
+      // else only their own record.
+      const waits = [open("tracker", DB_PATH), isAdmin ? open("privateAll", PRIVATE_ROOT) : open("private", `${PRIVATE_ROOT}/${user.uid}`)];
+      if (canReadMoney) waits.push(open("money", MONEY_ROOT));
+      if (canReadEstimating) waits.push(open("estimating", EST_ROOT));
+      // A branch that can't be opened in time falls back to a plain read so
+      // the app still starts on a weak connection; the stream keeps trying.
+      const timeout = ms => new Promise(r => setTimeout(() => r("timeout"), ms));
+      const results = await Promise.all(waits.map(w => Promise.race([w, timeout(15000)])));
+      if (!alive) return;
+      let trackerOk = results[0] === true;
+      if (!trackerOk) {
+        try { mirror.current.tracker = await fbRead(); trackerOk = true; } catch { /* offline */ }
+      }
+      if (results[1] !== true) {
+        // Without my private branch, saving my board would overwrite it with
+        // blanks — read it directly instead.
+        try {
+          if (isAdmin) { mirror.current.privateAll = await dbGet(PRIVATE_ROOT); mirror.current.private = (mirror.current.privateAll || {})[user.uid] || null; }
+          else mirror.current.private = await dbGet(`${PRIVATE_ROOT}/${user.uid}`);
+        } catch { /* not yet allowed: still on the old location */ }
+      }
+      const moneyIdx = canReadMoney ? 2 : -1;
+      setMoneyAccess(moneyIdx >= 0 && results[moneyIdx] === true);
+      if (!trackerOk) { setData(DEFAULTS); setSyncStatus("error"); setLoading(false); return; }
+      const d = buildData();
+      latestData.current = d;
+      loadedOk.current = true;
+      setData(d); setSyncStatus("synced"); setLastSync(new Date()); setLoading(false);
+      // Identity is resolved against the roster by uid → email → exact
+      // name (see rosterEntry below). We deliberately do NOT auto-create
+      // a roster row from the account's display name: that produced a
+      // duplicate ("Dennis" typed by the office vs "Dennis Martinez" from
+      // Google), and since the schedule is keyed by roster name, the
+      // duplicate left the tech with a permanently empty Today screen.
+      // Unmatched users get the link screen instead.
+      if (!mirror.current.tracker) await putSection("phases", DEFAULT_PHASES);
+      // Money stream that came up late (slow first connection)
+      if (moneyIdx >= 0 && results[moneyIdx] !== true) streams.current.find(x => x.key === "money")?.ready.then(() => { setMoneyAccess(true); redraw(); }, () => {});
+    }
+    // My confirmed writes go straight into the mirror
+    const offAck = onWriteAck(w => streams.current.forEach(st => st.applyWrite(w, st.root)));
+    // When my writes settle (or one fails), redraw if anything arrived meanwhile —
+    // after a failure this puts the screen back to what is really saved.
+    const offIdle = onWritesIdle(({ failed }) => { if (failed || redrawWanted.current) redraw(); });
+    init();
+    return () => { alive = false; offAck(); offIdle(); streams.current.forEach(st => st.close()); streams.current = []; clearTimeout(redrawTimer.current); };
   }, []);
 
   /* ── WRITE LAYER ──────────────────────────────────────────────
@@ -467,23 +523,42 @@ function Tracker({ user, userRecord }) {
 
   const applyLocal = useCallback(newData => { latestData.current = newData; setData(newData); }, []);
   const persist = useCallback(writePromise => {
-    isSaving.current = true; setSyncStatus("saving");
+    setSyncStatus("saving");
     // Returns the promise so callers that must confirm a real save (daily
     // log submit) can await it instead of assuming success.
     return Promise.resolve(writePromise)
       .then(r => { setSyncStatus("synced"); setLastSync(new Date()); return r; })
       .catch(e => { setSyncStatus("error"); throw e; })
-      .finally(() => setTimeout(() => { isSaving.current = false; }, 1000));
+      ;
   }, []);
   /** Small low-contention sections: phases, teamRoster, contacts, adminSettings. */
   const saveSection = useCallback((section, value, newData) => { applyLocal(newData); persist(putSection(section, value)); }, [applyLocal, persist]);
 
   function updateProject(pid, updates) {
+    // Hold points: moving a job into a phase with stop points still open asks first
+    if (updates.phaseId) {
+      const cur = latestData.current.projects.find(p => p.id === pid);
+      if (cur && cur.phaseId !== updates.phaseId) {
+        const holds = holdsBlocking(cur, updates.phaseId, latestData.current.phases, { schedule: latestData.current.schedule });
+        if (holds.length && !window.confirm(`${holds.length} hold point${holds.length > 1 ? "s are" : " is"} still open:\n\n${holds.map(h => `• ${h.text}`).join("\n")}\n\nMove the job anyway?`)) return;
+      }
+    }
     const stamped = { ...updates, updatedAt: new Date().toISOString() };
     const nd = { ...latestData.current, projects: latestData.current.projects.map(p => p.id === pid ? { ...p, ...stamped } : p) };
     applyLocal(nd);
     persist(patchProject(pid, denormalizeProjectUpdates(stamped)));
     setSelectedProject(prev => prev?.id === pid ? { ...prev, ...stamped } : prev);
+  }
+  /** One checklist item (see checklist.js). Written to its own path so two
+      people ticking items at the same time never undo each other. */
+  function setChecklist(pid, key, value) {
+    const cur = latestData.current.projects.find(p => p.id === pid);
+    if (!cur) return;
+    const now = new Date().toISOString();
+    const stamped = { checklist: setIn(cur.checklist || {}, key, value) || {}, updatedAt: now };
+    applyLocal({ ...latestData.current, projects: latestData.current.projects.map(p => p.id === pid ? { ...p, ...stamped } : p) });
+    setSelectedProject(prev => prev?.id === pid ? { ...prev, ...stamped } : prev);
+    persist(patchProject(pid, { [`checklist/${key}`]: value === undefined ? null : value, updatedAt: now }));
   }
   /** Schedule edits made from inside a project. `fn(currentSchedule)` returns
       { schedule, changedDates } (see projectSchedule.js); only those days are
@@ -534,7 +609,7 @@ function Tracker({ user, userRecord }) {
     const prev = latestData.current;
     const merged = { ...getMyPrivate(), dailyLogs: updatedPersonalLogs };
     let nd = { ...latestData.current, memberPrivate: { ...(latestData.current.memberPrivate || {}), [user.uid]: merged } };
-    const writes = [putMemberPrivate(user.uid, merged)];
+    const writes = [writeMyPrivate(merged, { dailyLogs: updatedPersonalLogs })];
     (projectLogs || []).forEach(({ pid, log }) => {
       nd = { ...nd, projects: nd.projects.map(p => p.id === pid ? { ...p, dailyLogs: [log, ...(p.dailyLogs || [])], updatedAt: new Date().toISOString() } : p) };
       writes.push(putProjectDailyLog(pid, log));
@@ -560,29 +635,90 @@ function Tracker({ user, userRecord }) {
     const mp = latestData.current?.memberPrivate || {};
     return mp[user.uid] || mp[myName] || {};
   }
+  /** Write my private record. The first write after the move copies the
+      whole thing to /private/{uid}; after that only the changed parts are
+      sent, so a task someone drops in my inbox mid-save is never wiped. */
+  function writeMyPrivate(merged, updates) {
+    if (!mirror.current.private) return putMemberPrivate(user.uid, merged);
+    const patch = {};
+    Object.entries(updates).forEach(([k, v]) => { patch[k] = v === undefined ? null : v; });
+    return patchMemberPrivate(user.uid, patch);
+  }
   function saveMyPrivate(updates) {
     const merged = { ...getMyPrivate(), ...updates };
+    Object.keys(merged).forEach(k => { if (merged[k] === null) delete merged[k]; });
     const nd = { ...latestData.current, memberPrivate: { ...(latestData.current.memberPrivate || {}), [user.uid]: merged } };
     applyLocal(nd);
-    persist(putMemberPrivate(user.uid, merged));
+    persist(writeMyPrivate(merged, updates));
   }
 
+  /** Put a task on someone's Daily Task Board. Their board is private, so
+      it goes to their inbox; their own app moves it onto the board. */
   function assignTaskToMember(taskText, memberName, category) {
-    const mpAll = latestData.current.memberPrivate || {};
-    // Resolve the member's storage key: uid if they have an account, else legacy name key.
     const rosterEntry = (latestData.current.teamRoster || []).find(t => t.name === memberName);
-    const uidKey = rosterEntry?.uid || Object.keys(mpAll).find(k => k === memberName) || memberName;
-    const mp = mpAll[uidKey] || mpAll[memberName] || {};
-    const dt = mp.dailyTracker || {};
-    const sections = dt.dailySections || [];
-    const secIdx = sections.findIndex(s => s.id === (category || "projects"));
-    if (secIdx >= 0) {
-      const ns = sections.map((s, i) => i === secIdx ? { ...s, items: [...s.items, { id: genId(), text: taskText, done: false }] } : s);
-      const merged = { ...mp, dailyTracker: { ...dt, dailySections: ns } };
-      applyLocal({ ...latestData.current, memberPrivate: { ...mpAll, [uidKey]: merged } });
-      persist(putMemberPrivate(uidKey, merged));
+    if (rosterEntry?.uid === user.uid) {
+      addInboxItemsToBoard([{ id: genId(), text: taskText, category }]);
+      return;
     }
+    const key = rosterEntry?.uid || memberName;   // no account yet: held under their name
+    const id = genId();
+    persist(putInboxTask(key, id, { id, text: taskText, category: category || "projects", from: myName, at: new Date().toISOString() }));
   }
+  /** Inbox items → my Daily Task Board sections (same shape the board uses). */
+  function addInboxItemsToBoard(items) {
+    const mp = getMyPrivate();
+    const dt = mp.dailyTracker || {};
+    let sections = dt.dailySections || [];
+    const leftover = [];
+    items.forEach(it => {
+      const idx = sections.findIndex(sec => sec.id === (it.category || "projects"));
+      const at = idx >= 0 ? idx : sections.findIndex(sec => sec.id === "projects");
+      if (at < 0) { leftover.push(it); return; }
+      sections = sections.map((sec, i) => i === at ? { ...sec, items: [...(sec.items || []), { id: it.id || genId(), text: it.text, done: false, ...(it.from ? { from: it.from } : {}) }] } : sec);
+    });
+    const done = items.filter(it => !leftover.includes(it));
+    const inbox = { ...(mp.inbox || {}) };
+    done.forEach(it => { delete inbox[it.id]; });
+    const merged = { ...mp, dailyTracker: { ...dt, dailySections: sections }, inbox };
+    if (!Object.keys(inbox).length) delete merged.inbox;
+    applyLocal({ ...latestData.current, memberPrivate: { ...(latestData.current.memberPrivate || {}), [user.uid]: merged } });
+    // Board change + remove exactly the inbox items just moved
+    const patch = { dailyTracker: merged.dailyTracker };
+    done.forEach(it => { if (it.id) patch[`inbox/${it.id}`] = null; });
+    persist(mirror.current.private ? patchMemberPrivate(user.uid, patch) : putMemberPrivate(user.uid, merged));
+    return leftover;
+  }
+  /* Admins: keep each account's jobRole in step with the Team roster. The
+     database rules read it from the account record to decide who may see
+     job money, so a role change in Team must reach /users too. */
+  const [dataSplitDone, setDataSplitDone] = useState(true);
+  const rosterRolesKey = JSON.stringify((data?.teamRoster || []).map(m => [m.uid, m.jobRole]));
+  useEffect(() => {
+    if (!isAdmin || !loadedOk.current) return;
+    let alive = true;
+    const t = setTimeout(async () => {
+      try {
+        const users = await fbReadUsers();
+        if (!alive) return;
+        for (const op of planRoleSync(latestData.current?.teamRoster, users)) await dbPut(op.path, op.value);
+      } catch { /* rules not published yet — the data move does this too */ }
+    }, 1500);
+    return () => { alive = false; clearTimeout(t); };
+  }, [isAdmin, rosterRolesKey]);
+  useEffect(() => {
+    if (!isAdmin) return;
+    dbGet("/meta").then(m => setDataSplitDone(!!(m && m.dataSplit)), () => setDataSplitDone(false));
+  }, [isAdmin]);
+
+  // Tasks others handed me while I was away
+  const inboxKey = JSON.stringify(Object.keys(data?.memberPrivate?.[user.uid]?.inbox || {}));
+  useEffect(() => {
+    const inbox = latestData.current?.memberPrivate?.[user.uid]?.inbox;
+    if (!loadedOk.current || !inbox || !Object.keys(inbox).length) return;
+    const sections = latestData.current.memberPrivate[user.uid]?.dailyTracker?.dailySections;
+    if (!sections || !sections.length) return;   // board not set up yet: leave them waiting
+    addInboxItemsToBoard(Object.values(inbox));
+  }, [inboxKey]);
 
   /* ── Project tasks assigned to me (live, see myTasks.js) ── */
   function toggleLinkedTask(pid, ref, done) {
@@ -647,7 +783,7 @@ function Tracker({ user, userRecord }) {
   // see the migration tool; everyone else sees a hold message.
   if (data.legacyFormat) {
     const reload = async () => {
-      try { const remote = await fbRead(); const d = normalizeTracker(remote, DEFAULTS); latestData.current = d; setData(d); } catch {}
+      try { mirror.current.tracker = await fbRead(); const d = buildData(); latestData.current = d; setData(d); } catch {}
     };
     return (
       <div style={{ minHeight: "100vh", background: "#0A192F", padding: "48px 20px", fontFamily: "'DM Sans',sans-serif" }}>
@@ -738,6 +874,7 @@ function Tracker({ user, userRecord }) {
       onSubmit={submitDailyLogs}
       onOpenFullApp={() => setFieldMode(false)}
       onUpdateProject={updateProject}
+      onChecklistSet={setChecklist}
       perms={perms}
       isAdmin={isAdmin}
     />;
@@ -923,6 +1060,13 @@ function Tracker({ user, userRecord }) {
             </button>
           ) : null}
 
+          {isAdmin && !dataSplitDone && view !== "admin" && (
+            <div style={{ margin: isMobile ? "10px 12px 0" : "14px 24px 0", padding: "10px 14px", borderRadius: 10, background: "#f59e0b14", border: "1px solid #f59e0b44", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <Shield size={15} style={{ color: "#f59e0b" }} />
+              <span style={{ fontSize: 12.5, color: "#fcd34d", flex: 1 }}>One step left in the security update: move job money and private data to their protected locations.</span>
+              <button onClick={() => { setSelectedProject(null); setView("admin"); }} style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid #f59e0b", background: "transparent", color: "#fcd34d", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Open User Admin</button>
+            </div>
+          )}
           {!selectedProject && view === "board" && !isMobile ? (
             <>
               <div style={{ position: "relative", flex: 1, maxWidth: 320 }}>
@@ -948,9 +1092,9 @@ function Tracker({ user, userRecord }) {
         {/* Page content */}
         <div style={{ flex: 1, overflow: "auto" }}>
           {selectedProject ? (
-            <ProjectDetail perms={perms} project={selectedProject} phases={data.phases} phaseMap={phaseMap} teamRoster={data.teamRoster} schedule={data.schedule || {}} projects={data.projects} onScheduleChange={changeSchedule} myName={myName} onUpdate={u => updateProject(selectedProject.id, u)} onDelete={() => deleteProject(selectedProject.id)} detailTab={detailTab} setDetailTab={setDetailTab} assignTaskToMember={assignTaskToMember} />
+            <ProjectDetail perms={perms} project={selectedProject} phases={data.phases} phaseMap={phaseMap} teamRoster={data.teamRoster} schedule={data.schedule || {}} projects={data.projects} onScheduleChange={changeSchedule} myName={myName} onUpdate={u => updateProject(selectedProject.id, u)} onDelete={() => deleteProject(selectedProject.id)} detailTab={detailTab} setDetailTab={setDetailTab} assignTaskToMember={assignTaskToMember} jobRole={jobRole} onChecklistSet={(k, v) => setChecklist(selectedProject.id, k, v)} />
           ) : view === "dashboard" ? (
-            <Dashboard perms={perms} teamRoster={data.teamRoster || []} data={data} myName={myName} onSelectProject={p => { setSelectedProject(p); setDetailTab("overview"); }} onNavigate={(v, tab) => { setView(v); if (tab) setMySpaceTab(tab); }} />
+            <Dashboard perms={perms} teamRoster={data.teamRoster || []} data={data} myName={myName} myUid={user.uid} onSelectProject={p => { setSelectedProject(p); setDetailTab("overview"); }} onNavigate={(v, tab) => { setView(v); if (tab) setMySpaceTab(tab); }} />
           ) : view === "board" ? (
             <KanbanBoard projects={filteredProjects} phases={data.phases} onSelectProject={p => { setSelectedProject(p); setDetailTab("overview"); }} onDragStart={setDragItem} onDrop={handleDrop} dragItem={dragItem} isMobile={isMobile} />
           ) : view === "contacts" ? (
@@ -983,7 +1127,9 @@ function Tracker({ user, userRecord }) {
           ) : view === "myspace" && mySpaceTab === "timesheets" ? (
             <TimesheetView timesheets={getMyPrivate().timesheets || []} projects={data.projects} myName={myName} myEmail={user.email} predefinedEmail={data.adminSettings?.predefinedEmail || ""} isAdmin={isAdmin} allMemberPrivate={isAdmin ? (data.memberPrivate || {}) : null} teamRoster={data.teamRoster}
               onAdd={entry => saveMyPrivate({ timesheets: [...(getMyPrivate().timesheets || []), { ...entry, id: genId(), member: myName, createdAt: new Date().toISOString() }] })}
-              onRemove={id => saveMyPrivate({ timesheets: (getMyPrivate().timesheets || []).filter(t => t.id !== id) })} />
+              onRemove={id => saveMyPrivate({ timesheets: (getMyPrivate().timesheets || []).filter(t => t.id !== id) })}
+              writeIns={writeInList(data.writeInLogs)} genId={genId}
+              onReplaceAll={list => saveMyPrivate({ timesheets: list })} />
           ) : view === "schedule" ? (
             <ScheduleView schedule={data.schedule || {}} teamRoster={data.teamRoster} projects={data.projects} onUpdate={(s, changedDate) => { applyLocal({ ...latestData.current, schedule: s }); persist(changedDate ? putScheduleDay(changedDate, s[changedDate] || null) : putSection("schedule", s)); }} />
           ) : view === "team" ? (
@@ -991,7 +1137,7 @@ function Tracker({ user, userRecord }) {
               onAdd={() => { if (!newTeamName.trim()) return; const r = [...data.teamRoster, { id: genId(), name: newTeamName.trim(), role: newTeamRole.trim() }]; saveSection("teamRoster", r, { ...latestData.current, teamRoster: r }); setNewTeamName(""); setNewTeamRole(""); }}
               onRemove={id => { const r = data.teamRoster.filter(t => t.id !== id); saveSection("teamRoster", r, { ...latestData.current, teamRoster: r }); }} />
           ) : view === "admin" && isAdmin ? (
-            <UserAdminView teamRoster={data.teamRoster || []} guests={guests} onGuestsChange={setGuests} guestLoadError={guestLoadError} projects={data.projects || []} myName={myName} />
+            <UserAdminView teamRoster={data.teamRoster || []} guests={guests} onGuestsChange={setGuests} guestLoadError={guestLoadError} projects={data.projects || []} myName={myName} onDataSplitDone={() => setDataSplitDone(true)} />
           ) : (
             <PhaseSettings phases={data.phases} newPhaseName={newPhaseName} setNewPhaseName={setNewPhaseName} newPhaseColor={newPhaseColor} setNewPhaseColor={setNewPhaseColor}
               onAdd={() => { if (!newPhaseName.trim()) return; const ph = [...data.phases, { id: genId(), name: newPhaseName.trim(), color: newPhaseColor }]; saveSection("phases", ph, { ...latestData.current, phases: ph }); setNewPhaseName(""); }}
@@ -1569,7 +1715,7 @@ function InvitePanel({ teamRoster }) {
   );
 }
 
-function UserAdminView({ teamRoster, guests, onGuestsChange, guestLoadError, projects, myName }) {
+function UserAdminView({ teamRoster, guests, onGuestsChange, guestLoadError, projects, myName, onDataSplitDone }) {
   const [users, setUsers] = useState({}); const [loading, setLoading] = useState(true);
   useEffect(() => { load(); }, []);
   async function load() { setLoading(true); try { setUsers(await fbReadUsers() || {}); } catch {} setLoading(false); }
@@ -1584,6 +1730,7 @@ function UserAdminView({ teamRoster, guests, onGuestsChange, guestLoadError, pro
     <StorageCheck />
     <InvitePanel teamRoster={teamRoster} />
     <GuestAdmin guests={guests || {}} projects={projects || []} myName={myName} onChange={onGuestsChange} loadError={guestLoadError} />
+    <DataSplitPanel onDone={onDataSplitDone} />
     <div style={{ background: "#0F2444", borderRadius: 12, border: "1px solid #1A3050", padding: 20, marginBottom: 24 }}>
       <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", marginBottom: 10, textTransform: "uppercase" }}>Email Notifications</div>
       <p style={{ fontSize: 12, color: "#64748b", marginBottom: 10 }}>Daily logs, timesheets, and task notifications are automatically emailed to all admins. Add an additional recipient below (e.g., office manager, payroll).</p>

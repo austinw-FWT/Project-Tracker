@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Plus, X, Edit2, Trash2, ClipboardList, Clock, Cable, CheckCircle2, Circle, FileText, Camera, MapPin, Phone, Mail, DollarSign, Building2, User, Layers, Package, Receipt, BookOpen, AlertTriangle, Image, FileSearch, TrendingUp, ClipboardCheck, Upload, Download, ExternalLink, ChevronDown, ShieldCheck, CalendarDays } from "lucide-react";
+import { Plus, X, Edit2, Trash2, ClipboardList, Clock, Cable, CheckCircle2, Circle, FileText, Camera, MapPin, Phone, Mail, DollarSign, Building2, User, Layers, Package, Receipt, BookOpen, AlertTriangle, Image, FileSearch, TrendingUp, ClipboardCheck, Upload, Download, ExternalLink, ChevronDown, ShieldCheck, CalendarDays, ListChecks } from "lucide-react";
 import { PROJECT_TYPES, LABOR_PHASES, MATERIAL_STATUSES, TASK_CATEGORIES, genId } from "./App.jsx";
 import { bidHours, baseBidHours, changeOrderHours, changeOrderTotalHours, usedHours, loggedHours, adjustment, remainingHours, laborTotals } from "./laborMath.js";
 import { storage, storageRef, uploadBytes, getDownloadURL } from "./firebase.js";
@@ -8,6 +8,8 @@ import { WhereWeStand, ScheduleTab } from "./ProjectPlanning.jsx";
 import { taskRef, setTaskDone, setTaskAssignee, assignmentStamp } from "./myTasks.js";
 import { projectWarranty, WARRANTY_STATUS, WARRANTY_TERMS, daysLeftLabel, fmtDay, isoDay } from "./warranty.js";
 import { invoiceSnapshot } from "./InvoiceProgress.jsx";
+import ChecklistTab from "./ChecklistTab.jsx";
+import { checklistState, checklistProgress } from "./checklist.js";
 
 const iS = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1A3050", background: "#0F2444", color: "#e2e8f0", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none" };
 const lS = { fontSize: 11, fontWeight: 600, color: "#64748b", marginBottom: 4, display: "block", textTransform: "uppercase", letterSpacing: "0.05em" };
@@ -29,7 +31,7 @@ async function callFunction(name, data) {
   } catch (e) { console.error(`Function ${name} failed:`, e); return null; }
 }
 
-export default function ProjectDetail({ project, phases, phaseMap, teamRoster, onUpdate, onDelete, detailTab, setDetailTab, assignTaskToMember, perms, schedule, projects, onScheduleChange, myName }) {
+export default function ProjectDetail({ project, phases, phaseMap, teamRoster, onUpdate, onDelete, detailTab, setDetailTab, assignTaskToMember, perms, schedule, projects, onScheduleChange, myName, jobRole, onChecklistSet }) {
   const canSeeMoney = perms ? perms.seeFinancials : true;
   // Admins and foremen can put crew on a job; techs see the schedule read-only.
   const canSchedule = !!onScheduleChange && (perms ? (perms.isAdminRole || perms.jobRole === "foreman") : true);
@@ -48,8 +50,11 @@ export default function ProjectDetail({ project, phases, phaseMap, teamRoster, o
     return () => window.removeEventListener("resize", handler);
   }, []);
 
+  const clProg = checklistProgress(checklistState(project, { schedule }));
+  const checklistLabel = `Checklist ${clProg.pct}%`;
   const tabs = [
     { id: "overview", label: "Overview", icon: ClipboardList },
+    ...(onChecklistSet ? [{ id: "checklist", label: checklistLabel, icon: ListChecks }] : []),
     ...(schedule ? [{ id: "schedule", label: "Schedule", icon: CalendarDays }] : []),
     { id: "hours", label: "Hours", icon: Clock },
     { id: "materials", label: "Materials", icon: Package },
@@ -253,6 +258,7 @@ export default function ProjectDetail({ project, phases, phaseMap, teamRoster, o
           <OverviewTab project={project} form={form} setForm={setForm} editMode={editMode} setEditMode={setEditMode} onUpdate={onUpdate} teamRoster={teamRoster} isMobile={isMobile} canSeeMoney={canSeeMoney} />
         </>}
         {visibleTab === "schedule" && <ScheduleTab project={project} schedule={schedule || {}} teamRoster={teamRoster} projects={projects || []} onScheduleChange={onScheduleChange} canSchedule={canSchedule} isMobile={isMobile} />}
+        {visibleTab === "checklist" && <ChecklistTab project={project} jobRole={jobRole || perms?.jobRole || "admin"} myName={myName} schedule={schedule || {}} onSet={onChecklistSet} isMobile={isMobile} />}
         {visibleTab === "hours" && <HoursTab project={project} onUpdate={onUpdate} />}
         {visibleTab === "materials" && <MaterialsTab canSeeMoney={canSeeMoney} project={project} onUpdate={onUpdate} />}
         {visibleTab === "invoices" && <InvoiceTab project={project} onUpdate={onUpdate} />}
@@ -356,6 +362,7 @@ function OverviewTab({ project, form, setForm, editMode, setEditMode, onUpdate, 
       <div><label style={lS}>Site Address</label><input style={iS} value={form.siteAddress} onChange={e => setForm({ ...form, siteAddress: e.target.value })} /></div>
       <div><label style={lS}>Anticipated Start</label><input type="date" style={{ ...iS, colorScheme: "dark" }} value={form.anticipatedStart || ""} onChange={e => setForm({ ...form, anticipatedStart: e.target.value })} /></div>
       <div><label style={lS}>Type</label><select style={iS} value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}><option value="retrofit">Retrofit</option><option value="new-construction">New Construction</option></select></div>
+      <div><label style={lS}>Prevailing Wage</label><label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#e2e8f0", cursor: "pointer", padding: "9px 0" }}><input type="checkbox" checked={!!form.prevailingWage} onChange={e => setForm({ ...form, prevailingWage: e.target.checked })} /> Prevailing wage job <span style={{ color: "#64748b", fontSize: 11.5 }}>(set from the PIF on import)</span></label></div>
       <div><label style={lS}>Systems</label><div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>{PROJECT_TYPES.map(pt => (<button key={pt} onClick={() => { const t = form.projectTypes || []; setForm({ ...form, projectTypes: t.includes(pt) ? t.filter(x => x !== pt) : [...t, pt] }); }} style={{ padding: "4px 10px", borderRadius: 6, border: "1px solid #1A3050", fontSize: 11, cursor: "pointer", fontFamily: "inherit", background: (form.projectTypes || []).includes(pt) ? "#69BE28" : "transparent", color: (form.projectTypes || []).includes(pt) ? "#fff" : "#94a3b8" }}>{pt}</button>))}</div></div>
       <div style={{ gridColumn: "1/-1", marginTop: 6 }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: "#69BE28", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>⚡ Site Info — shows on techs' Field Mode home screen</div>
@@ -376,7 +383,7 @@ function OverviewTab({ project, form, setForm, editMode, setEditMode, onUpdate, 
     <div style={{ display: "grid", gridTemplateColumns: gridCols, gap: isMobile ? 14 : 20 }}>
       <IR icon={Building2} label="Customer" value={project.customer} /><IR icon={User} label="Contact" value={project.contactName} />
       <IR icon={Phone} label="Phone" value={project.contactPhone} /><IR icon={Mail} label="Email" value={project.contactEmail} />
-      <IR icon={MapPin} label="Site Address" value={project.siteAddress} /><IR icon={Layers} label="Type" value={project.type === "retrofit" ? "Retrofit" : "New Construction"} />
+      <IR icon={MapPin} label="Site Address" value={project.siteAddress} /><IR icon={Layers} label="Type" value={(project.type === "retrofit" ? "Retrofit" : "New Construction") + (project.prevailingWage ? " · Prevailing wage" : "")} />
       <IR icon={CalendarDays} label="Anticipated Start" value={project.anticipatedStart ? new Date(project.anticipatedStart + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" }) : ""} />
       {canSeeMoney && <><IR icon={DollarSign} label="Bid Amount" value={project.bidAmount} /><IR icon={DollarSign} label="Contract Amount" value={project.contractAmount} /></>}
       {project.siteInfo && (project.siteInfo.gateCode || project.siteInfo.lockbox || project.siteInfo.siteContact || project.siteInfo.idf || project.siteInfo.parking) && (
