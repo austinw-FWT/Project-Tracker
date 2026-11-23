@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Plus, X, Edit2, Trash2, ClipboardList, Clock, Cable, CheckCircle2, Circle, FileText, Camera, MapPin, Phone, Mail, DollarSign, Building2, User, Layers, Package, Receipt, BookOpen, AlertTriangle, Image, FileSearch, TrendingUp, ClipboardCheck, Upload, Download, ExternalLink, ChevronDown, ShieldCheck, CalendarDays, ListChecks } from "lucide-react";
+import { Plus, X, Edit2, Trash2, ClipboardList, Clock, Cable, CheckCircle2, Circle, FileText, Camera, MapPin, Phone, Mail, DollarSign, Building2, User, Layers, Package, Receipt, BookOpen, AlertTriangle, Image, FileSearch, TrendingUp, ClipboardCheck, Upload, Download, ExternalLink, ChevronDown, ShieldCheck, CalendarDays, ListChecks, Workflow } from "lucide-react";
 import { PROJECT_TYPES, LABOR_PHASES, MATERIAL_STATUSES, TASK_CATEGORIES, genId } from "./App.jsx";
 import { bidHours, baseBidHours, changeOrderHours, changeOrderTotalHours, usedHours, loggedHours, adjustment, remainingHours, laborTotals } from "./laborMath.js";
 import { storage, storageRef, uploadBytes, getDownloadURL } from "./firebase.js";
@@ -9,6 +9,8 @@ import { taskRef, setTaskDone, setTaskAssignee, assignmentStamp } from "./myTask
 import { projectWarranty, WARRANTY_STATUS, WARRANTY_TERMS, daysLeftLabel, fmtDay, isoDay } from "./warranty.js";
 import { invoiceSnapshot } from "./InvoiceProgress.jsx";
 import ChecklistTab from "./ChecklistTab.jsx";
+import WorkflowTab from "./WorkflowTab.jsx";
+import { jobSummary } from "./workflow.js";
 import { checklistState, checklistProgress } from "./checklist.js";
 
 const iS = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #1A3050", background: "#0F2444", color: "#e2e8f0", fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: "none" };
@@ -31,7 +33,7 @@ async function callFunction(name, data) {
   } catch (e) { console.error(`Function ${name} failed:`, e); return null; }
 }
 
-export default function ProjectDetail({ project, phases, phaseMap, teamRoster, onUpdate, onDelete, detailTab, setDetailTab, assignTaskToMember, perms, schedule, projects, onScheduleChange, myName, jobRole, onChecklistSet }) {
+export default function ProjectDetail({ project, phases, phaseMap, teamRoster, onUpdate, onDelete, detailTab, setDetailTab, assignTaskToMember, perms, schedule, projects, onScheduleChange, myName, jobRole, onChecklistSet, onPathSet }) {
   const canSeeMoney = perms ? perms.seeFinancials : true;
   // Admins and foremen can put crew on a job; techs see the schedule read-only.
   const canSchedule = !!onScheduleChange && (perms ? (perms.isAdminRole || perms.jobRole === "foreman") : true);
@@ -51,9 +53,12 @@ export default function ProjectDetail({ project, phases, phaseMap, teamRoster, o
   }, []);
 
   const clProg = checklistProgress(checklistState(project, { schedule }));
+  const showWorkflow = !!onPathSet && (jobRole === "admin" || jobRole === "foreman");
+  const wfLate = showWorkflow ? jobSummary(project, { phases, schedule, laborPhases: LABOR_PHASES, money: !!perms?.seeFinancials }).overdue.length : 0;
   const checklistLabel = `Checklist ${clProg.pct}%`;
   const tabs = [
     { id: "overview", label: "Overview", icon: ClipboardList },
+    ...(showWorkflow ? [{ id: "workflow", label: wfLate ? `Workflow · ${wfLate} late` : "Workflow", icon: Workflow }] : []),
     ...(onChecklistSet ? [{ id: "checklist", label: checklistLabel, icon: ListChecks }] : []),
     ...(schedule ? [{ id: "schedule", label: "Schedule", icon: CalendarDays }] : []),
     { id: "hours", label: "Hours", icon: Clock },
@@ -258,6 +263,7 @@ export default function ProjectDetail({ project, phases, phaseMap, teamRoster, o
           <OverviewTab project={project} form={form} setForm={setForm} editMode={editMode} setEditMode={setEditMode} onUpdate={onUpdate} teamRoster={teamRoster} isMobile={isMobile} canSeeMoney={canSeeMoney} />
         </>}
         {visibleTab === "schedule" && <ScheduleTab project={project} schedule={schedule || {}} teamRoster={teamRoster} projects={projects || []} onScheduleChange={onScheduleChange} canSchedule={canSchedule} isMobile={isMobile} />}
+        {visibleTab === "workflow" && showWorkflow && <WorkflowTab project={project} phases={phases} jobRole={jobRole} canSeeMoney={!!perms?.seeFinancials} myName={myName} schedule={schedule || {}} onSet={onPathSet} onUpdate={onUpdate} genId={genId} isMobile={isMobile} />}
         {visibleTab === "checklist" && <ChecklistTab project={project} jobRole={jobRole || perms?.jobRole || "admin"} myName={myName} schedule={schedule || {}} onSet={onChecklistSet} isMobile={isMobile} />}
         {visibleTab === "hours" && <HoursTab project={project} onUpdate={onUpdate} />}
         {visibleTab === "materials" && <MaterialsTab canSeeMoney={canSeeMoney} project={project} onUpdate={onUpdate} />}

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Plus, X, Users, Settings, LayoutGrid, Search, ArrowLeft, Layers, CalendarDays, Wifi, WifiOff, RefreshCw, Zap, LogOut, Shield, UserCheck, UserX, User, Clock, ChevronDown, ChevronUp, Home, BookUser, ShieldCheck, Zap as ZapIcon, Copy, Menu } from "lucide-react";
+import { Gauge, Plus, X, Users, Settings, LayoutGrid, Search, ArrowLeft, Layers, CalendarDays, Wifi, WifiOff, RefreshCw, Zap, LogOut, Shield, UserCheck, UserX, User, Clock, ChevronDown, ChevronUp, Home, BookUser, ShieldCheck, Zap as ZapIcon, Copy, Menu } from "lucide-react";
 import { auth, googleProvider, signInWithEmailAndPassword, createUserWithEmailAndPassword, signInWithPopup, signInAnonymously, onAuthStateChanged, signOut, updateProfile } from "./firebase.js";
 import DailyTracker from "./DailyTracker.jsx";
 import MyDailyLog from "./MyDailyLog.jsx";
@@ -19,9 +19,10 @@ import { resolveJobRole, getPermissions, JOB_ROLES, ROLE_LABEL, ROLE_COLOR } fro
 import Briefing from "./Briefing.jsx";
 import GuestMode from "./GuestMode.jsx";
 import { openLive, setIn } from "./liveSync.js";
-import { holdsBlocking } from "./checklist.js";
+import { gateBlockers, GATE_LABELS } from "./workflow.js";
 import { writeInList } from "./writeIns.js";
 import DataSplitPanel from "./DataSplitPanel.jsx";
+import PMCenter from "./PMCenter.jsx";
 import { planRoleSync } from "./dataSplit.js";
 import GuestAdmin from "./GuestAdmin.jsx";
 import { captureGuestFromUrl, clearPendingGuest, peekPendingGuest, pendingGuestIsQuick, clearPendingQuick, guestAuthStep, planGuestPublish, planGuestHoursPublish, stableStringify, prune } from "./guestAccess.js";
@@ -535,12 +536,33 @@ function Tracker({ user, userRecord }) {
   const saveSection = useCallback((section, value, newData) => { applyLocal(newData); persist(putSection(section, value)); }, [applyLocal, persist]);
 
   function updateProject(pid, updates) {
-    // Hold points: moving a job into a phase with stop points still open asks first
-    if (updates.phaseId) {
-      const cur = latestData.current.projects.find(p => p.id === pid);
-      if (cur && cur.phaseId !== updates.phaseId) {
-        const holds = holdsBlocking(cur, updates.phaseId, latestData.current.phases, { schedule: latestData.current.schedule });
-        if (holds.length && !window.confirm(`${holds.length} hold point${holds.length > 1 ? "s are" : " is"} still open:\n\n${holds.map(h => `• ${h.text}`).join("\n")}\n\nMove the job anyway?`)) return;
+    // Workflow gates: entering a board phase (or Warranties) with required
+    // steps still open is blocked. Admins may override with a reason, which
+    // is logged on the job (workflow.overrides).
+    const cur = latestData.current.projects.find(p => p.id === pid);
+    const target = updates.phaseId && cur && cur.phaseId !== updates.phaseId ? updates.phaseId
+      : updates.movedToWarranty && cur && !cur.movedToWarranty ? "warranty" : null;
+    if (target && cur) {
+      const ctx = { phases: latestData.current.phases, schedule: latestData.current.schedule, laborPhases: LABOR_PHASES };
+      const blockers = gateBlockers(cur, target, ctx);
+      const where = GATE_LABELS[target] || (latestData.current.phases.find(p => p.id === target) || {}).name || target;
+      if (blockers.length) {
+        const list = blockers.map(b => `• ${b.label}`).join("\n");
+        if (!isAdmin) {
+          window.alert(`This job can't move to ${where} yet. Still open:\n\n${list}\n\nFinish these on the job's Workflow tab, or ask an admin to override.`);
+          return;
+        }
+        const reason = window.prompt(`${blockers.length} required step${blockers.length > 1 ? "s are" : " is"} still open before ${where}:\n\n${list}\n\nTo override, type the reason (it's logged on the job). Cancel to stop.`);
+        if (!reason || !reason.trim()) return;
+        const oid = genId();
+        setProjectPath(pid, `workflow/overrides/${oid}`, { to: target, reason: reason.trim(), by: myName || user.email || "", at: new Date().toISOString(), missing: blockers.map(b => b.label) });
+      }
+      // Entering Punch List (or later) completes installation and anchors
+      // the closeout due dates
+      const order = latestData.current.phases.map(p => p.id);
+      const fresh = latestData.current.projects.find(p => p.id === pid);
+      if (!(fresh.workflow && fresh.workflow.completedAt) && (target === "warranty" || (order.indexOf("punch-list") >= 0 && order.indexOf(target) >= order.indexOf("punch-list")))) {
+        setProjectPath(pid, "workflow/completedAt", new Date().toISOString().slice(0, 10));
       }
     }
     const stamped = { ...updates, updatedAt: new Date().toISOString() };
@@ -551,14 +573,21 @@ function Tracker({ user, userRecord }) {
   }
   /** One checklist item (see checklist.js). Written to its own path so two
       people ticking items at the same time never undo each other. */
-  function setChecklist(pid, key, value) {
+  function setChecklist(pid, key, value) { setProjectPath(pid, `checklist/${key}`, value); }
+  /** Write one nested value on a project ("workflow/milestones/design",
+      "billingPlan/items/x"…) as its own path, so people editing different
+      parts of a job at once never undo each other. Money paths are routed
+      to /money by db.js. */
+  function setProjectPath(pid, path, value) {
     const cur = latestData.current.projects.find(p => p.id === pid);
     if (!cur) return;
     const now = new Date().toISOString();
-    const stamped = { checklist: setIn(cur.checklist || {}, key, value) || {}, updatedAt: now };
+    const [top, ...rest] = path.split("/");
+    const nextTop = rest.length ? (setIn(cur[top] || {}, rest, value) || {}) : value;
+    const stamped = { [top]: nextTop, updatedAt: now };
     applyLocal({ ...latestData.current, projects: latestData.current.projects.map(p => p.id === pid ? { ...p, ...stamped } : p) });
     setSelectedProject(prev => prev?.id === pid ? { ...prev, ...stamped } : prev);
-    persist(patchProject(pid, { [`checklist/${key}`]: value === undefined ? null : value, updatedAt: now }));
+    persist(patchProject(pid, { [path]: value === undefined ? null : value, updatedAt: now }));
   }
   /** Schedule edits made from inside a project. `fn(currentSchedule)` returns
       { schedule, changedDates } (see projectSchedule.js); only those days are
@@ -890,6 +919,7 @@ function Tracker({ user, userRecord }) {
 
   const navItems = [
     { id: "dashboard", icon: Home, label: "Dashboard" },
+    ...(isAdmin ? [{ id: "pm", icon: Gauge, label: "PM Center" }] : []),
     { id: "board", icon: LayoutGrid, label: "Project Board" },
     { id: "schedule", icon: CalendarDays, label: "Team Schedule" },
     { id: "contacts", icon: BookUser, label: "Contacts" },
@@ -914,7 +944,7 @@ function Tracker({ user, userRecord }) {
   const currentPageTitle = selectedProject ? selectedProject.name
     : view === "myspace" ? (mySpaceTab === "briefing" ? "The Briefing" : mySpaceTab === "daily" ? "Daily Task Board" : mySpaceTab === "dailylog" ? "Daily Log" : mySpaceTab === "opportunities" ? "Opportunities" : mySpaceTab === "pricebook" ? "Price Book" : mySpaceTab === "import" ? "Import Projects" : "My Timesheets")
     : view === "team" ? "Team Roster" : view === "schedule" ? "Team Schedule" : view === "admin" ? "User Admin"
-    : view === "contacts" ? "Contacts" : view === "warranties" ? "Warranties" : view === "dashboard" ? "Dashboard"
+    : view === "contacts" ? "Contacts" : view === "warranties" ? "Warranties" : view === "dashboard" ? "Dashboard" : view === "pm" ? "PM Command Center"
     : view === "board" ? "Project Board" : "Phase Settings";
 
   const SidebarContent = (
@@ -1056,7 +1086,7 @@ function Tracker({ user, userRecord }) {
 
           {selectedProject ? (
             <button onClick={() => setSelectedProject(null)} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 13, fontFamily: "inherit" }}>
-              <ArrowLeft size={16} />{!isMobile && `Back to ${view === "warranties" ? "Warranties" : view === "dashboard" ? "Dashboard" : "Board"}`}
+              <ArrowLeft size={16} />{!isMobile && `Back to ${view === "warranties" ? "Warranties" : view === "dashboard" ? "Dashboard" : view === "pm" ? "PM Center" : "Board"}`}
             </button>
           ) : null}
 
@@ -1092,13 +1122,16 @@ function Tracker({ user, userRecord }) {
         {/* Page content */}
         <div style={{ flex: 1, overflow: "auto" }}>
           {selectedProject ? (
-            <ProjectDetail perms={perms} project={selectedProject} phases={data.phases} phaseMap={phaseMap} teamRoster={data.teamRoster} schedule={data.schedule || {}} projects={data.projects} onScheduleChange={changeSchedule} myName={myName} onUpdate={u => updateProject(selectedProject.id, u)} onDelete={() => deleteProject(selectedProject.id)} detailTab={detailTab} setDetailTab={setDetailTab} assignTaskToMember={assignTaskToMember} jobRole={jobRole} onChecklistSet={(k, v) => setChecklist(selectedProject.id, k, v)} />
+            <ProjectDetail perms={perms} project={selectedProject} phases={data.phases} phaseMap={phaseMap} teamRoster={data.teamRoster} schedule={data.schedule || {}} projects={data.projects} onScheduleChange={changeSchedule} myName={myName} onUpdate={u => updateProject(selectedProject.id, u)} onDelete={() => deleteProject(selectedProject.id)} detailTab={detailTab} setDetailTab={setDetailTab} assignTaskToMember={assignTaskToMember} jobRole={jobRole} onChecklistSet={(k, v) => setChecklist(selectedProject.id, k, v)} onPathSet={(path, v) => setProjectPath(selectedProject.id, path, v)} />
           ) : view === "dashboard" ? (
             <Dashboard perms={perms} teamRoster={data.teamRoster || []} data={data} myName={myName} myUid={user.uid} onSelectProject={p => { setSelectedProject(p); setDetailTab("overview"); }} onNavigate={(v, tab) => { setView(v); if (tab) setMySpaceTab(tab); }} />
           ) : view === "board" ? (
             <KanbanBoard projects={filteredProjects} phases={data.phases} onSelectProject={p => { setSelectedProject(p); setDetailTab("overview"); }} onDragStart={setDragItem} onDrop={handleDrop} dragItem={dragItem} isMobile={isMobile} />
           ) : view === "contacts" ? (
             <Contacts contacts={data.contacts || []} projects={data.projects} onSave={c => saveSection("contacts", c, { ...latestData.current, contacts: c })} />
+          ) : view === "pm" && isAdmin ? (
+            <PMCenter projects={data.projects} phases={data.phases} schedule={data.schedule || {}} myName={myName} canSeeMoney={perms.seeFinancials} isMobile={isMobile}
+              onOpen={(p, tab) => { setSelectedProject(p); setDetailTab(tab || "overview"); }} />
           ) : view === "warranties" ? (
             <WarrantyTracker projects={data.projects} onUpdateProject={(pid, u) => updateProject(pid, u)} onSelectProject={p => { setSelectedProject(p); setDetailTab("overview"); }} canManage={perms.isAdminRole} />
           ) : view === "myspace" && mySpaceTab === "briefing" ? (

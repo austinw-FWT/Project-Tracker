@@ -141,7 +141,7 @@ export const putEstimatingDefaults = (d)    => dbPut(`${EST_ROOT}/estimatingDefa
    /tracker where the whole crew can read it. The split happens here, on the
    way out, so screens keep working with one project object. */
 export const MONEY_ROOT = "/money";
-export const MONEY_KEYS = ["bidAmount", "contractAmount", "invoices", "invoicing"];
+export const MONEY_KEYS = ["bidAmount", "contractAmount", "invoices", "invoicing", "billingPlan"];
 let moneyAccess = false;
 /** Set once this device has loaded /money. Until then (and always for
     technicians) money is never written — a device that can't see the costs
@@ -156,6 +156,8 @@ export function splitProjectMoney(updates) {
   const pub = { ...updates };
   const money = {};
   MONEY_KEYS.forEach(k => { if (k in pub) { money[k] = pub[k] === "" ? null : pub[k]; delete pub[k]; } });
+  // Deep paths ("billingPlan/items/x") go with their top-level key
+  Object.keys(pub).forEach(k => { if (k.includes("/") && MONEY_KEYS.includes(k.split("/")[0])) { money[k] = pub[k]; delete pub[k]; } });
   if (Array.isArray(pub.materials)) {
     const costs = {};
     pub.materials = pub.materials.map(m => {
